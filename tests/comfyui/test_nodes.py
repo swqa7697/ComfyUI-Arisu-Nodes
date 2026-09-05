@@ -66,10 +66,11 @@ def test_pack_loads_like_comfyui(pack: ModuleType):
 
 def test_execute_inverts_and_logs(caplog: pytest.LogCaptureFixture):
     image = torch.full((1, 4, 4, 3), 0.25)
-    kwargs = dict(image=image, int_field=0, float_field=1.0, string_field="hello")
+    kwargs = {"image": image, "int_field": 0, "float_field": 1.0, "string_field": "hello"}
 
     with caplog.at_level(logging.INFO):
         result = ArisuExample.execute(print_to_screen="enable", **kwargs)
+    assert result.result is not None
     (output,) = result.result
     assert torch.equal(output, 1.0 - image)
     assert "string_field aka input text: hello" in caplog.text

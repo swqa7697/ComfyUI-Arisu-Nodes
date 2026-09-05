@@ -112,14 +112,50 @@ is appended word-split (quote-free flags only).
 
 ## Code style
 
-- ruff is the only Python formatter and linter; its config lives in `pyproject.toml` (140
-  columns, target py310). Keep syntax 3.10-compatible; CI runs 3.10 and 3.13.
+- ruff is the only Python formatter and linter; its config lives in `pyproject.toml`: 140
+  columns, target py310, ruff's default rule set plus the `extend-select` and `ignore` lists
+  there. Keep syntax 3.10-compatible; CI runs 3.10 and 3.13.
 - beautysh (4-space indent) formats shell scripts, mbake formats the Makefile, uv-sort sorts
   pyproject dependency lists. Run all of them only via `make tidy`.
 - `from __future__ import annotations`, full type hints, Google-style docstrings as in `core.py`.
 - Pure functions in `core.py`; side effects (logging, tensors) stay in `nodes.py`.
 - YAGNI: build only what is needed now. DRY: extract only when logic has one reason to change.
   Delete dead code instead of commenting it out.
+
+## Typing conventions
+
+Always use `typing` module annotations. Do not use PEP 604 unions or PEP 585 builtin generics.
+
+- `Optional[X]`, not `X | None`. `Union[X, Y]`, not `X | Y`.
+- `List`, `Dict`, `Tuple`, `Set`, `Type`, `Callable`, `Iterable`, `Awaitable`, etc. from
+  `typing`, not the `list` / `dict` builtins or `collections.abc`.
+- Preserve generics with `TypeVar` / `ParamSpec` on decorators and wrappers so input types
+  propagate.
+- Narrow `Union[Any, ...]` to `Any` (a `Union` containing `Any` collapses).
+- Add an explicit return type to every function or method that returns a value (including
+  `Optional[X]`, `Iterator[X]`, and generic returns). Omit `-> None` on procedures; write it
+  only when "returns nothing" is itself part of the contract, such as a callback or override
+  whose annotated signature documents the interface (`pytest_configure` in `tests/conftest.py`).
+- ruff cannot enforce the `typing` forms; the `UP006/UP007/UP035/UP045/UP046/UP047` ignores in
+  `pyproject.toml` only stop `ruff check --fix` from rewriting them, so this is a review rule.
+  Overrides of ComfyUI classes use the `typing` forms too (`List[Type[io.ComfyNode]]`); they
+  stay compatible with the base signature.
+
+## Import conventions
+
+All imports go at the top of the file. No inline imports inside functions or methods unless
+truly necessary; the accepted reasons are:
+
+1. Breaking a genuine circular import that cannot be resolved by restructuring.
+2. An optional heavy dependency loaded lazily in a code path that may never execute (rare;
+   document it with a one-line comment).
+3. A platform- or feature-gated import behind a runtime check.
+
+If you reach for an inline import for any other reason (avoiding work, hiding a dependency,
+working around a startup ordering issue), restructure instead. ruff sorts top-level imports via
+isort (`extend-select = ["I"]`); the first-party roots are `src = [".", "scripts", "src",
+"tests"]` in `pyproject.toml`, mirroring the `sys.path` wiring in `tests/conftest.py`, so
+`src.arisu_nodes` and `release_common` sort into the first-party block.
 
 ## Git workflow and commits
 

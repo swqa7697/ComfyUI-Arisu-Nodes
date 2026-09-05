@@ -19,9 +19,9 @@ import re
 import string
 import subprocess
 import sys
-from datetime import date, datetime
+from datetime import datetime
 from pathlib import Path
-from typing import NoReturn
+from typing import Dict, List, NoReturn, Optional
 
 PYPROJECT = "pyproject.toml"
 CHANGELOG = "CHANGELOG.md"
@@ -36,7 +36,7 @@ TAG_RE = re.compile(r"^v\d+\.\d+\.\d+$")
 
 _TOOL = Path(sys.argv[0]).stem
 
-_DIGIT_FONT: dict[str, list[str]] = {
+_DIGIT_FONT: Dict[str, List[str]] = {
     "0": ["███", "█ █", "█ █", "█ █", "███"],
     "1": [" █ ", "██ ", " █ ", " █ ", "███"],
     "2": ["███", "  █", "███", "█  ", "███"],
@@ -186,7 +186,7 @@ def tag_message(version: str, section: str) -> str:
     return f"Release {tag_name(version)}\n\n{section}\n"
 
 
-def changed_paths(porcelain: str) -> list[str]:
+def changed_paths(porcelain: str) -> List[str]:
     """Return the paths listed by ``git status --porcelain`` output.
 
     Rename and copy entries (``R  old -> new``) yield the new path.
@@ -197,7 +197,7 @@ def changed_paths(porcelain: str) -> list[str]:
     Returns:
         The changed paths in order.
     """
-    paths: list[str] = []
+    paths: List[str] = []
     for line in porcelain.splitlines():
         if len(line) < 4:
             continue
@@ -209,24 +209,24 @@ def changed_paths(porcelain: str) -> list[str]:
 
 
 # ── Logging (same "<tool> | <timestamp> | <mark> <message>" shape as logger.sh) ─
-def _log(mark: str, msg: str, *, err: bool = False) -> None:
-    stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+def _log(mark: str, msg: str, *, err: bool = False):
+    stamp = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
     stream = sys.stderr if err else sys.stdout
     sys.stdout.flush()
     print(f"{_TOOL} | {stamp} | {mark} {msg}", file=stream, flush=True)
 
 
-def info(msg: str) -> None:
+def info(msg: str):
     """Log a progress line."""
     _log("•", msg)
 
 
-def ok(msg: str) -> None:
+def ok(msg: str):
     """Log a success line."""
     _log("✓", msg)
 
 
-def warn(msg: str) -> None:
+def warn(msg: str):
     """Log a warning line to stderr."""
     _log("!", msg, err=True)
 
@@ -238,17 +238,17 @@ def fail(msg: str) -> NoReturn:
 
 
 # ── git and uv ───────────────────────────────────────────────────────────────
-def git(*args: str, input_text: str | None = None) -> str:
+def git(*args: str, input_text: Optional[str] = None) -> str:
     """Run git, returning stripped stdout; ``fail`` on a non-zero exit."""
-    proc = subprocess.run(["git", *args], text=True, capture_output=True, input=input_text)
+    proc = subprocess.run(["git", *args], text=True, capture_output=True, input=input_text, check=False)
     if proc.returncode != 0:
         fail(f"git {' '.join(args)} failed:\n{proc.stderr.strip()}")
     return proc.stdout.rstrip("\n")
 
 
-def git_passthrough(*args: str) -> None:
+def git_passthrough(*args: str):
     """Run git with the terminal attached (push progress, remote messages)."""
-    if subprocess.run(["git", *args]).returncode != 0:
+    if subprocess.run(["git", *args], check=False).returncode != 0:
         fail(f"git {' '.join(args)} failed.")
 
 
@@ -267,19 +267,19 @@ def current_branch() -> str:
     return branch
 
 
-def run_uv_lock() -> None:
+def run_uv_lock():
     """Re-lock the project so ``uv.lock`` records the current pyproject version."""
-    if subprocess.run(["uv", "lock", "--quiet"]).returncode != 0:
+    if subprocess.run(["uv", "lock", "--quiet"], check=False).returncode != 0:
         fail("uv lock failed.")
 
 
 def today() -> str:
     """Return the local date as ``YYYY-MM-DD`` (same as ``date +%F``)."""
-    return date.today().isoformat()
+    return datetime.now().astimezone().date().isoformat()
 
 
 # ── Interactive gates ────────────────────────────────────────────────────────
-def require_tty(action: str) -> None:
+def require_tty(action: str):
     """``fail`` unless stdin is an interactive terminal."""
     if not sys.stdin.isatty():
         fail(f"{action} needs an interactive terminal; aborting.")
@@ -299,7 +299,7 @@ def confirm_yes_no(question: str) -> bool:
     return prompt(f"{question} [y/N]: ").lower() in ("y", "yes")
 
 
-def confirm_captcha(action: str) -> None:
+def confirm_captcha(action: str):
     """Gate on a fresh 4-digit code rendered as block glyphs.
 
     The code is regenerated every run and only readable as rendered text, so

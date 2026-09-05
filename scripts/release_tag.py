@@ -35,7 +35,7 @@ from release_common import (
 )
 
 
-def main() -> None:
+def main():
     enter_repo_root()
     require_tty("Creating a release tag")
 

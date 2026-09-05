@@ -35,13 +35,24 @@ markers = ["comfyui: needs ComfyUI's interpreter and source tree on sys.path"]
 
 [tool.ruff]
 line-length = 140
-src = ["src", "tests"]
+# First-party roots, matching the sys.path wiring in tests/conftest.py: the repo root
+# (`src.arisu_nodes`), scripts/ (`release_common`), src/ and tests/.
+src = [".", "scripts", "src", "tests"]
 target-version = "py310"
 
 [tool.ruff.lint]
-select = [
-    "F",    # Pyflakes: syntax errors and undefined names
-    "S102", # exec-builtin
-    "S307", # eval-used
-    "W293", # blank line with whitespace
+extend-select = [
+    "I",    # isort: sorted top-level imports (see CLAUDE.md, Import conventions)
+    "S307", # suspicious-eval-usage: flag any eval() call; not in ruff's default set
+]
+# Track ruff's (>=0.16) widened defaults, opting out only where they conflict
+# with this project's conventions (see CLAUDE.md) or intentional patterns.
+ignore = [
+    "N999",  # the repo dir is the package ComfyUI imports; its name is fixed
+    "UP006", # typing convention: List/Dict/... over list/dict builtins
+    "UP007", # typing convention: Union[X, Y] over X | Y
+    "UP035", # typing convention: import from typing, not collections.abc
+    "UP045", # typing convention: Optional[X] over X | None
+    "UP046", # typing convention: TypeVar + Generic[T] over PEP 695 (classes)
+    "UP047", # typing convention: TypeVar / ParamSpec over PEP 695 (functions)
 ]

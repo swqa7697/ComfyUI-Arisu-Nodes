@@ -21,6 +21,7 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
+from typing import Optional
 
 import pytest
 
@@ -39,7 +40,7 @@ if COMFYUI_PATH and COMFYUI_PATH not in sys.path:
 
 class _RootAsPlainDirectory:
     @staticmethod
-    def pytest_collect_directory(path: Path, parent: pytest.Collector) -> pytest.Dir | None:
+    def pytest_collect_directory(path: Path, parent: pytest.Collector) -> Optional[pytest.Dir]:
         if path == parent.config.rootpath:
             return pytest.Dir.from_parent(parent, path=path)
         return None

@@ -13,6 +13,8 @@ from comfy_api.latest import io
 
 from .core import PRINT_MODES, describe_inputs, invert
 
+logger = logging.getLogger(__name__)
+
 
 class ArisuExample(io.ComfyNode):
     """Placeholder node carried over from the scaffold: inverts an image."""
@@ -49,5 +51,5 @@ class ArisuExample(io.ComfyNode):
         string_field: str,
     ) -> io.NodeOutput:
         if print_to_screen == "enable":
-            logging.info(describe_inputs(string_field, int_field, float_field))
+            logger.info(describe_inputs(string_field, int_field, float_field))
         return io.NodeOutput(invert(image))
