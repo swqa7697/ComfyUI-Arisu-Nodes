@@ -4,14 +4,15 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
+source scripts/logger.sh
 
 COMFYUI_PATH="${COMFYUI_PATH:-$HOME/apps/comfyui}"
 COMFY_PY="$COMFYUI_PATH/.venv/bin/python"
 
 if [[ ! -x "$COMFY_PY" ]]; then
-  echo "error: no interpreter at $COMFY_PY" >&2
-  echo "hint: set COMFYUI_PATH to your ComfyUI root" >&2
-  exit 1
+    log_error "no interpreter at $COMFY_PY"
+    log_warn "set COMFYUI_PATH to your ComfyUI root"
+    exit 1
 fi
 
 # COMFYUI_PATH: tests/conftest.py puts it on sys.path so comfy_api resolves.

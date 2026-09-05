@@ -18,11 +18,18 @@ A package of useful nodes optimizing user experience.
 
 ## Develop
 
-Development uses [uv](https://docs.astral.sh/uv/). To create the project virtual environment with the dev tools, do:
+Development uses [uv](https://docs.astral.sh/uv/) and GNU make. `make install` installs uv if it is missing and creates the project virtual environment with the dev tools; `make help` lists every target:
 
 ```bash
 cd ComfyUI-Arisu-Nodes
-uv sync
+make install   # .venv with pytest, ruff, and the formatters
+make tidy      # format everything in place
+make lint      # check only
+make test      # unit lane
+make build     # wheel + sdist into dist/
+make bump-patch        # or bump-minor / bump-major: version, CHANGELOG, uv.lock
+make release-commit    # commit + push the bump on a release branch
+make tag               # on main: tag vX.Y.Z and push (publishes to the registry)
 ```
 
 For VS Code, copy [.vscode/settings.example.jsonc](.vscode/settings.example.jsonc) to `.vscode/settings.json` and set the ComfyUI paths in it.
@@ -48,11 +55,10 @@ Nodes use the V3 API (`comfy_entrypoint` + `io.Schema`). An example custom node 
 
 Two pytest lanes live under `tests/`, both configured in `pyproject.toml`:
 
-- `tests/unit/` needs nothing but the project venv. Run it with `uv run pytest`. This is what CI runs.
-- `tests/comfyui/` imports the node pack the way ComfyUI does, so it needs ComfyUI's interpreter and source tree. Run it with `./scripts/test-comfyui.sh`. The script reads `COMFYUI_PATH` (default `~/apps/comfyui`), runs pytest on that install's Python with an ephemeral pytest layered on top, and writes nothing into the install. A bare `uv run pytest` skips this lane.
+- `tests/unit/` needs nothing but the project venv. Run it with `make test`. This is what CI runs.
+- `tests/comfyui/` imports the node pack the way ComfyUI does, so it needs ComfyUI's interpreter and source tree. Run it with `make test-comfyui ARGS="-v"`, which wraps `scripts/test-comfyui.sh`. The script reads `COMFYUI_PATH` (default `~/apps/comfyui`), runs pytest on that install's Python with an ephemeral pytest layered on top, and writes nothing into the install. A bare `uv run pytest` skips this lane.
 
-- [build-pipeline.yml](.github/workflows/build-pipeline.yml) will run pytest and linter on any open PRs
-- [validate.yml](.github/workflows/validate.yml) will run [node-diff](https://github.com/Comfy-Org/node-diff) to check for breaking changes
+- [build-pipeline.yml](.github/workflows/build-pipeline.yml) runs `make install LOCKED=1`, `make tidy` (failing if it changed anything), `make lint`, `make test`, and `make build` on Python 3.10 and 3.13 for every open PR.
 
 ## Publishing to Registry
 
@@ -65,5 +71,16 @@ You need to make an account on https://registry.comfy.org and create an API key 
 - [ ] Create an api key on the Registry for publishing from Github. [Instructions](https://docs.comfy.org/registry/publishing#create-an-api-key-for-publishing).
 - [ ] Add it to your Github Repository Secrets as `REGISTRY_ACCESS_TOKEN`.
 
-A Github action will run on every git push. You can also run the Github action manually. Full instructions [here](https://docs.comfy.org/registry/publishing). Join our [discord](https://discord.com/invite/comfyorg) if you have any questions!
+The publish action runs when a `vX.Y.Z` tag is pushed. Releases go through a short branch-and-PR flow driven by the release scripts in `scripts/release_*.py`:
+
+```bash
+git switch -c release/0.2.0      # from an up-to-date main
+make bump-minor                  # or bump-patch / bump-major: pyproject version, CHANGELOG roll, uv lock
+make release-commit              # guarded commit "chore: bump version to 0.2.0" + push
+# /release-pr in Claude Code opens the main <- release/0.2.0 PR; merge it
+git switch main && git pull
+make tag                         # CAPTCHA-confirmed annotated tag v0.2.0, pushed -> publish_node.yml
+```
+
+`make bump-*` refuses if `[Unreleased]` in `CHANGELOG.md` is empty, `make release-commit` refuses on `main` or when anything but `pyproject.toml`, `CHANGELOG.md`, and `uv.lock` changed, and `make tag` refuses unless you are on the latest `main` with an untagged HEAD. You can also run the Github action manually. Full instructions [here](https://docs.comfy.org/registry/publishing). Join our [discord](https://discord.com/invite/comfyorg) if you have any questions!
 

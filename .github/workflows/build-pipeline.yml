@@ -18,12 +18,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Set up uv
-        uses: astral-sh/setup-uv@v10
+        uses: astral-sh/setup-uv@v10.0.1
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install dependencies
-        run: uv sync --locked
-      - name: Run Linting
-        run: uv run ruff check .
-      - name: Run Tests
-        run: uv run pytest
+        run: make install LOCKED=1
+      - name: Tidy (assert no diff)
+        run: |
+          make tidy
+          git diff --exit-code
+      - name: Lint
+        run: make lint
+      - name: Test
+        run: make test
+      - name: Build
+        run: make build

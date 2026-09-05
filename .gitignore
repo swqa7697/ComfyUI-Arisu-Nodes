@@ -112,7 +112,8 @@ yarn-error.log*
 node.zip
 .vscode/*
 !.vscode/settings.example.jsonc
-.claude/
+.claude/*
+!.claude/skills/
 
 # --- local additions ---
 .venv/
