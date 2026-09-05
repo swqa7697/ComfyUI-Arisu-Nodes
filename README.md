@@ -18,13 +18,14 @@ A package of useful nodes optimizing user experience.
 
 ## Develop
 
-Development uses [uv](https://docs.astral.sh/uv/). To create the project virtual environment with the dev tools and install the pre-commit hook (runs ruff), do:
+Development uses [uv](https://docs.astral.sh/uv/). To create the project virtual environment with the dev tools, do:
 
 ```bash
 cd ComfyUI-Arisu-Nodes
 uv sync
-uvx pre-commit install
 ```
+
+For VS Code, copy [.vscode/settings.example.jsonc](.vscode/settings.example.jsonc) to `.vscode/settings.json` and set the ComfyUI paths in it.
 
 ## Publish to Github
 
@@ -45,7 +46,10 @@ Nodes use the V3 API (`comfy_entrypoint` + `io.Schema`). An example custom node 
 
 ## Tests
 
-This repo contains unit tests written in Pytest in the `tests/` directory. It is recommended to unit test your custom node.
+Two pytest lanes live under `tests/`, both configured in `pyproject.toml`:
+
+- `tests/unit/` needs nothing but the project venv. Run it with `uv run pytest`. This is what CI runs.
+- `tests/comfyui/` imports the node pack the way ComfyUI does, so it needs ComfyUI's interpreter and source tree. Run it with `./scripts/test-comfyui.sh`. The script reads `COMFYUI_PATH` (default `~/apps/comfyui`), runs pytest on that install's Python with an ephemeral pytest layered on top, and writes nothing into the install. A bare `uv run pytest` skips this lane.
 
 - [build-pipeline.yml](.github/workflows/build-pipeline.yml) will run pytest and linter on any open PRs
 - [validate.yml](.github/workflows/validate.yml) will run [node-diff](https://github.com/Comfy-Org/node-diff) to check for breaking changes

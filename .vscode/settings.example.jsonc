@@ -1,0 +1,48 @@
+// Example VS Code workspace settings for this repository (not loaded by VS Code).
+// To use: copy this file to .vscode/settings.json (which is gitignored) and replace
+// /PATH/TO/ComfyUI with the absolute path of your ComfyUI checkout, so Pylance can
+// resolve comfy_api and torch. Requires the Ruff, Prettier and Even Better TOML extensions.
+{
+  "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python",
+  "python.analysis.typeCheckingMode": "basic",
+  "python.analysis.extraPaths": [
+    "/PATH/TO/ComfyUI",
+    "/PATH/TO/ComfyUI/custom_nodes",
+    "/PATH/TO/ComfyUI/.venv/lib/python3.13/site-packages"
+  ],
+  "files.exclude": {
+    "**/__pycache__": true,
+    "**/*.egg-info": true
+  },
+  "editor.tabSize": 2,
+  "editor.formatOnSave": true,
+  "editor.defaultFormatter": "esbenp.prettier-vscode",
+  "[jsonc]": {
+    "prettier.trailingComma": "none"
+  },
+  "[python]": {
+    "editor.tabSize": 4,
+    "editor.defaultFormatter": "charliermarsh.ruff",
+    "editor.codeActionsOnSave": {
+      "source.fixAll": "explicit",
+      "source.organizeImports": "explicit"
+    }
+  },
+  "[toml]": {
+    "editor.tabSize": 4,
+    "editor.defaultFormatter": "tamasfe.even-better-toml",
+    "editor.codeActionsOnSave": {
+      "source.fixAll": "explicit"
+    }
+  },
+  "evenBetterToml.formatter.reorderKeys": false,
+  "evenBetterToml.formatter.reorderInlineTables": false,
+  "evenBetterToml.formatter.reorderArrays": true,
+  "evenBetterToml.formatter.trailingNewline": true,
+  "evenBetterToml.formatter.allowedBlankLines": 1,
+  "evenBetterToml.formatter.columnWidth": 100,
+  "ruff.lint.extendSelect": ["I"],
+  "prettier.tabWidth": 2,
+  "prettier.semi": true,
+  "prettier.singleQuote": true
+}

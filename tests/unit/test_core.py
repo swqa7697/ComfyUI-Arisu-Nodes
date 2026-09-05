@@ -2,11 +2,7 @@
 
 import pytest
 
-from src.arisu_nodes.core import PRINT_MODES, describe_inputs, invert
-
-
-def test_print_modes():
-    assert PRINT_MODES == ("enable", "disable")
+from src.arisu_nodes.core import describe_inputs, invert
 
 
 def test_describe_inputs_lists_every_field():
