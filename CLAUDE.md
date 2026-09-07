@@ -2,8 +2,8 @@
 
 ComfyUI custom node pack on the V3 API (`comfy_entrypoint` + `io.Schema`). Python >=3.10
 (developed on 3.13), uv-managed, `src` layout. ComfyUI imports the repo-root `__init__.py`.
-`src/arisu_nodes/core.py` is stdlib-only; `src/arisu_nodes/nodes.py` needs ComfyUI's source
-tree and torch. `README.md` is the human-facing guide; this file is for agents.
+Nodes are grouped by family in `src/arisu_nodes/<family>/`: `core.py` is stdlib-only,
+`nodes.py` needs ComfyUI's source tree and torch. `README.md` is the human-facing guide; this file is for agents.
 
 ## Hard boundary: the live ComfyUI install at /home/ray/apps/comfyui
 
@@ -50,9 +50,15 @@ Human-only steps. The agent may print these commands but never runs them:
 ## Layout
 
 - `__init__.py` — the module ComfyUI imports: `ComfyExtension` subclass + `comfy_entrypoint`.
-- `src/arisu_nodes/core.py` — stdlib-only logic, unit-tested without ComfyUI.
-- `src/arisu_nodes/nodes.py` — `io.ComfyNode` classes; imports `comfy_api` and torch.
-- `tests/unit/` — ComfyUI-free lane. `tests/comfyui/` — opt-in lane, marker `comfyui`.
+- `src/arisu_nodes/<family>/core.py` — stdlib-only logic, unit-tested without ComfyUI.
+- `src/arisu_nodes/<family>/nodes.py` — `io.ComfyNode` classes; imports `comfy_api` and torch;
+  ends with `NODES: List[Type[io.ComfyNode]]`, which the root `__init__.py` concatenates.
+  Families: `minimax_h3` (live), `common` and `anima` (reserved, empty `__init__.py` only).
+  Every subpackage needs an `__init__.py`: `packages.find` uses `find_packages`, so a directory
+  without one silently drops out of the wheel. Use `.gitkeep` only in non-Python dirs (`web/js/`).
+- `tests/unit/<family>/` — ComfyUI-free lane. `tests/comfyui/<family>/` plus
+  `tests/comfyui/test_pack.py` (loads the pack like ComfyUI, asserts the node-id list) — opt-in
+  lane, marker `comfyui`. Test subdirectories carry an `__init__.py` so basenames may repeat.
 - `tests/conftest.py` — sys.path wiring (repo root, then `scripts/`, then ComfyUI); collects
   the repo root as a plain directory so the entry `__init__.py` is never imported during
   collection. Do not weaken this.
@@ -68,7 +74,8 @@ Human-only steps. The agent may print these commands but never runs them:
 - `scripts/logger.sh` — shared `log_info/log_ok/log_warn/log_error`; sourced by every script.
 - `scripts/install.sh`, `uninstall.sh`, `clean.sh`, `ensure_deps.sh` — bodies of the matching
   make targets; each `cd`s to the repo root and touches only this checkout.
-- `web/docs/<node_id>/en.md` — node help pages. `web/js/` — frontend assets.
+- `web/docs/<node_id>/en.md` — node help pages, flat by id (ComfyUI's lookup contract).
+  `web/js/<family>/` — frontend assets; the server globs `**/*.js` recursively.
 
 ## Commands
 
@@ -105,10 +112,15 @@ is appended word-split (quote-free flags only).
 
 ## Node conventions (V3)
 
-- `node_id` is prefixed `Arisu` and globally unique across a ComfyUI install; category `Arisu`.
+- `node_id` is prefixed `Arisu` and globally unique across a ComfyUI install; category
+  `Arisu Nodes/<Family>` (e.g. `Arisu Nodes/MiniMax H3`).
 - `define_schema` and `execute` are both `@classmethod`; input and output ids are unique.
 - Never define `NODE_CLASS_MAPPINGS`; ComfyUI checks V1 first and would skip the entrypoint.
-- Register every node in `get_node_list` in `__init__.py` and add `web/docs/<node_id>/en.md`.
+- Register every node in its family's `NODES` list (imported by the root `__init__.py`), add
+  `web/docs/<node_id>/en.md`, and extend `EXPECTED_NODE_IDS` in `tests/comfyui/test_pack.py`.
+- MiniMax H3 helpers are re-implemented from `comfy_extras/nodes_minimax_h3.py`, never imported
+  from it: its underscore-private names have no stability guarantee. Pure math lives in
+  `minimax_h3/core.py`; the three tensor helpers in `minimax_h3/nodes.py` use only public APIs.
 
 ## Code style
 

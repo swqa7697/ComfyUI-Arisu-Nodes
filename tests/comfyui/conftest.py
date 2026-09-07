@@ -9,4 +9,5 @@ collected, so nothing here can raise an ImportError. Run the lane via
 
 import importlib.util
 
-collect_ignore_glob = [] if importlib.util.find_spec("comfy_api") else ["test_*.py"]
+# fnmatch "*" spans "/", so the second pattern covers per-family subdirectories.
+collect_ignore_glob = [] if importlib.util.find_spec("comfy_api") else ["test_*.py", "*/test_*.py"]
