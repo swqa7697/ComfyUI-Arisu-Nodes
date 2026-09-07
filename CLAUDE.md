@@ -163,6 +163,10 @@ isort (`extend-select = ["I"]`); the first-party roots are `src = [".", "scripts
   `make release-commit` commits and pushes, `make tag` pushes a tag, and `/release-pr` opens a
   PR, so the same rule covers all three.
 - Non-trivial work goes on a branch with a PR to `main`; CI runs on PRs only.
+- Never commit directly to `main`. Never commit directly to `dev` either, unless the user
+  has confirmed they are an admin of the repo; otherwise branch off `dev` and open a PR.
+  `make tag` pushing `vX.Y.Z` from `main` is the one exception, and it pushes a tag, not a
+  commit.
 - Conventional Commits: `<type>(<scope>): <summary>`, imperative, lowercase, no period,
   <=72 chars. Types: feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert.
   Scopes: `nodes`, `core`, `tests`, `ci`, `docs`, `web`. Scope is optional.

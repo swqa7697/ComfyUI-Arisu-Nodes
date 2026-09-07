@@ -3,17 +3,16 @@ name: CI build
 on:
   pull_request:
     branches:
-      - master
       - main
 jobs:
   build:
     runs-on: ${{ matrix.os }}
     env:
-      PYTHONIOENCODING: "utf8"
+      PYTHONIOENCODING: 'utf8'
     strategy:
       matrix:
         os: [ubuntu-latest]
-        python-version: ["3.10", "3.13"]
+        python-version: ['3.10', '3.13']
 
     steps:
       - uses: actions/checkout@v4
