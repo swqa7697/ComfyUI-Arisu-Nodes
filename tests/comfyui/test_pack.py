@@ -20,7 +20,7 @@ from comfy_api.latest import ComfyExtension
 pytestmark = pytest.mark.comfyui
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-EXPECTED_NODE_IDS = ["ArisuMiniMaxH3HybridToVideo"]
+EXPECTED_NODE_IDS = ["ArisuMiniMaxH3HybridToVideo", "ArisuMiniMaxH3HybridToVideoAdvanced"]
 
 
 @pytest.fixture(scope="module")

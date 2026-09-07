@@ -63,6 +63,29 @@ stock nodes.
 
 ---
 
+### MiniMax H3 Hybrid to Video (Advanced)
+
+`ArisuMiniMaxH3HybridToVideoAdvanced` — category **Arisu Nodes/MiniMax H3** ·
+[full reference](web/docs/ArisuMiniMaxH3HybridToVideoAdvanced/en.md)
+
+The hybrid node for two-sampler latent-upscale workflows. In `sampler 1 → latent upscaler →
+sampler 2`, the first-pass keyframe latents are on the wrong grid for sampler 2, which fails with
+`shape mismatch: value tensor of shape [N, 96] cannot be broadcast to indexing result of shape [M, 96]`.
+This node re-encodes the original pixel keyframes at the upscaled size, so the second pass gets
+sharp anchors instead of resampled latents.
+
+| Input | Notes |
+|---|---|
+| everything above | Same inputs and behaviour as **MiniMax H3 Hybrid to Video**. |
+| `target_width`, `target_height` | Size of the upscaled video, multiples of 32 (default 2688 × 1536). Must equal the latent upscaler's output. |
+
+Outputs `positive` and `latent` exactly like the hybrid node, plus `positive (upscaled)` for the
+second guider. Keyframes and reference images are sized for each pass (`ref_image_size = match`
+uses that pass's pixel area) and are resized or encoded again only when the size differs; when the
+target equals the generation size the two conditionings are the same object.
+
+---
+
 ## Requirements
 
 | Requirement | Version | Notes |
@@ -117,6 +140,10 @@ workflow: delete **MiniMax H3 Image to Video** or **MiniMax H3 Reference to Vide
 
 Reference order in the prompt is fixed: images, then videos (each soundtrack's `<Audio j>` right
 before its `<Video k>`), then standalone audio. Ordinals are 1-based per type.
+
+For a two-sampler latent upscale, use **MiniMax H3 Hybrid to Video (Advanced)** instead: set
+`target_width` / `target_height` to the upscaler's output size, drive sampler 1 with `positive` and
+`latent`, and give sampler 2's guider `positive (upscaled)`.
 
 ---
 

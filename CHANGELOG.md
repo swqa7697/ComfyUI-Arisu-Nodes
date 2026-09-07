@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Add the `ArisuMiniMaxH3HybridToVideo` node (category `Arisu Nodes/MiniMax H3`): MiniMax H3 conditioning with first/last keyframes and image, video, and audio references in one node, with a `frame_picture_tags` widget choosing how the keyframes are numbered for the prompt.
+- Add the `ArisuMiniMaxH3HybridToVideoAdvanced` node (category `Arisu Nodes/MiniMax H3`): the hybrid node with `target_width` / `target_height` inputs and a third `positive (upscaled)` output whose keyframes are encoded at the upscaled size, for two-sampler latent-upscale workflows; reference images are sized for each pass, and keyframes or references already at a size are not resampled or encoded again.
 - Add the ComfyUI extension entrypoint exposing the node list and the `./web` directory for frontend assets.
 - Add project scaffolding: `src` layout, GPL-3.0-only license, README, ruff configuration, and a uv lockfile.
 - Add CI workflows for linting and tests on Python 3.10 and 3.13, and publishing to the Comfy registry on tag.

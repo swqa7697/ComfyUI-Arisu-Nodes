@@ -10,7 +10,7 @@ the pack at import time.
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Tuple, Type
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Type
 
 import comfy.model_management
 import comfy.nested_tensor
@@ -28,6 +28,8 @@ from .core import (
     REF_IMAGE_SIZE_MODES,
     VIDEO_LATENT_CHANNELS,
     align_clip_frames,
+    frame_needs_resize,
+    keyframe_canvases,
     latent_size,
     order_picture_items,
     qwen_sample_indices,
@@ -40,6 +42,9 @@ from .core import (
 
 RefItem = Dict[str, Any]
 RefBlock = Dict[str, Any]
+Conditioning = List[List[Any]]
+# A keyframe before it is fitted to a canvas: (frames [1, H, W, C], crop mode, resolved frame index).
+KeyframeSource = Tuple[torch.Tensor, str, int]
 
 
 def resize_frames(image: torch.Tensor, width: int, height: int, crop: str) -> torch.Tensor:
@@ -57,6 +62,27 @@ def resize_frames(image: torch.Tensor, width: int, height: int, crop: str) -> to
     samples = image[..., :3].movedim(-1, 1)
     samples = comfy.utils.common_upscale(samples, width, height, "lanczos", crop)
     return samples.movedim(1, -1)
+
+
+def fit_frames(image: torch.Tensor, width: int, height: int, crop: str) -> torch.Tensor:
+    """Fit an image batch to ``width`` x ``height``, skipping the resize when it already matches.
+
+    ComfyUI's lanczos path round-trips through 8-bit images even at the same
+    size, so a batch that already has the canvas size is passed through as is,
+    minus any alpha channel.
+
+    Args:
+        image: Frames shaped ``[B, H, W, C]`` in the 0-1 range.
+        width: Canvas width in pixels.
+        height: Canvas height in pixels.
+        crop: ``"disabled"`` for a plain stretch or ``"center"`` for an aspect-preserving cover-crop.
+
+    Returns:
+        Frames shaped ``[B, height, width, 3]``.
+    """
+    if frame_needs_resize(image.shape, width, height):
+        return resize_frames(image, width, height, crop)
+    return image[..., :3]
 
 
 def encode_ref_audio(audio_vae: Any, audio: Dict[str, Any]) -> Tuple[torch.Tensor, int]:
@@ -106,19 +132,34 @@ def _require_audio_vae(audio_vae: Optional[Any]) -> Any:
 
 
 def _encode_ref_images(
-    vae: Any, ref_images: Dict[str, Optional[torch.Tensor]], width: int, height: int, ref_image_size: str
-) -> Tuple[List[RefItem], List[RefBlock]]:
+    vae: Any, ref_images: Dict[str, Optional[torch.Tensor]], canvases: Sequence[Tuple[int, int]], ref_image_size: str
+) -> Tuple[List[RefItem], List[List[RefBlock]]]:
+    """Encode the reference images for every canvas, once per distinct size.
+
+    Returns the tokenizer items for the first canvas (the prompt is encoded
+    once) and one block list per canvas. A block is shared between canvases
+    whenever ``ref_image_canvas`` yields the same size for both, which is
+    always the case for ``"max"`` and for references smaller than the canvas.
+    """
     items: List[RefItem] = []
-    blocks: List[RefBlock] = []
+    blocks_per_canvas: List[List[RefBlock]] = [[] for _ in canvases]
     for img in ref_images.values():
         if img is None:
             continue
-        ref_w, ref_h = ref_image_canvas(img.shape[2], img.shape[1], width, height, ref_image_size)
-        resized = resize_frames(img[:1], ref_w, ref_h, "disabled")
-        latent_h, latent_w = latent_size(ref_w, ref_h)
-        items.append({"type": "image", "data": resized})
-        blocks.append({"kind": "image", "latent_h": latent_h, "latent_w": latent_w, "latent": vae.encode(resized)})
-    return items, blocks
+        encoded: Dict[Tuple[int, int], RefBlock] = {}
+        for canvas_blocks, (canvas_w, canvas_h) in zip(blocks_per_canvas, canvases):
+            size = ref_image_canvas(img.shape[2], img.shape[1], canvas_w, canvas_h, ref_image_size)
+            block = encoded.get(size)
+            if block is None:
+                resized = resize_frames(img[:1], size[0], size[1], "disabled")
+                if not encoded:
+                    # the text encoder sees the reference at the generation canvas only
+                    items.append({"type": "image", "data": resized})
+                latent_h, latent_w = latent_size(size[0], size[1])
+                block = {"kind": "image", "latent_h": latent_h, "latent_w": latent_w, "latent": vae.encode(resized)}
+                encoded[size] = block
+            canvas_blocks.append(block)
+    return items, blocks_per_canvas
 
 
 def _encode_ref_videos(
@@ -176,6 +217,189 @@ def _encode_ref_audios(audio_vae: Optional[Any], ref_audios: Dict[str, Optional[
     return items, blocks
 
 
+def _keyframe_sources(first_frame: Optional[torch.Tensor], last_frame: Optional[torch.Tensor], frame_count: int) -> List[KeyframeSource]:
+    sources: List[KeyframeSource] = []
+    if first_frame is not None:
+        # geometry anchor: plain stretch to canvas
+        sources.append((first_frame[:1], "disabled", 0))
+    if last_frame is not None:
+        # follower: aspect-preserving cover-crop
+        sources.append((last_frame[:1], "center", frame_count - 1))
+    return sources
+
+
+def _fit_keyframes(sources: Sequence[KeyframeSource], width: int, height: int) -> List[torch.Tensor]:
+    return [fit_frames(img, width, height, crop) for img, crop, _index in sources]
+
+
+def encode_hybrid(
+    clip: Any,
+    vae: Any,
+    audio_vae: Optional[Any],
+    prompt: str,
+    canvases: Sequence[Tuple[int, int]],
+    length: int,
+    ref_image_size: str,
+    frame_picture_tags: str,
+    first_frame: Optional[torch.Tensor],
+    last_frame: Optional[torch.Tensor],
+    ref_images: Dict[str, Optional[torch.Tensor]],
+    ref_videos: Dict[str, Optional[torch.Tensor]],
+    ref_video_audios: Dict[str, Optional[Dict[str, Any]]],
+    ref_audios: Dict[str, Optional[Dict[str, Any]]],
+) -> Tuple[List[Conditioning], Dict[str, Any]]:
+    """Build the hybrid fl2va + ref2va conditioning, once per keyframe canvas.
+
+    The prompt is tokenized and encoded once, with the keyframes and
+    references presented on the generation canvas. Every canvas then gets its
+    own conditioning sharing those text embeddings, with the keyframes encoded
+    at that canvas and the reference images sized for it. Reference videos and
+    audio never depend on the canvas, so their blocks are shared.
+
+    Args:
+        clip: The MiniMax H3 text encoder.
+        vae: The video VAE.
+        audio_vae: The audio VAE, or ``None`` when no audio reference is connected.
+        prompt: The prompt text.
+        canvases: ``(width, height)`` per conditioning; the first is the
+            generation canvas the latent is built for.
+        length: Requested frame count at 24 fps.
+        ref_image_size: One of ``REF_IMAGE_SIZE_MODES``.
+        frame_picture_tags: One of ``FRAME_TAG_MODES``.
+        first_frame: Optional keyframe pinned at frame 0.
+        last_frame: Optional keyframe pinned at the last frame.
+        ref_images: Autogrow slot dict of reference images.
+        ref_videos: Autogrow slot dict of reference clips.
+        ref_video_audios: Autogrow slot dict of reference clip soundtracks.
+        ref_audios: Autogrow slot dict of standalone reference audios.
+
+    Returns:
+        ``(conditionings, latent)``: one conditioning per canvas, in order, and
+        the empty AV latent for the generation canvas.
+    """
+    width, height = canvases[0]
+    latent, frame_count = empty_av_latent(width, height, length)
+
+    sources = _keyframe_sources(first_frame, last_frame, frame_count)
+    base_frames = _fit_keyframes(sources, width, height)
+    frame_items: List[RefItem] = [{"type": "image", "data": img} for img in base_frames]
+
+    picture_items, image_blocks = _encode_ref_images(vae, ref_images, canvases, ref_image_size)
+    video_items, video_blocks = _encode_ref_videos(vae, audio_vae, ref_videos, ref_video_audios, frame_count)
+    audio_items, audio_blocks = _encode_ref_audios(audio_vae, ref_audios)
+
+    # Presentation order: pictures, then videos (each soundtrack right before its
+    # video), then standalone audio. The frames are presentation-only here; they
+    # reach the model as keyframes, not as reference blocks.
+    ref_items = order_picture_items(frame_picture_tags, frame_items, picture_items) + video_items + audio_items
+
+    tokens = clip.tokenize(prompt, minimax_ref_items=ref_items)
+    cond = clip.encode_from_tokens_scheduled(tokens)
+
+    conds: List[Conditioning] = []
+    for i, (canvas_w, canvas_h) in enumerate(canvases):
+        frames = base_frames if i == 0 else _fit_keyframes(sources, canvas_w, canvas_h)
+        ref_blocks = image_blocks[i] + video_blocks + audio_blocks
+        values: Dict[str, Any] = {"minimax_refs": ref_blocks} if ref_blocks else {}
+        if sources:
+            values["minimax_keyframes"] = [
+                {"resolved_frame_index": index, "latent": vae.encode(img)} for img, (_src, _crop, index) in zip(frames, sources)
+            ]
+        conds.append(node_helpers.conditioning_set_values(cond, values) if values else cond)
+    return conds, latent
+
+
+def _hybrid_inputs_head() -> List[io.Input]:
+    return [
+        io.Clip.Input("clip"),
+        io.Vae.Input("vae", tooltip="Video VAE; encodes keyframes and visual references."),
+        io.Vae.Input(
+            "audio_vae",
+            optional=True,
+            tooltip="Audio VAE, needed only when a reference audio or a reference video soundtrack is connected.",
+        ),
+        io.String.Input("prompt", multiline=True, dynamic_prompts=True),
+        io.Int.Input("width", default=1344, min=32, max=MAX_RESOLUTION, step=32),
+        io.Int.Input("height", default=768, min=32, max=MAX_RESOLUTION, step=32),
+    ]
+
+
+def _hybrid_inputs_tail() -> List[io.Input]:
+    return [
+        io.Int.Input(
+            "length",
+            default=124,
+            min=5,
+            max=3600,
+            step=17,
+            tooltip="Frame count at 24 fps, snapped up to the model's 17k+5 grid (124 = ~5s; trained range is ~124-362).",
+        ),
+        io.Combo.Input(
+            "ref_image_size",
+            options=list(REF_IMAGE_SIZE_MODES),
+            default="match",
+            tooltip=(
+                "Reference image sizing. 'match' scales each ref (down only, keeping aspect) to the generation's "
+                "pixel area; 'max' uses the reference pipeline's 2048px short edge for best identity fidelity. "
+                "Reference tokens ride through every sampling step, so 'max' can be several times slower."
+            ),
+        ),
+        io.Combo.Input(
+            "frame_picture_tags",
+            options=list(FRAME_TAG_MODES),
+            default="after_refs",
+            tooltip=(
+                "How the first/last frames appear to the text encoder. 'after_refs': reference images keep "
+                "<Picture 1..n> and the frames follow as <Picture n+1..>. 'before_refs': the frames take "
+                "<Picture 1..> and references are numbered after them. 'none': the frames only pin the video "
+                "and are invisible to the prompt."
+            ),
+        ),
+        io.Image.Input("first_frame", optional=True, tooltip="Keyframe pinned at frame 0; stretched to the canvas."),
+        io.Image.Input("last_frame", optional=True, tooltip="Keyframe pinned at the last frame; center-cropped to the canvas."),
+        io.Autogrow.Input(
+            "ref_images",
+            optional=True,
+            template=io.Autogrow.TemplatePrefix(
+                input=io.Image.Input("ref_image", tooltip="Reference image (downscaled to 2048 short edge if larger, never upscaled)"),
+                prefix="ref_image_",
+                min=0,
+                max=9,
+            ),
+        ),
+        io.Autogrow.Input(
+            "ref_videos",
+            optional=True,
+            template=io.Autogrow.TemplatePrefix(
+                input=io.Image.Input("ref_video", tooltip="Reference video frames at 24 fps (2-15s)"),
+                prefix="ref_video_",
+                min=0,
+                max=3,
+            ),
+        ),
+        io.Autogrow.Input(
+            "ref_video_audios",
+            optional=True,
+            template=io.Autogrow.TemplatePrefix(
+                input=io.Audio.Input("ref_video_audio", tooltip="Soundtrack of the same-numbered reference video"),
+                prefix="ref_video_audio_",
+                min=0,
+                max=3,
+            ),
+        ),
+        io.Autogrow.Input(
+            "ref_audios",
+            optional=True,
+            template=io.Autogrow.TemplatePrefix(
+                input=io.Audio.Input("ref_audio", tooltip="Standalone reference audio"),
+                prefix="ref_audio_",
+                min=0,
+                max=3,
+            ),
+        ),
+    ]
+
+
 class ArisuMiniMaxH3HybridToVideo(io.ComfyNode):
     """fl2va and ref2va in one conditioning: first/last keyframes plus references.
 
@@ -195,91 +419,7 @@ class ArisuMiniMaxH3HybridToVideo(io.ComfyNode):
                 "MiniMax H3 conditioning with first/last keyframes and <Picture i> / <Video k> / <Audio j> "
                 "references in one node. Outputs positive conditioning and the AV latent."
             ),
-            inputs=[
-                io.Clip.Input("clip"),
-                io.Vae.Input("vae", tooltip="Video VAE; encodes keyframes and visual references."),
-                io.Vae.Input(
-                    "audio_vae",
-                    optional=True,
-                    tooltip="Audio VAE, needed only when a reference audio or a reference video soundtrack is connected.",
-                ),
-                io.String.Input("prompt", multiline=True, dynamic_prompts=True),
-                io.Int.Input("width", default=1344, min=32, max=MAX_RESOLUTION, step=32),
-                io.Int.Input("height", default=768, min=32, max=MAX_RESOLUTION, step=32),
-                io.Int.Input(
-                    "length",
-                    default=124,
-                    min=5,
-                    max=3600,
-                    step=17,
-                    tooltip="Frame count at 24 fps, snapped up to the model's 17k+5 grid (124 = ~5s; trained range is ~124-362).",
-                ),
-                io.Combo.Input(
-                    "ref_image_size",
-                    options=list(REF_IMAGE_SIZE_MODES),
-                    default="match",
-                    tooltip=(
-                        "Reference image sizing. 'match' scales each ref (down only, keeping aspect) to the generation's "
-                        "pixel area; 'max' uses the reference pipeline's 2048px short edge for best identity fidelity. "
-                        "Reference tokens ride through every sampling step, so 'max' can be several times slower."
-                    ),
-                ),
-                io.Combo.Input(
-                    "frame_picture_tags",
-                    options=list(FRAME_TAG_MODES),
-                    default="after_refs",
-                    tooltip=(
-                        "How the first/last frames appear to the text encoder. 'after_refs': reference images keep "
-                        "<Picture 1..n> and the frames follow as <Picture n+1..>. 'before_refs': the frames take "
-                        "<Picture 1..> and references are numbered after them. 'none': the frames only pin the video "
-                        "and are invisible to the prompt."
-                    ),
-                ),
-                io.Image.Input("first_frame", optional=True, tooltip="Keyframe pinned at frame 0; stretched to the canvas."),
-                io.Image.Input("last_frame", optional=True, tooltip="Keyframe pinned at the last frame; center-cropped to the canvas."),
-                io.Autogrow.Input(
-                    "ref_images",
-                    optional=True,
-                    template=io.Autogrow.TemplatePrefix(
-                        input=io.Image.Input(
-                            "ref_image", tooltip="Reference image (downscaled to 2048 short edge if larger, never upscaled)"
-                        ),
-                        prefix="ref_image_",
-                        min=0,
-                        max=9,
-                    ),
-                ),
-                io.Autogrow.Input(
-                    "ref_videos",
-                    optional=True,
-                    template=io.Autogrow.TemplatePrefix(
-                        input=io.Image.Input("ref_video", tooltip="Reference video frames at 24 fps (2-15s)"),
-                        prefix="ref_video_",
-                        min=0,
-                        max=3,
-                    ),
-                ),
-                io.Autogrow.Input(
-                    "ref_video_audios",
-                    optional=True,
-                    template=io.Autogrow.TemplatePrefix(
-                        input=io.Audio.Input("ref_video_audio", tooltip="Soundtrack of the same-numbered reference video"),
-                        prefix="ref_video_audio_",
-                        min=0,
-                        max=3,
-                    ),
-                ),
-                io.Autogrow.Input(
-                    "ref_audios",
-                    optional=True,
-                    template=io.Autogrow.TemplatePrefix(
-                        input=io.Audio.Input("ref_audio", tooltip="Standalone reference audio"),
-                        prefix="ref_audio_",
-                        min=0,
-                        max=3,
-                    ),
-                ),
-            ],
+            inputs=[*_hybrid_inputs_head(), *_hybrid_inputs_tail()],
             outputs=[io.Conditioning.Output(display_name="positive"), io.Latent.Output()],
         )
 
@@ -302,44 +442,115 @@ class ArisuMiniMaxH3HybridToVideo(io.ComfyNode):
         ref_video_audios: Optional[Dict[str, Optional[Dict[str, Any]]]] = None,
         ref_audios: Optional[Dict[str, Optional[Dict[str, Any]]]] = None,
     ) -> io.NodeOutput:
-        latent, frame_count = empty_av_latent(width, height, length)
-
-        frame_items: List[RefItem] = []
-        keyframes: List[Dict[str, Any]] = []
-        if first_frame is not None:
-            # geometry anchor: plain stretch to canvas
-            img = resize_frames(first_frame[:1], width, height, "disabled")
-            frame_items.append({"type": "image", "data": img})
-            keyframes.append({"resolved_frame_index": 0, "image": img})
-        if last_frame is not None:
-            # follower: aspect-preserving cover-crop
-            img = resize_frames(last_frame[:1], width, height, "center")
-            frame_items.append({"type": "image", "data": img})
-            keyframes.append({"resolved_frame_index": frame_count - 1, "image": img})
-
-        picture_items, ref_blocks = _encode_ref_images(vae, ref_images or {}, width, height, ref_image_size)
-        video_items, video_blocks = _encode_ref_videos(vae, audio_vae, ref_videos or {}, ref_video_audios or {}, frame_count)
-        audio_items, audio_blocks = _encode_ref_audios(audio_vae, ref_audios or {})
-
-        # Presentation order: pictures, then videos (each soundtrack right before its
-        # video), then standalone audio. The frames are presentation-only here; they
-        # reach the model as keyframes, not as reference blocks.
-        ref_items = order_picture_items(frame_picture_tags, frame_items, picture_items) + video_items + audio_items
-        ref_blocks = ref_blocks + video_blocks + audio_blocks
-
-        tokens = clip.tokenize(prompt, minimax_ref_items=ref_items)
-        cond = clip.encode_from_tokens_scheduled(tokens)
-
-        values: Dict[str, Any] = {}
-        if keyframes:
-            for kf in keyframes:
-                kf["latent"] = vae.encode(kf.pop("image"))
-            values["minimax_keyframes"] = keyframes
-        if ref_blocks:
-            values["minimax_refs"] = ref_blocks
-        if values:
-            cond = node_helpers.conditioning_set_values(cond, values)
-        return io.NodeOutput(cond, latent)
+        conds, latent = encode_hybrid(
+            clip,
+            vae,
+            audio_vae,
+            prompt,
+            [(width, height)],
+            length,
+            ref_image_size,
+            frame_picture_tags,
+            first_frame,
+            last_frame,
+            ref_images or {},
+            ref_videos or {},
+            ref_video_audios or {},
+            ref_audios or {},
+        )
+        return io.NodeOutput(conds[0], latent)
 
 
-NODES: List[Type[io.ComfyNode]] = [ArisuMiniMaxH3HybridToVideo]
+class ArisuMiniMaxH3HybridToVideoAdvanced(io.ComfyNode):
+    """The hybrid node plus a second conditioning whose keyframes fit the upscaled video.
+
+    In a two-sampler latent-upscale workflow the keyframe latents of the first
+    pass are on the wrong spatial grid for the second sampler. Re-encoding the
+    original pixel keyframes at the target size keeps them sharp, unlike
+    resampling their latents.
+    """
+
+    @classmethod
+    def define_schema(cls) -> io.Schema:
+        return io.Schema(
+            node_id="ArisuMiniMaxH3HybridToVideoAdvanced",
+            display_name="MiniMax H3 Hybrid to Video (Advanced)",
+            category="Arisu Nodes/MiniMax H3",
+            description=(
+                "MiniMax H3 Hybrid to Video for two-sampler latent upscaling: also outputs a positive conditioning "
+                "whose keyframes are encoded at target_width x target_height, for the sampler that refines the "
+                "upscaled latent."
+            ),
+            inputs=[
+                *_hybrid_inputs_head(),
+                io.Int.Input(
+                    "target_width",
+                    default=2688,
+                    min=32,
+                    max=MAX_RESOLUTION,
+                    step=32,
+                    tooltip="Width of the upscaled video, as produced by the latent upscaler between the two samplers.",
+                ),
+                io.Int.Input(
+                    "target_height",
+                    default=1536,
+                    min=32,
+                    max=MAX_RESOLUTION,
+                    step=32,
+                    tooltip="Height of the upscaled video, as produced by the latent upscaler between the two samplers.",
+                ),
+                *_hybrid_inputs_tail(),
+            ],
+            outputs=[
+                io.Conditioning.Output("positive"),
+                io.Latent.Output("latent"),
+                io.Conditioning.Output(
+                    "positive_upscaled",
+                    display_name="positive (upscaled)",
+                    tooltip="Same prompt and references, with the keyframes encoded at target_width x target_height.",
+                ),
+            ],
+        )
+
+    @classmethod
+    def execute(
+        cls,
+        clip: Any,
+        vae: Any,
+        prompt: str,
+        width: int,
+        height: int,
+        target_width: int,
+        target_height: int,
+        length: int,
+        ref_image_size: str,
+        frame_picture_tags: str,
+        audio_vae: Optional[Any] = None,
+        first_frame: Optional[torch.Tensor] = None,
+        last_frame: Optional[torch.Tensor] = None,
+        ref_images: Optional[Dict[str, Optional[torch.Tensor]]] = None,
+        ref_videos: Optional[Dict[str, Optional[torch.Tensor]]] = None,
+        ref_video_audios: Optional[Dict[str, Optional[Dict[str, Any]]]] = None,
+        ref_audios: Optional[Dict[str, Optional[Dict[str, Any]]]] = None,
+    ) -> io.NodeOutput:
+        conds, latent = encode_hybrid(
+            clip,
+            vae,
+            audio_vae,
+            prompt,
+            keyframe_canvases(width, height, target_width, target_height),
+            length,
+            ref_image_size,
+            frame_picture_tags,
+            first_frame,
+            last_frame,
+            ref_images or {},
+            ref_videos or {},
+            ref_video_audios or {},
+            ref_audios or {},
+        )
+        # with a single canvas both conditionings are the same object: nothing was encoded twice
+        return io.NodeOutput(conds[0], latent, conds[-1])
+
+
+NODES: List[Type[io.ComfyNode]] = [ArisuMiniMaxH3HybridToVideo, ArisuMiniMaxH3HybridToVideoAdvanced]

@@ -8,6 +8,8 @@ from src.arisu_nodes.minimax_h3.core import (
     adapt_canvas,
     align_clip_frames,
     align_frame_count,
+    frame_needs_resize,
+    keyframe_canvases,
     latent_size,
     order_picture_items,
     qwen_sample_indices,
@@ -45,6 +47,7 @@ def test_adapt_canvas(width, height, expected):
 
 def test_ref_image_canvas_match_scales_down_to_target_area():
     assert ref_image_canvas(4096, 2048, 1344, 768, "match") == (1440, 704)
+    assert ref_image_canvas(4096, 2048, 2688, 1536, "match") == (2880, 1440)
 
 
 def test_ref_image_canvas_never_upscales():
@@ -105,3 +108,19 @@ def test_order_picture_items_rejects_unknown_mode():
 
 def test_latent_size_is_height_then_width():
     assert latent_size(1344, 768) == (48, 84)
+
+
+def test_keyframe_canvases_lists_generation_canvas_first():
+    assert keyframe_canvases(1344, 768, 2688, 1536) == [(1344, 768), (2688, 1536)]
+
+
+def test_keyframe_canvases_collapses_equal_target():
+    assert keyframe_canvases(1344, 768, 1344, 768) == [(1344, 768)]
+
+
+@pytest.mark.parametrize(
+    ("shape", "expected"),
+    [((1, 768, 1344, 3), False), ((1, 768, 1344, 4), False), ((1, 768, 1024, 3), True), ((1, 1536, 1344, 3), True)],
+)
+def test_frame_needs_resize(shape, expected):
+    assert frame_needs_resize(shape, 1344, 768) is expected

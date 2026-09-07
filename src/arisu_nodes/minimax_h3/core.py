@@ -251,3 +251,36 @@ def latent_size(width: int, height: int) -> Tuple[int, int]:
         ``(latent_height, latent_width)`` at the 16x spatial downscale.
     """
     return height // SPATIAL_DOWNSCALE, width // SPATIAL_DOWNSCALE
+
+
+def keyframe_canvases(width: int, height: int, target_width: int, target_height: int) -> List[Tuple[int, int]]:
+    """Distinct canvases the keyframes must be encoded at, generation canvas first.
+
+    Args:
+        width: Generation width in pixels.
+        height: Generation height in pixels.
+        target_width: Width of the upscaled video in pixels.
+        target_height: Height of the upscaled video in pixels.
+
+    Returns:
+        ``[(width, height)]`` when the target equals the generation canvas, else
+        ``[(width, height), (target_width, target_height)]``.
+    """
+    canvases = [(width, height)]
+    if (target_width, target_height) != (width, height):
+        canvases.append((target_width, target_height))
+    return canvases
+
+
+def frame_needs_resize(frame_shape: Sequence[int], width: int, height: int) -> bool:
+    """Whether an image batch has to be resampled to fit a canvas.
+
+    Args:
+        frame_shape: Shape of the image batch, ``[B, H, W, C]``.
+        width: Canvas width in pixels.
+        height: Canvas height in pixels.
+
+    Returns:
+        ``True`` when the batch's ``(W, H)`` differ from ``(width, height)``.
+    """
+    return (frame_shape[2], frame_shape[1]) != (width, height)
