@@ -1,0 +1,30 @@
+# Paths the published Comfy Registry archive does not need.
+#
+# `comfy node publish` zips every git-tracked file minus these patterns
+# (gitwildmatch, the .gitignore syntax); `[tool.comfy].includes` in
+# pyproject.toml forces a path back in. Keeping dev tooling out shrinks a
+# ComfyUI-Manager install and leaves the registry's security scan looking at
+# shipped code only.
+#
+# What stays: __init__.py, src/, web/, assets/ (the README's icon),
+# pyproject.toml (registry metadata), README.md (shown by Manager),
+# CHANGELOG.md, LICENSE.
+
+# Dev tooling and CI
+.comfyignore
+.github/
+.claude/
+.vscode/
+scripts/
+tests/
+Makefile
+tidy.sh
+
+# Dev environment pins; the pack itself has no runtime dependencies
+uv.lock
+.python-version
+.gitignore
+
+# Agent-facing docs; README.md is the human-facing guide and ships
+AGENTS.md
+CLAUDE.md
