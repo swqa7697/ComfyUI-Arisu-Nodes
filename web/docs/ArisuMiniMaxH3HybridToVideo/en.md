@@ -16,6 +16,7 @@ sets both on one conditioning.
 | `clip`               | CLIP   | The MiniMax H3 text encoder (Qwen3-VL).                                                            |
 | `vae`                | VAE    | Video VAE; encodes keyframes and visual references.                                                |
 | `audio_vae`          | VAE    | Optional. Audio VAE, needed only when a reference audio or a reference video soundtrack is connected. |
+| `settings`           | ARISU_MINIMAX_H3_SETTINGS | Optional. Bundle from a **MiniMax H3 Video Settings** node. When linked, or advertised by such a node in this graph, it overrides `width`, `height` and `length`; the greyed widgets are then ignored. |
 | `prompt`             | STRING | Prompt. Refer to references with the same `<Picture i>` / `<Video k>` / `<Audio j>` tags.          |
 | `width`, `height`    | INT    | Canvas in pixels, multiples of 32 (default 1344 x 768).                                            |
 | `length`             | INT    | Frame count at 24 fps, snapped up to the 17k+5 grid (default 124, about 5 s).                      |

@@ -13,9 +13,12 @@ from src.arisu_nodes.minimax_h3.core import (
     adapt_canvas,
     align_clip_frames,
     align_frame_count,
+    canvas_from_megapixels,
+    frames_for_duration,
     order_picture_items,
     ref_image_canvas,
     ref_video_canvas,
+    scaled_canvas,
     temporal_shape,
     validate_context_streams,
     video_frame_count,
@@ -86,3 +89,27 @@ def test_validate_context_streams_rejects_off_layout_pairs():
     for video_shape, audio_shape, match in cases:
         with pytest.raises(ValueError, match=match):
             validate_context_streams(video_shape, audio_shape)
+
+
+def test_settings_maths_snap_to_the_canvas_and_frame_grids():
+    # (aspect ratio, megapixels) -> canvas; the core Resolution Selector's 1024^2 megapixel, rounded to 32
+    canvases = [
+        (("16:9 (Widescreen)", 1.0), (1376, 768)),
+        (("3:4 (Portrait Standard)", 0.5), (640, 832)),
+        (("1:1 (Square)", 0.1), (320, 320)),
+        (("21:9 (Ultrawide)", 0.1), (480, 224)),
+    ]
+    for (aspect_ratio, megapixels), expected in canvases:
+        assert canvas_from_megapixels(aspect_ratio, megapixels) == expected, f"case={(aspect_ratio, megapixels)!r}"
+    with pytest.raises(ValueError, match="aspect_ratio"):
+        canvas_from_megapixels("2:1", 1.0)
+
+    # scaling rounds to 32 and never drops below one multiple
+    assert scaled_canvas(640, 832, 2.0) == (1280, 1664)
+    assert scaled_canvas(1376, 768, 1.25) == (1728, 960)
+    assert scaled_canvas(64, 32, 0.25) == (32, 32)
+
+    # (seconds, frames): 24 fps rounded, floored at 5, snapped up to 17k+5
+    durations = [(0.1, 5), (0.2, 5), (5.0, 124), (5.2, 141), (10.0, 243)]
+    for seconds, frames in durations:
+        assert frames_for_duration(seconds) == frames, f"case={seconds!r}"

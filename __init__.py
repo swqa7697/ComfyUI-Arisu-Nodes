@@ -6,6 +6,7 @@ from typing import List, Type
 
 from comfy_api.latest import ComfyExtension, io
 
+from .src.arisu_nodes.common.nodes import NODES as COMMON_NODES
 from .src.arisu_nodes.minimax_h3.nodes import NODES as MINIMAX_H3_NODES
 
 __all__ = ["WEB_DIRECTORY", "comfy_entrypoint"]
@@ -23,7 +24,7 @@ class ArisuNodesExtension(ComfyExtension):
             The node classes, one family after another, in the order they appear
             in the docs.
         """
-        return [*MINIMAX_H3_NODES]
+        return [*MINIMAX_H3_NODES, *COMMON_NODES]
 
 
 async def comfy_entrypoint() -> ArisuNodesExtension:

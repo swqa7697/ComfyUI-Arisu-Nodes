@@ -10,7 +10,7 @@ multiple, and the reference sizing rules.
 from __future__ import annotations
 
 import math
-from typing import List, Optional, Sequence, Tuple, TypeVar
+from typing import Dict, List, Mapping, Optional, Sequence, Tuple, TypeVar
 
 T = TypeVar("T")
 
@@ -32,6 +32,20 @@ CLIP_FRAME_STEP = 17
 REF_IMAGE_SIZE_MODES = ("match", "max")
 FRAME_TAG_MODES = ("after_refs", "before_refs", "none")
 CROP_MODES = ("disabled", "center")
+# The labels of ComfyUI's core Resolution Selector node, so workflows read the same.
+ASPECT_RATIOS: Tuple[Tuple[str, int, int], ...] = (
+    ("1:1 (Square)", 1, 1),
+    ("2:3 (Portrait Photo)", 2, 3),
+    ("3:2 (Photo)", 3, 2),
+    ("3:4 (Portrait Standard)", 3, 4),
+    ("4:3 (Standard)", 4, 3),
+    ("9:16 (Portrait Widescreen)", 9, 16),
+    ("16:9 (Widescreen)", 16, 9),
+    ("21:9 (Ultrawide)", 21, 9),
+)
+ASPECT_RATIO_LABELS: Tuple[str, ...] = tuple(label for label, _w, _h in ASPECT_RATIOS)
+# The core node's megapixel: 1024 x 1024 pixels, not 10^6.
+MEGAPIXEL = 1024 * 1024
 
 
 def align_frame_count(n: int) -> int:
@@ -348,3 +362,70 @@ def resize_target(video_shape: Sequence[int], width: int, height: int) -> Option
     if (video_shape[3], video_shape[4]) == target:
         return None
     return target
+
+
+def canvas_from_megapixels(aspect_ratio: str, megapixels: float) -> Tuple[int, int]:
+    """Size a canvas from an aspect ratio label and a pixel budget, on the 32-pixel grid.
+
+    Mirrors ComfyUI's core Resolution Selector with ``multiple`` fixed at the
+    MiniMax H3 canvas multiple.
+
+    Args:
+        aspect_ratio: One of ``ASPECT_RATIO_LABELS``.
+        megapixels: Pixel budget in units of 1024 x 1024.
+
+    Returns:
+        ``(width, height)`` rounded to multiples of 32, never below 32.
+
+    Raises:
+        ValueError: If ``aspect_ratio`` is not one of ``ASPECT_RATIO_LABELS``.
+    """
+    for label, w_ratio, h_ratio in ASPECT_RATIOS:
+        if label == aspect_ratio:
+            scale = math.sqrt(megapixels * MEGAPIXEL / (w_ratio * h_ratio))
+            return round_to_canvas(w_ratio * scale), round_to_canvas(h_ratio * scale)
+    raise ValueError(f"unknown aspect_ratio {aspect_ratio!r}; expected one of {ASPECT_RATIO_LABELS}")
+
+
+def scaled_canvas(width: int, height: int, factor: float) -> Tuple[int, int]:
+    """Scale a canvas by a factor and snap the result to the 32-pixel grid.
+
+    Args:
+        width: Canvas width in pixels.
+        height: Canvas height in pixels.
+        factor: Upscale factor.
+
+    Returns:
+        ``(width, height)`` of the scaled canvas, multiples of 32, never below 32.
+    """
+    return round_to_canvas(width * factor), round_to_canvas(height * factor)
+
+
+def frames_for_duration(seconds: float) -> int:
+    """Frame count for a duration at 24 fps, snapped up to the 17k+5 grid.
+
+    Args:
+        seconds: Clip length in seconds.
+
+    Returns:
+        The aligned frame count, at least 5; 5.0 s gives 124, the stock default.
+    """
+    return align_frame_count(max(MIN_CLIP_FRAMES, round(seconds * FPS)))
+
+
+def apply_settings(settings: Optional[Mapping[str, int]], **values: int) -> Dict[str, int]:
+    """Override widget values with those of a settings bundle.
+
+    Args:
+        settings: The bundle from a video settings node, or ``None`` when none is connected.
+        **values: The consumer's own values, keyed by input id.
+
+    Returns:
+        ``values`` with every key present in ``settings`` replaced. Keys of the
+        bundle the consumer did not ask for are ignored, so an upscale bundle
+        fits the plain hybrid node and a plain bundle leaves the Advanced node's
+        target size to its widgets.
+    """
+    if not settings:
+        return dict(values)
+    return {key: settings.get(key, value) for key, value in values.items()}

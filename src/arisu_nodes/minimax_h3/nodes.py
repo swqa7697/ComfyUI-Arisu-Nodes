@@ -23,6 +23,7 @@ from comfy_api.latest import io
 from nodes import MAX_RESOLUTION
 
 from .core import (
+    ASPECT_RATIO_LABELS,
     AUDIO_CHANNELS,
     AUDIO_LATENT_CHANNELS,
     CROP_MODES,
@@ -30,7 +31,10 @@ from .core import (
     REF_IMAGE_SIZE_MODES,
     VIDEO_LATENT_CHANNELS,
     align_clip_frames,
+    apply_settings,
+    canvas_from_megapixels,
     frame_needs_resize,
+    frames_for_duration,
     keyframe_canvases,
     latent_size,
     order_picture_items,
@@ -39,6 +43,7 @@ from .core import (
     ref_image_canvas,
     ref_video_canvas,
     resize_target,
+    scaled_canvas,
     soundtrack_key,
     temporal_shape,
     validate_context_streams,
@@ -50,6 +55,9 @@ RefBlock = Dict[str, Any]
 Conditioning = List[List[Any]]
 # A keyframe before it is fitted to a canvas: (frames [1, H, W, C], crop mode, resolved frame index).
 KeyframeSource = Tuple[torch.Tensor, str, int]
+# The bundle a video settings node emits: width, height, length, and for the upscale variant target_width, target_height.
+SettingsBundle = Dict[str, int]
+Settings = io.Custom("ARISU_MINIMAX_H3_SETTINGS")
 
 
 def resize_frames(image: torch.Tensor, width: int, height: int, crop: str) -> torch.Tensor:
@@ -416,6 +424,14 @@ def _hybrid_inputs_head() -> List[io.Input]:
             optional=True,
             tooltip="Audio VAE, needed only when a reference audio or a reference video soundtrack is connected.",
         ),
+        Settings.Input(
+            "settings",
+            optional=True,
+            tooltip=(
+                "From a MiniMax H3 Video Settings node. When linked, or advertised by such a node in this graph, "
+                "its width, height and length (and target size, from the Upscale variant) override the widgets here."
+            ),
+        ),
         io.String.Input("prompt", multiline=True, dynamic_prompts=True),
         io.Int.Input("width", default=1344, min=32, max=MAX_RESOLUTION, step=32),
         io.Int.Input("height", default=768, min=32, max=MAX_RESOLUTION, step=32),
@@ -545,6 +561,7 @@ class ArisuMiniMaxH3HybridToVideo(io.ComfyNode):
         ref_videos: Optional[Dict[str, Optional[torch.Tensor]]] = None,
         ref_video_audios: Optional[Dict[str, Optional[Dict[str, Any]]]] = None,
         ref_audios: Optional[Dict[str, Optional[Dict[str, Any]]]] = None,
+        settings: Optional[SettingsBundle] = None,
     ) -> io.NodeOutput:
         """Encode the hybrid conditioning and build the matching AV latent.
 
@@ -564,18 +581,20 @@ class ArisuMiniMaxH3HybridToVideo(io.ComfyNode):
             ref_videos: Autogrow slot dict of reference clips.
             ref_video_audios: Autogrow slot dict of reference clip soundtracks.
             ref_audios: Autogrow slot dict of standalone reference audios.
+            settings: Optional bundle from a video settings node; its keys override ``width``, ``height`` and ``length``.
 
         Returns:
             ``(positive, latent)``: the conditioning for the generation canvas and
             the empty AV latent built for it.
         """
+        canvas = apply_settings(settings, width=width, height=height, length=length)
         conds, latent = encode_hybrid(
             clip,
             vae,
             audio_vae,
             prompt,
-            [(width, height)],
-            length,
+            [(canvas["width"], canvas["height"])],
+            canvas["length"],
             ref_image_size,
             frame_picture_tags,
             first_frame,
@@ -666,6 +685,7 @@ class ArisuMiniMaxH3HybridToVideoAdvanced(io.ComfyNode):
         ref_videos: Optional[Dict[str, Optional[torch.Tensor]]] = None,
         ref_video_audios: Optional[Dict[str, Optional[Dict[str, Any]]]] = None,
         ref_audios: Optional[Dict[str, Optional[Dict[str, Any]]]] = None,
+        settings: Optional[SettingsBundle] = None,
     ) -> io.NodeOutput:
         """Encode one conditioning per keyframe canvas and build the AV latent.
 
@@ -687,6 +707,8 @@ class ArisuMiniMaxH3HybridToVideoAdvanced(io.ComfyNode):
             ref_videos: Autogrow slot dict of reference clips.
             ref_video_audios: Autogrow slot dict of reference clip soundtracks.
             ref_audios: Autogrow slot dict of standalone reference audios.
+            settings: Optional bundle from a video settings node; its keys override the size and length widgets,
+                the target size too when the bundle carries one.
 
         Returns:
             ``(positive, latent, positive_target)``: the conditioning for the
@@ -694,13 +716,14 @@ class ArisuMiniMaxH3HybridToVideoAdvanced(io.ComfyNode):
             whose keyframes are encoded at the target size. When the target size
             equals the generation size both conditionings are the same object.
         """
+        canvas = apply_settings(settings, width=width, height=height, length=length, target_width=target_width, target_height=target_height)
         conds, latent = encode_hybrid(
             clip,
             vae,
             audio_vae,
             prompt,
-            keyframe_canvases(width, height, target_width, target_height),
-            length,
+            keyframe_canvases(canvas["width"], canvas["height"], canvas["target_width"], canvas["target_height"]),
+            canvas["length"],
             ref_image_size,
             frame_picture_tags,
             first_frame,
@@ -809,4 +832,174 @@ class ArisuMiniMaxH3ContextLatentResize(io.ComfyNode):
         return io.NodeOutput(out)
 
 
-NODES: List[Type[io.ComfyNode]] = [ArisuMiniMaxH3HybridToVideo, ArisuMiniMaxH3HybridToVideoAdvanced, ArisuMiniMaxH3ContextLatentResize]
+def _settings_inputs_head() -> List[io.Input]:
+    return [
+        io.Combo.Input(
+            "aspect_ratio",
+            options=list(ASPECT_RATIO_LABELS),
+            default="16:9 (Widescreen)",
+            tooltip="Aspect ratio of the generation canvas.",
+        ),
+        io.Float.Input(
+            "megapixels",
+            default=1.0,
+            min=0.1,
+            max=16.0,
+            step=0.1,
+            tooltip=(
+                "Pixel budget of the canvas in megapixels (1 MP = 1024 x 1024), rounded to multiples of 32. "
+                "The stock 1344 x 768 canvas is about 0.98 MP."
+            ),
+        ),
+    ]
+
+
+def _settings_inputs_tail() -> List[io.Input]:
+    return [
+        io.Float.Input(
+            "duration",
+            default=5.0,
+            min=0.2,
+            max=150.0,
+            step=0.1,
+            tooltip="Clip length in seconds at 24 fps, snapped up to the model's 17k+5 frame grid (5.0 s = 124 frames).",
+        ),
+        io.Boolean.Input(
+            "advertise",
+            default=False,
+            tooltip=(
+                "Drive every MiniMax H3 Hybrid to Video node in this graph that has no settings link: their size and length "
+                "widgets grey out at once and take these values. Off by default. Read by the frontend; the outputs below stay "
+                "available either way."
+            ),
+        ),
+    ]
+
+
+def _settings_outputs_head() -> List[io.Output]:
+    return [
+        io.Int.Output("width", tooltip="Canvas width in pixels, a multiple of 32."),
+        io.Int.Output("height", tooltip="Canvas height in pixels, a multiple of 32."),
+        io.Int.Output("length", tooltip="Frame count on the 17k+5 grid, for the hybrid nodes' length input."),
+    ]
+
+
+def _settings_bundle_output() -> io.Output:
+    return Settings.Output("settings", tooltip="Bundle for the hybrid nodes' settings input; carries every value above.")
+
+
+class ArisuMiniMaxH3VideoSettings(io.ComfyNode):
+    """One place for the canvas and the clip length of a MiniMax H3 workflow.
+
+    Replaces the aspect-ratio / megapixel / duration helper chains workflows
+    build from generic math nodes, and hands the result to the hybrid nodes
+    as one bundle instead of three links.
+    """
+
+    @classmethod
+    def define_schema(cls) -> io.Schema:
+        """Declare the node's id, category, inputs and outputs.
+
+        Returns:
+            The schema taking an aspect ratio, a pixel budget and a duration, and returning
+            width, height, length and the settings bundle.
+        """
+        return io.Schema(
+            node_id="ArisuMiniMaxH3VideoSettings",
+            display_name="MiniMax H3 Video Settings",
+            category="Arisu Nodes/MiniMax H3",
+            description=(
+                "Canvas size from an aspect ratio and a megapixel budget, and frame count from a duration in seconds, "
+                "on MiniMax H3's grids. Outputs the plain numbers and a settings bundle the hybrid nodes accept; with "
+                "advertise on, every hybrid node in this graph without a settings link takes the bundle automatically."
+            ),
+            inputs=[*_settings_inputs_head(), *_settings_inputs_tail()],
+            outputs=[*_settings_outputs_head(), _settings_bundle_output()],
+        )
+
+    @classmethod
+    def execute(cls, aspect_ratio: str, megapixels: float, duration: float, advertise: bool) -> io.NodeOutput:
+        """Derive the canvas and frame count.
+
+        Args:
+            aspect_ratio: One of ``ASPECT_RATIO_LABELS``.
+            megapixels: Pixel budget in units of 1024 x 1024.
+            duration: Clip length in seconds.
+            advertise: Frontend-only flag; the backend does not read it.
+
+        Returns:
+            ``(width, height, length, settings)``.
+        """
+        width, height = canvas_from_megapixels(aspect_ratio, megapixels)
+        length = frames_for_duration(duration)
+        return io.NodeOutput(width, height, length, {"width": width, "height": height, "length": length})
+
+
+class ArisuMiniMaxH3VideoSettingsUpscale(io.ComfyNode):
+    """The video settings node plus the target size of a latent-upscale pass."""
+
+    @classmethod
+    def define_schema(cls) -> io.Schema:
+        """Declare the node's id, category, inputs and outputs.
+
+        Returns:
+            The settings schema with an ``upscale_factor`` input and the upscale factor and
+            target size added to the outputs and the bundle.
+        """
+        return io.Schema(
+            node_id="ArisuMiniMaxH3VideoSettingsUpscale",
+            display_name="MiniMax H3 Video Settings (Upscale)",
+            category="Arisu Nodes/MiniMax H3",
+            description=(
+                "MiniMax H3 Video Settings for two-sampler latent-upscale workflows: also derives the upscaled "
+                "target size from an upscale factor, for the Advanced hybrid node and the latent upscaler."
+            ),
+            inputs=[
+                *_settings_inputs_head(),
+                io.Float.Input(
+                    "upscale_factor",
+                    default=2.0,
+                    min=1.0,
+                    max=8.0,
+                    step=0.05,
+                    tooltip="Factor of the latent upscaler between the two samplers; the target size is rounded to multiples of 32.",
+                ),
+                *_settings_inputs_tail(),
+            ],
+            outputs=[
+                *_settings_outputs_head(),
+                io.Float.Output("upscale_factor", tooltip="The factor, for a latent upscaler's multiplier input."),
+                io.Int.Output("target_width", tooltip="Upscaled width in pixels, a multiple of 32."),
+                io.Int.Output("target_height", tooltip="Upscaled height in pixels, a multiple of 32."),
+                _settings_bundle_output(),
+            ],
+        )
+
+    @classmethod
+    def execute(cls, aspect_ratio: str, megapixels: float, upscale_factor: float, duration: float, advertise: bool) -> io.NodeOutput:
+        """Derive the canvas, the upscaled target and the frame count.
+
+        Args:
+            aspect_ratio: One of ``ASPECT_RATIO_LABELS``.
+            megapixels: Pixel budget in units of 1024 x 1024.
+            upscale_factor: Factor of the latent upscale pass.
+            duration: Clip length in seconds.
+            advertise: Frontend-only flag; the backend does not read it.
+
+        Returns:
+            ``(width, height, length, upscale_factor, target_width, target_height, settings)``.
+        """
+        width, height = canvas_from_megapixels(aspect_ratio, megapixels)
+        target_width, target_height = scaled_canvas(width, height, upscale_factor)
+        length = frames_for_duration(duration)
+        bundle = {"width": width, "height": height, "length": length, "target_width": target_width, "target_height": target_height}
+        return io.NodeOutput(width, height, length, upscale_factor, target_width, target_height, bundle)
+
+
+NODES: List[Type[io.ComfyNode]] = [
+    ArisuMiniMaxH3HybridToVideo,
+    ArisuMiniMaxH3HybridToVideoAdvanced,
+    ArisuMiniMaxH3ContextLatentResize,
+    ArisuMiniMaxH3VideoSettings,
+    ArisuMiniMaxH3VideoSettingsUpscale,
+]
