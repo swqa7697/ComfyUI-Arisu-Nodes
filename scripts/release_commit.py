@@ -1,6 +1,6 @@
 """Release commit on a release branch: commit the version bump and push.
 
-The subject is ``chore: bump version to X.Y.Z`` (``RELEASE_SUBJECT_RE`` in
+The subject is ``release arisu_nodes: X.Y.Z`` (``RELEASE_SUBJECT_RE`` in
 ``release_common.py``); ``/release-pr`` validates it before opening the PR.
 
 Rejects when: on ``main``; nothing changed; anything other than ``pyproject.toml``,

@@ -31,7 +31,7 @@ PARTS = ("major", "minor", "patch")
 UNRELEASED = "Unreleased"
 
 VERSION_RE = re.compile(r'^version = "(\d+\.\d+\.\d+)"$', re.MULTILINE)
-RELEASE_SUBJECT_RE = re.compile(r"^chore: bump version to \d+\.\d+\.\d+$")
+RELEASE_SUBJECT_RE = re.compile(r"^release arisu_nodes: \d+\.\d+\.\d+$")
 TAG_RE = re.compile(r"^v\d+\.\d+\.\d+$")
 
 _TOOL = Path(sys.argv[0]).stem
@@ -173,7 +173,7 @@ def roll_changelog(text: str, new_version: str, day: str) -> str:
 
 def release_subject(version: str) -> str:
     """Return the release commit subject for ``version`` (matches ``RELEASE_SUBJECT_RE``)."""
-    return f"chore: bump version to {version}"
+    return f"release arisu_nodes: {version}"
 
 
 def tag_name(version: str) -> str:

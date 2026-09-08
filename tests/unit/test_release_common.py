@@ -107,7 +107,12 @@ def test_roll_changelog_moves_unreleased_under_a_dated_heading_once():
 
 def test_release_subject_and_tag_formats_satisfy_their_gates():
     assert RELEASE_SUBJECT_RE.match(release_subject("0.2.0"))
-    for subject in ("chore: bump version to 1.2", "chore: bump version to 1.2.3 again", "feat: bump version to 1.2.3"):
+    for subject in (
+        "release arisu_nodes: 1.2",
+        "release arisu_nodes: 1.2.3 again",
+        "release arisu_node: 1.2.3",
+        "chore: bump version to 1.2.3",
+    ):
         assert RELEASE_SUBJECT_RE.match(subject) is None, f"case={subject!r}"
 
     assert tag_name("0.2.0") == "v0.2.0"
