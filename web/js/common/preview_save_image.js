@@ -10,8 +10,8 @@
 // them after a run changes where the next click saves. A widget fed by a link
 // holds no value of its own; the route then gets the value the run recorded in
 // the node's outputs.
-import { app } from "../../../scripts/app.js";
-import { api } from "../../../scripts/api.js";
+import { app } from "../../../../scripts/app.js";
+import { api } from "../../../../scripts/api.js";
 import { addButton } from "./widgets.js";
 
 const NODE_TYPES = ["ArisuPreviewSaveImage", "ArisuPreviewSaveImageUpscale"];

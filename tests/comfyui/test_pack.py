@@ -10,9 +10,11 @@ from __future__ import annotations
 import asyncio
 import importlib.util
 import inspect
+import re
 import sys
 from pathlib import Path
 from types import ModuleType
+from urllib.parse import urljoin, urlsplit
 
 import pytest
 from comfy_api.latest import ComfyExtension
@@ -72,4 +74,17 @@ def test_pack_loads_like_comfyui(pack: ModuleType):
 
     # The loader resolves WEB_DIRECTORY relative to the pack and silently skips
     # a missing directory.
-    assert (REPO_ROOT / pack.WEB_DIRECTORY).is_dir()
+    web_root = REPO_ROOT / pack.WEB_DIRECTORY
+    assert web_root.is_dir()
+
+    # The directory is served at /extensions/<pack dir>/, and the browser resolves
+    # each script's relative imports against that URL: they must land on the
+    # frontend core under /scripts/ or on a file in the directory. A miss is only
+    # a console error in the browser, and the whole script is skipped.
+    prefix = f"/extensions/{REPO_ROOT.name}/"
+    for script in sorted(web_root.glob("js/**/*.js")):
+        served = f"http://comfy{prefix}{script.relative_to(web_root).as_posix()}"
+        for spec in re.findall(r'^import .+ from "([^"]+)";$', script.read_text(encoding="utf-8"), flags=re.MULTILINE):
+            path = urlsplit(urljoin(served, spec)).path
+            local = web_root / path[len(prefix) :] if path.startswith(prefix) else None
+            assert path.startswith("/scripts/") or (local is not None and local.is_file()), f"{script.name}: {spec} -> {path}"

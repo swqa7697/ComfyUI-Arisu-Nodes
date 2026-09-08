@@ -19,8 +19,8 @@
 // a second switch on hands it the slot and switches the previous one off (later
 // change wins); a pasted node that arrives switched on is switched off; a loaded
 // workflow with several keeps the first in node order.
-import { app } from "../../../scripts/app.js";
-import { api } from "../../../scripts/api.js";
+import { app } from "../../../../scripts/app.js";
+import { api } from "../../../../scripts/api.js";
 
 const BUNDLE_TYPE = "ARISU_MINIMAX_H3_SETTINGS";
 const SETTINGS_INPUT = "settings";
@@ -81,6 +81,15 @@ function enforceSingleAdvertiser(keep) {
     const ids = demoted.map((node) => `#${node.id}`).join(", ");
     toast("warn", `Only one MiniMax H3 Video Settings node advertises at a time: #${keep.id} advertises now, ${ids} switched off.`);
   }
+}
+
+/** A node that arrives in the root graph already switched on, by paste or duplicate, is switched off. */
+function switchOffOnArrival(node) {
+  // a workflow load restores widget values too; afterConfigureGraph applies the load rule instead
+  if (app.configuringGraph || node.graph !== rootGraph() || !advertiseOn(node)) return;
+  advertiseWidget(node).value = false;
+  node.setDirtyCanvas(true, true);
+  toast("info", `MiniMax H3 Video Settings node #${node.id} was pasted with advertise on; switched off.`);
 }
 
 function settingsInputIndex(node) {
@@ -184,12 +193,13 @@ app.registerExtension({
             return result;
           };
         }
-        // a pasted or duplicated node arriving switched on yields to the existing advertiser
-        if (node.graph === rootGraph() && advertiseOn(node)) {
-          const existing = rootGraph().nodes.find((other) => other !== node && advertiseOn(other));
-          if (existing) enforceSingleAdvertiser(existing);
-        }
+        // a duplicate restores its widgets before it is added, so its switch is visible here
+        switchOffOnArrival(node);
         refreshRoot();
+      });
+      // a paste adds the node first and restores its widgets afterwards, so the switch is only visible here
+      chain(nodeType.prototype, "onConfigure", function () {
+        switchOffOnArrival(this);
       });
       // onRemoved fires while the node is still listed; refresh once it is gone
       chain(nodeType.prototype, "onRemoved", function () {

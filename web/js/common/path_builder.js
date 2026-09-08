@@ -4,7 +4,7 @@
 // front), so this script only hides the ones past the current count. The count
 // lives in node.properties so it survives save and reload; a hidden field is
 // cleared so stale text never reaches the join.
-import { app } from "../../../scripts/app.js";
+import { app } from "../../../../scripts/app.js";
 import { addButton } from "./widgets.js";
 
 const NODE_TYPE = "ArisuPathBuilder";
