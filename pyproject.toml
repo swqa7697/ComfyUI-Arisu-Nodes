@@ -23,7 +23,7 @@ Repository = "https://github.com/swqa7697/ComfyUI-Arisu-Nodes"
 [tool.comfy]
 PublisherId = "swqa7697"
 DisplayName = "ComfyUI-Arisu-Nodes"
-Icon = ""
+Icon = "https://raw.githubusercontent.com/swqa7697/ComfyUI-Arisu-Nodes/main/assets/icon.svg"
 
 [tool.setuptools.packages.find]
 where = ["src"]

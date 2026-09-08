@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Add the pack icon, shown on the Comfy Registry and in ComfyUI-Manager.
+
 ## [1.0.0] - 2026-09-08
 
 ### Added

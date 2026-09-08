@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/icon.svg" alt="" width="128" height="128" />
+</p>
+
 <h1 align="center">ComfyUI-Arisu-Nodes</h1>
 
 <p align="center">
