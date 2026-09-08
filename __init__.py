@@ -14,10 +14,22 @@ WEB_DIRECTORY = "./web"
 
 
 class ArisuNodesExtension(ComfyExtension):
+    """The V3 extension ComfyUI instantiates to discover this pack's nodes."""
+
     async def get_node_list(self) -> List[Type[io.ComfyNode]]:
-        # One list per node family, in the order they appear in the docs.
+        """List every node class in the pack.
+
+        Returns:
+            The node classes, one family after another, in the order they appear
+            in the docs.
+        """
         return [*MINIMAX_H3_NODES]
 
 
 async def comfy_entrypoint() -> ArisuNodesExtension:
+    """Build the extension instance; ComfyUI calls this when loading the pack.
+
+    Returns:
+        The pack's ``ArisuNodesExtension``.
+    """
     return ArisuNodesExtension()

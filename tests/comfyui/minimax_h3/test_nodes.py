@@ -7,10 +7,11 @@ without loading any model. Run via ``scripts/test-comfyui.sh``.
 
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 
 import pytest
 import torch
+from comfy_api.latest import io
 
 from src.arisu_nodes.minimax_h3.core import video_latent_t
 from src.arisu_nodes.minimax_h3.nodes import ArisuMiniMaxH3HybridToVideo, ArisuMiniMaxH3HybridToVideoAdvanced
@@ -19,7 +20,7 @@ pytestmark = pytest.mark.comfyui
 
 
 class _StubClip:
-    def __init__(self) -> None:
+    def __init__(self):
         self.tokenize_kwargs: Dict[str, Any] = {}
 
     def tokenize(self, text: str, **kwargs: Any) -> Dict[str, Any]:
@@ -31,7 +32,7 @@ class _StubClip:
 
 
 class _StubVae:
-    def __init__(self) -> None:
+    def __init__(self):
         self.encoded: List[torch.Tensor] = []
 
     def encode(self, pixels: torch.Tensor) -> torch.Tensor:
@@ -69,13 +70,13 @@ def _base_kwargs() -> Dict[str, Any]:
     }
 
 
-def _run(**overrides: Any) -> Any:
+def _run(**overrides: Any) -> Tuple[Any, io.NodeOutput]:
     kwargs = _base_kwargs()
     kwargs.update(overrides)
     return kwargs["clip"], ArisuMiniMaxH3HybridToVideo.execute(**kwargs)
 
 
-def _run_advanced(**overrides: Any) -> Any:
+def _run_advanced(**overrides: Any) -> Tuple[Dict[str, Any], io.NodeOutput]:
     kwargs = _base_kwargs()
     kwargs.update({"target_width": 2688, "target_height": 1536})
     kwargs.update(overrides)

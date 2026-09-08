@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple, Type
 
 import comfy.model_management
 import comfy.nested_tensor
+import comfy.sd
 import comfy.utils
 import node_helpers
 import torch
@@ -24,6 +25,7 @@ from nodes import MAX_RESOLUTION
 from .core import (
     AUDIO_CHANNELS,
     AUDIO_LATENT_CHANNELS,
+    CROP_MODES,
     FRAME_TAG_MODES,
     REF_IMAGE_SIZE_MODES,
     VIDEO_LATENT_CHANNELS,
@@ -88,7 +90,7 @@ def fit_frames(image: torch.Tensor, width: int, height: int, crop: str) -> torch
     return image[..., :3]
 
 
-def encode_ref_audio(audio_vae: Any, audio: Dict[str, Any]) -> Tuple[torch.Tensor, int]:
+def encode_ref_audio(audio_vae: comfy.sd.VAE, audio: Dict[str, Any]) -> Tuple[torch.Tensor, int]:
     """Encode the first waveform of an AUDIO value with the H3 audio VAE.
 
     Args:
@@ -219,7 +221,7 @@ def resize_context_video(vae: Any, video: torch.Tensor, width: int, height: int,
     return torch.cat(encoded, dim=0)
 
 
-def _require_audio_vae(audio_vae: Optional[Any]) -> Any:
+def _require_audio_vae(audio_vae: Optional[comfy.sd.VAE]) -> comfy.sd.VAE:
     if audio_vae is None:
         raise ValueError("encoding reference audio needs the audio_vae input")
     return audio_vae
@@ -258,7 +260,7 @@ def _encode_ref_images(
 
 def _encode_ref_videos(
     vae: Any,
-    audio_vae: Optional[Any],
+    audio_vae: Optional[comfy.sd.VAE],
     ref_videos: Dict[str, Optional[torch.Tensor]],
     ref_video_audios: Dict[str, Optional[Dict[str, Any]]],
     frame_count: int,
@@ -298,7 +300,9 @@ def _encode_ref_videos(
     return items, blocks
 
 
-def _encode_ref_audios(audio_vae: Optional[Any], ref_audios: Dict[str, Optional[Dict[str, Any]]]) -> Tuple[List[RefItem], List[RefBlock]]:
+def _encode_ref_audios(
+    audio_vae: Optional[comfy.sd.VAE], ref_audios: Dict[str, Optional[Dict[str, Any]]]
+) -> Tuple[List[RefItem], List[RefBlock]]:
     items: List[RefItem] = []
     blocks: List[RefBlock] = []
     for audio in ref_audios.values():
@@ -329,7 +333,7 @@ def _fit_keyframes(sources: Sequence[KeyframeSource], width: int, height: int) -
 def encode_hybrid(
     clip: Any,
     vae: Any,
-    audio_vae: Optional[Any],
+    audio_vae: Optional[comfy.sd.VAE],
     prompt: str,
     canvases: Sequence[Tuple[int, int]],
     length: int,
@@ -505,6 +509,12 @@ class ArisuMiniMaxH3HybridToVideo(io.ComfyNode):
 
     @classmethod
     def define_schema(cls) -> io.Schema:
+        """Declare the node's id, category, inputs and outputs.
+
+        Returns:
+            The schema with the shared hybrid inputs and two outputs: the positive
+            conditioning and the empty AV latent.
+        """
         return io.Schema(
             node_id="ArisuMiniMaxH3HybridToVideo",
             display_name="MiniMax H3 Hybrid to Video",
@@ -528,7 +538,7 @@ class ArisuMiniMaxH3HybridToVideo(io.ComfyNode):
         length: int,
         ref_image_size: str,
         frame_picture_tags: str,
-        audio_vae: Optional[Any] = None,
+        audio_vae: Optional[comfy.sd.VAE] = None,
         first_frame: Optional[torch.Tensor] = None,
         last_frame: Optional[torch.Tensor] = None,
         ref_images: Optional[Dict[str, Optional[torch.Tensor]]] = None,
@@ -536,6 +546,29 @@ class ArisuMiniMaxH3HybridToVideo(io.ComfyNode):
         ref_video_audios: Optional[Dict[str, Optional[Dict[str, Any]]]] = None,
         ref_audios: Optional[Dict[str, Optional[Dict[str, Any]]]] = None,
     ) -> io.NodeOutput:
+        """Encode the hybrid conditioning and build the matching AV latent.
+
+        Args:
+            clip: The MiniMax H3 text encoder.
+            vae: The video VAE.
+            prompt: The prompt text.
+            width: Generation canvas width in pixels.
+            height: Generation canvas height in pixels.
+            length: Requested frame count at 24 fps; snapped up to the model's 17k+5 grid.
+            ref_image_size: One of ``REF_IMAGE_SIZE_MODES``.
+            frame_picture_tags: One of ``FRAME_TAG_MODES``.
+            audio_vae: The audio VAE, or ``None`` when no audio reference is connected.
+            first_frame: Optional keyframe pinned at frame 0.
+            last_frame: Optional keyframe pinned at the last frame.
+            ref_images: Autogrow slot dict of reference images.
+            ref_videos: Autogrow slot dict of reference clips.
+            ref_video_audios: Autogrow slot dict of reference clip soundtracks.
+            ref_audios: Autogrow slot dict of standalone reference audios.
+
+        Returns:
+            ``(positive, latent)``: the conditioning for the generation canvas and
+            the empty AV latent built for it.
+        """
         conds, latent = encode_hybrid(
             clip,
             vae,
@@ -566,6 +599,13 @@ class ArisuMiniMaxH3HybridToVideoAdvanced(io.ComfyNode):
 
     @classmethod
     def define_schema(cls) -> io.Schema:
+        """Declare the node's id, category, inputs and outputs.
+
+        Returns:
+            The schema with the hybrid inputs plus ``target_width`` / ``target_height``,
+            and three outputs: the positive conditioning for the generation canvas,
+            the empty AV latent, and the positive conditioning for the upscaled canvas.
+        """
         return io.Schema(
             node_id="ArisuMiniMaxH3HybridToVideoAdvanced",
             display_name="MiniMax H3 Hybrid to Video (Advanced)",
@@ -619,7 +659,7 @@ class ArisuMiniMaxH3HybridToVideoAdvanced(io.ComfyNode):
         length: int,
         ref_image_size: str,
         frame_picture_tags: str,
-        audio_vae: Optional[Any] = None,
+        audio_vae: Optional[comfy.sd.VAE] = None,
         first_frame: Optional[torch.Tensor] = None,
         last_frame: Optional[torch.Tensor] = None,
         ref_images: Optional[Dict[str, Optional[torch.Tensor]]] = None,
@@ -627,6 +667,33 @@ class ArisuMiniMaxH3HybridToVideoAdvanced(io.ComfyNode):
         ref_video_audios: Optional[Dict[str, Optional[Dict[str, Any]]]] = None,
         ref_audios: Optional[Dict[str, Optional[Dict[str, Any]]]] = None,
     ) -> io.NodeOutput:
+        """Encode one conditioning per keyframe canvas and build the AV latent.
+
+        Args:
+            clip: The MiniMax H3 text encoder.
+            vae: The video VAE.
+            prompt: The prompt text.
+            width: Generation canvas width in pixels.
+            height: Generation canvas height in pixels.
+            target_width: Width of the upscaled video the second sampler refines.
+            target_height: Height of the upscaled video the second sampler refines.
+            length: Requested frame count at 24 fps; snapped up to the model's 17k+5 grid.
+            ref_image_size: One of ``REF_IMAGE_SIZE_MODES``.
+            frame_picture_tags: One of ``FRAME_TAG_MODES``.
+            audio_vae: The audio VAE, or ``None`` when no audio reference is connected.
+            first_frame: Optional keyframe pinned at frame 0.
+            last_frame: Optional keyframe pinned at the last frame.
+            ref_images: Autogrow slot dict of reference images.
+            ref_videos: Autogrow slot dict of reference clips.
+            ref_video_audios: Autogrow slot dict of reference clip soundtracks.
+            ref_audios: Autogrow slot dict of standalone reference audios.
+
+        Returns:
+            ``(positive, latent, positive_target)``: the conditioning for the
+            generation canvas, the empty AV latent built for it, and the conditioning
+            whose keyframes are encoded at the target size. When the target size
+            equals the generation size both conditionings are the same object.
+        """
         conds, latent = encode_hybrid(
             clip,
             vae,
@@ -659,6 +726,12 @@ class ArisuMiniMaxH3ContextLatentResize(io.ComfyNode):
 
     @classmethod
     def define_schema(cls) -> io.Schema:
+        """Declare the node's id, category, inputs and outputs.
+
+        Returns:
+            The schema taking a MiniMax H3 AV latent, the video VAE, the new width
+            and height and a crop mode, and returning the resized AV latent.
+        """
         return io.Schema(
             node_id="ArisuMiniMaxH3ContextLatentResize",
             display_name="MiniMax H3 Context Latent Resize",
@@ -694,7 +767,7 @@ class ArisuMiniMaxH3ContextLatentResize(io.ComfyNode):
                 ),
                 io.Combo.Input(
                     "crop",
-                    options=["disabled", "center"],
+                    options=list(CROP_MODES),
                     default="disabled",
                     tooltip="disabled stretches the frames to the new size; center keeps the aspect ratio and crops the overflow.",
                 ),
@@ -709,6 +782,23 @@ class ArisuMiniMaxH3ContextLatentResize(io.ComfyNode):
 
     @classmethod
     def execute(cls, latent: Dict[str, Any], vae: Any, width: int, height: int, crop: str) -> io.NodeOutput:
+        """Resize the video stream of an H3 AV latent, passing the audio through.
+
+        Args:
+            latent: A LATENT holding a MiniMax H3 AV pair.
+            vae: The MiniMax H3 video VAE.
+            width: Target width in pixels; must be a multiple of 16.
+            height: Target height in pixels; must be a multiple of 16.
+            crop: One of ``CROP_MODES``.
+
+        Returns:
+            The AV latent at the new resolution, in the container it arrived in.
+            The input latent is returned unchanged when it already matches.
+
+        Raises:
+            ValueError: If ``latent`` is not an H3 AV pair, its streams have the
+                wrong layout, or the size is off the 16-pixel grid.
+        """
         streams, nested = unpack_av_streams(latent["samples"])
         video, audio = streams
         validate_context_streams(video.shape, audio.shape)

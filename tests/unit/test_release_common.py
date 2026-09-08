@@ -1,5 +1,7 @@
 """Tests for the pure helpers in scripts/release_common.py (no git, no filesystem)."""
 
+from __future__ import annotations
+
 import pytest
 
 from release_common import (
@@ -66,7 +68,7 @@ def test_parse_version_rejects_duplicate_lines():
 
 
 @pytest.mark.parametrize(("part", "expected"), [("major", "2.0.0"), ("minor", "1.3.0"), ("patch", "1.2.4")])
-def test_bump_version_resets_lower_parts(part, expected):
+def test_bump_version_resets_lower_parts(part: str, expected: str):
     assert bump_version("1.2.3", part) == expected
 
 
@@ -140,7 +142,7 @@ def test_release_subject_matches_its_regex():
 
 
 @pytest.mark.parametrize("subject", ["chore: bump version to 1.2", "chore: bump version to 1.2.3 again", "feat: bump version to 1.2.3"])
-def test_release_subject_regex_rejects_near_misses(subject):
+def test_release_subject_regex_rejects_near_misses(subject: str):
     assert RELEASE_SUBJECT_RE.match(subject) is None
 
 

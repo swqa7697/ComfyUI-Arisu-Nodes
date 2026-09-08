@@ -31,6 +31,7 @@ CLIP_FRAME_STEP = 17
 
 REF_IMAGE_SIZE_MODES = ("match", "max")
 FRAME_TAG_MODES = ("after_refs", "before_refs", "none")
+CROP_MODES = ("disabled", "center")
 
 
 def align_frame_count(n: int) -> int:

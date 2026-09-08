@@ -7,6 +7,8 @@ collected, so nothing here can raise an ImportError. Run the lane via
 ``COMFYUI_PATH`` and runs pytest on ComfyUI's interpreter.
 """
 
+from __future__ import annotations
+
 import importlib.util
 
 # fnmatch "*" spans "/", so the second pattern covers per-family subdirectories.

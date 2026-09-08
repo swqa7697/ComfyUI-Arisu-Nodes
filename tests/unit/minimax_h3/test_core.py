@@ -1,5 +1,9 @@
 """Tests for the ComfyUI-free layer of the MiniMax H3 node family."""
 
+from __future__ import annotations
+
+from typing import List, Tuple
+
 import pytest
 
 from src.arisu_nodes.minimax_h3.core import (
@@ -26,12 +30,12 @@ from src.arisu_nodes.minimax_h3.core import (
 
 
 @pytest.mark.parametrize(("n", "expected"), [(5, 5), (22, 22), (6, 22), (124, 124), (125, 141)])
-def test_align_frame_count_snaps_up_to_17k_plus_5(n, expected):
+def test_align_frame_count_snaps_up_to_17k_plus_5(n: int, expected: int):
     assert align_frame_count(n) == expected
 
 
 @pytest.mark.parametrize(("frame_count", "expected"), [(5, 2), (22, 7), (124, 37)])
-def test_video_latent_t(frame_count, expected):
+def test_video_latent_t(frame_count: int, expected: int):
     assert video_latent_t(frame_count) == expected
 
 
@@ -44,7 +48,7 @@ def test_temporal_shape_clamps_short_lengths_to_five_frames():
 
 
 @pytest.mark.parametrize(("width", "height", "expected"), [(1920, 1080, (1344, 768)), (1080, 1920, (768, 1344)), (1024, 1024, (768, 768))])
-def test_adapt_canvas(width, height, expected):
+def test_adapt_canvas(width: int, height: int, expected: Tuple[int, int]):
     assert adapt_canvas(width, height) == expected
 
 
@@ -77,7 +81,7 @@ def test_ref_video_canvas_keeps_small_sources_small():
 
 
 @pytest.mark.parametrize(("n_frames", "frame_count", "expected"), [(200, 124, 124), (30, 124, 22), (5, 124, 5)])
-def test_align_clip_frames(n_frames, frame_count, expected):
+def test_align_clip_frames(n_frames: int, frame_count: int, expected: int):
     assert align_clip_frames(n_frames, frame_count) == expected
 
 
@@ -99,7 +103,7 @@ def test_soundtrack_key_pairs_by_slot_index():
     ("mode", "expected"),
     [("after_refs", ["r1", "r2", "f1"]), ("before_refs", ["f1", "r1", "r2"]), ("none", ["r1", "r2"])],
 )
-def test_order_picture_items(mode, expected):
+def test_order_picture_items(mode: str, expected: List[str]):
     assert mode in FRAME_TAG_MODES
     assert order_picture_items(mode, ["f1"], ["r1", "r2"]) == expected
 
@@ -125,18 +129,18 @@ def test_keyframe_canvases_collapses_equal_target():
     ("shape", "expected"),
     [((1, 768, 1344, 3), False), ((1, 768, 1344, 4), False), ((1, 768, 1024, 3), True), ((1, 1536, 1344, 3), True)],
 )
-def test_frame_needs_resize(shape, expected):
+def test_frame_needs_resize(shape: Tuple[int, ...], expected: bool):
     assert frame_needs_resize(shape, 1344, 768) is expected
 
 
 @pytest.mark.parametrize(("latent_t", "expected"), [(2, 5), (7, 22), (37, 124)])
-def test_video_frame_count_inverts_video_latent_t(latent_t, expected):
+def test_video_frame_count_inverts_video_latent_t(latent_t: int, expected: int):
     assert video_frame_count(latent_t) == expected
     assert video_latent_t(expected) == latent_t
 
 
 @pytest.mark.parametrize("latent_t", [0, 1, 3, 8])
-def test_video_frame_count_rejects_off_grid_lengths(latent_t):
+def test_video_frame_count_rejects_off_grid_lengths(latent_t: int):
     with pytest.raises(ValueError, match="5k\\+2"):
         video_frame_count(latent_t)
 
@@ -155,7 +159,7 @@ def test_validate_context_streams_accepts_h3_av_layout():
         ((1, 24, 37, 48, 84), (1, 32, 1, 207), "audio latent"),
     ],
 )
-def test_validate_context_streams_rejects_other_layouts(video_shape, audio_shape, match):
+def test_validate_context_streams_rejects_other_layouts(video_shape: Tuple[int, ...], audio_shape: Tuple[int, ...], match: str):
     with pytest.raises(ValueError, match=match):
         validate_context_streams(video_shape, audio_shape)
 
@@ -169,6 +173,6 @@ def test_resize_target_returns_latent_height_then_width():
 
 
 @pytest.mark.parametrize(("width", "height"), [(1000, 768), (1344, 770)])
-def test_resize_target_rejects_sizes_off_the_16_grid(width, height):
+def test_resize_target_rejects_sizes_off_the_16_grid(width: int, height: int):
     with pytest.raises(ValueError, match="multiples of 16"):
         resize_target((1, 24, 7, 48, 84), width, height)

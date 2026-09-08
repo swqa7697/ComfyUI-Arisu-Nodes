@@ -22,7 +22,7 @@ pytestmark = pytest.mark.comfyui
 class _StubVae:
     """Decodes ``[B, 24, T, h, w]`` to ``[B, F, 16h, 16w, 3]`` and encodes ``[F, H, W, 3]`` back."""
 
-    def __init__(self, encode_latent_t: Optional[int] = None) -> None:
+    def __init__(self, encode_latent_t: Optional[int] = None):
         self.decoded: List[torch.Tensor] = []
         self.encoded: List[torch.Tensor] = []
         self.encode_latent_t = encode_latent_t
@@ -47,7 +47,9 @@ def _audio(batch: int = 1) -> torch.Tensor:
     return torch.rand(batch, 32, 2, 37)
 
 
-def _run(latent: Dict[str, Any], vae: Optional[_StubVae] = None, width: int = 864, height: int = 480, crop: str = "disabled") -> Any:
+def _run(
+    latent: Dict[str, Any], vae: Optional[_StubVae] = None, width: int = 864, height: int = 480, crop: str = "disabled"
+) -> Dict[str, Any]:
     return ArisuMiniMaxH3ContextLatentResize.execute(latent=latent, vae=vae or _StubVae(), width=width, height=height, crop=crop).result[0]
 
 
@@ -119,7 +121,7 @@ def test_center_crop_is_forwarded_to_the_resize():
         (torch.rand(1, 24, 7, 48, 84), "nested video/audio pair"),
     ],
 )
-def test_rejects_latents_that_are_not_an_h3_av_pair(samples, match):
+def test_rejects_latents_that_are_not_an_h3_av_pair(samples: Any, match: str):
     with pytest.raises(ValueError, match=match):
         _run({"samples": samples})
 
