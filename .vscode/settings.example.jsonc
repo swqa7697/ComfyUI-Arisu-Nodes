@@ -1,7 +1,8 @@
 // Example VS Code workspace settings for this repository (not loaded by VS Code).
 // To use: copy this file to .vscode/settings.json (which is gitignored) and replace
 // /PATH/TO/ComfyUI with the absolute path of your ComfyUI checkout, so Pylance can
-// resolve comfy_api and torch. Requires the Ruff, Prettier and Even Better TOML extensions.
+// resolve comfy_api and torch. Requires the Ruff, Biome, Prettier and Even Better TOML
+// extensions; Biome formats and lints the JavaScript (biome.json), Prettier the rest.
 {
   "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python",
   "python.analysis.typeCheckingMode": "basic",
@@ -20,6 +21,13 @@
   "editor.defaultFormatter": "esbenp.prettier-vscode",
   "[jsonc]": {
     "prettier.trailingComma": "none"
+  },
+  "[javascript]": {
+    "editor.defaultFormatter": "biomejs.biome",
+    "editor.codeActionsOnSave": {
+      "source.fixAll.biome": "explicit",
+      "source.organizeImports.biome": "explicit"
+    }
   },
   "[python]": {
     "editor.tabSize": 4,
@@ -45,5 +53,5 @@
   "ruff.lint.extendSelect": ["I"],
   "prettier.tabWidth": 2,
   "prettier.semi": true,
-  "prettier.singleQuote": true
+  "prettier.singleQuote": false
 }

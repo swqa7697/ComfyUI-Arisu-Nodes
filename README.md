@@ -30,8 +30,9 @@ general-purpose utilities, others belong to a model family — today MiniMax H3,
   pages live under [`web/docs/`](web/docs).
 - **No `NODE_CLASS_MAPPINGS`, no monkey-patching.** Pure V3 (`comfy_entrypoint` + `io.Schema`)
   registration; nothing in ComfyUI's own modules is patched at import time.
-- **Tested before it ships.** Two test lanes, one of which loads the pack exactly the way
-  ComfyUI's loader does and validates every node schema.
+- **Tested before it ships.** Three test lanes: one loads the pack exactly the way ComfyUI's
+  loader does and validates every node schema, another drives the frontend scripts on Node's
+  built-in test runner.
 
 ---
 
@@ -134,6 +135,8 @@ edge cases are documented on its reference page, which ComfyUI also serves in-ap
 | MiniMax H3 models | — | For the MiniMax H3 nodes only: the same checkpoint, CLIP, video VAE, and audio VAE the stock H3 nodes need. |
 | Python | >= 3.10 | The nodes run on ComfyUI's own interpreter; this is the floor for the dev tooling. |
 | [uv](https://docs.astral.sh/uv/) | any | Development only. `make install` installs it if missing. |
+| [pnpm](https://pnpm.io/) | any | Development only: runs the JavaScript formatter and linter. `make install` installs it if missing. |
+| [Node.js](https://nodejs.org/) | >= 22.15 | Development only: the web test lane. `make install` installs it (via pnpm) if missing. |
 | GNU make | any | Development only. |
 
 The pack itself declares no Python dependencies.
@@ -184,7 +187,9 @@ ComfyUI-Arisu-Nodes/
 ├── tests/
 │   ├── unit/                    # ComfyUI-free lane; what the PR gate runs
 │   ├── comfyui/                 # loads the pack like ComfyUI; needs its interpreter
+│   ├── web/                     # drives web/js on Node's built-in runner; fakes in web/support/
 │   └── support/                 # shared fakes for the ComfyUI lane
+├── biome.json                   # JavaScript formatter + linter config (web/js, tests/web)
 ├── scripts/                     # make target bodies + release CLIs
 ├── .github/workflows/           # PR gate, weekly ComfyUI lane, registry publish
 └── Makefile                     # every dev task; `make help` lists them
@@ -197,7 +202,7 @@ ComfyUI-Arisu-Nodes/
 ```bash
 git clone https://github.com/swqa7697/ComfyUI-Arisu-Nodes.git
 cd ComfyUI-Arisu-Nodes
-make install          # creates .venv with the dev group
+make install          # creates .venv with the dev group; installs uv, pnpm, and node if missing
 make tidy             # format everything in place
 make lint test        # what CI checks
 make test-comfyui     # the ComfyUI lane, read-only against your install
@@ -207,14 +212,16 @@ make build            # wheel + sdist into dist/
 | Target | Description |
 |---|---|
 | `make help` | List every target. |
-| `make install` | Create `.venv` with the dev group. `LOCKED=1` adds `--locked`, as CI does. |
+| `make install` | Create `.venv` with the dev group; installs uv, pnpm, and node if missing. `LOCKED=1` adds `--locked`, as CI does. |
 | `make uninstall` | Remove `.venv`, caches, and build outputs (keeps `uv.lock`). |
 | `make clean` | Remove caches and build outputs (keeps `.venv`). |
-| `make tidy` / `make format` | Rewrite in place: ruff format, `ruff check --fix`, uv-sort, beautysh, mbake. |
-| `make lint` | Check only: `ruff check` + `ruff format --check`. |
-| `make test` | The unit lane (`tests/unit`). This is what the PR gate runs. |
+| `make tidy` / `make format` | Rewrite in place: ruff format, `ruff check --fix`, uv-sort, beautysh, mbake, Biome. |
+| `make lint` | Check only: `ruff check`, `ruff format --check`, `biome ci`. |
+| `make test` | The unit lane, then the web lane (`make test-unit test-web`). This is what the PR gate runs. |
+| `make test-unit` | The unit lane (`tests/unit`) alone. `ARGS="-k name"` passes flags through. |
+| `make test-web` | The web lane (`tests/web`) alone, on Node's built-in runner. `ARGS="--test-name-pattern=name"` passes flags through. |
 | `make test-comfyui` | The ComfyUI lane on ComfyUI's interpreter. `ARGS="-v -k name"` passes flags through. |
-| `make test-count` | Collected tests per lane, to compare with the budgets in `CLAUDE.md`. |
+| `make test-count` | Selected test cases per lane, to compare with the budgets in `CLAUDE.md`. |
 | `make comfyui-path` | Print the resolved ComfyUI install root the ComfyUI lane uses. |
 | `make build` | Build wheel + sdist into `dist/`. |
 | `make upgrade` | Re-resolve dependencies at latest and raise the `pyproject.toml` minimums. |
@@ -222,14 +229,15 @@ make build            # wheel + sdist into dist/
 | `make release-commit` | On a release branch: commit and push the bump. `YES=1` skips the prompt. |
 | `make tag` | On the latest `main`: CAPTCHA-gated annotated tag `vX.Y.Z`, pushed. |
 
-The unit lane needs nothing but the project venv; the ComfyUI lane runs on ComfyUI's own
-interpreter and **writes nothing** into that install, reading `COMFYUI_PATH` (default
-`~/apps/comfyui`). [CLAUDE.md](CLAUDE.md) has the rest: the `core.py` / `nodes.py` split every node
+The unit lane needs nothing but the project venv; the web lane needs only Node (no `package.json`,
+no `node_modules`); the ComfyUI lane runs on ComfyUI's own interpreter and **writes nothing** into
+that install, reading `COMFYUI_PATH` (default `~/apps/comfyui`). [CLAUDE.md](CLAUDE.md) has the rest: the `core.py` / `nodes.py` split every node
 follows, the rules that keep the test suite small, the steps for adding a node, and the release
 flow. Release history is in [CHANGELOG.md](CHANGELOG.md).
 
 For VS Code, copy [.vscode/settings.example.jsonc](.vscode/settings.example.jsonc) to
-`.vscode/settings.json` and replace `/PATH/TO/ComfyUI` so Pylance can resolve `comfy_api` and torch.
+`.vscode/settings.json` and replace `/PATH/TO/ComfyUI` so Pylance can resolve `comfy_api` and torch;
+the Biome extension then formats the JavaScript from `biome.json`.
 
 ---
 

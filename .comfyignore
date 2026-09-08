@@ -19,6 +19,7 @@ scripts/
 tests/
 Makefile
 tidy.sh
+biome.json
 
 # Dev environment pins; the pack itself has no runtime dependencies
 uv.lock

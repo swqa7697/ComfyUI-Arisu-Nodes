@@ -21,8 +21,9 @@
 // a second switch on hands it the slot and switches the previous one off (later
 // change wins); a pasted node that arrives switched on is switched off; a loaded
 // workflow with several keeps the first in node order.
-import { app } from "../../../../scripts/app.js";
+
 import { api } from "../../../../scripts/api.js";
+import { app } from "../../../../scripts/app.js";
 
 const ADVERTISE_WIDGET = "advertise";
 // LiteGraph node mode 0: runs normally (not muted, not bypassed).
@@ -119,7 +120,10 @@ function refreshHybrid(node) {
   }
   const removed = unlinkHandedOver(node, keys);
   if (removed.length) {
-    toast("info", `Hybrid node #${node.id}: ${removed.join(", ")} come from the advertising settings node; the link(s) into them were removed.`);
+    toast(
+      "info",
+      `Hybrid node #${node.id}: ${removed.join(", ")} come from the advertising settings node; the link(s) into them were removed.`,
+    );
   }
   node.setDirtyCanvas(true, true);
 }
@@ -214,9 +218,7 @@ app.registerExtension({
         switchOffOnArrival(this);
       });
       // onRemoved fires while the node is still listed; refresh once it is gone
-      chain(nodeType.prototype, "onRemoved", function () {
-        setTimeout(refreshRoot, 0);
-      });
+      chain(nodeType.prototype, "onRemoved", () => setTimeout(refreshRoot, 0));
     }
   },
   afterConfigureGraph() {

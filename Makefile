@@ -1,7 +1,7 @@
 SHELL := /bin/bash
 .SHELLFLAGS := -euo pipefail -c
 .DEFAULT_GOAL := help
-.PHONY: help install uninstall clean build test test-comfyui test-count comfyui-path lint format tidy upgrade bump-major bump-minor bump-patch release-commit tag
+.PHONY: help install uninstall clean build test test-unit test-web test-comfyui test-count comfyui-path lint format tidy upgrade bump-major bump-minor bump-patch release-commit tag
 
 # Hard boundary (CLAUDE.md): never run project commands inside the live ComfyUI
 # install, including a clone of this repo under its custom_nodes/.
@@ -29,7 +29,7 @@ help: ## Show this help message
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
 	  awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
 
-install: ## Create .venv with the dev group via uv (LOCKED=1 adds --locked, as CI does)
+install: ## Create .venv with the dev group via uv; installs uv, pnpm, and node if missing (LOCKED=1 adds --locked, as CI does)
 	@LOCKED="$(LOCKED)" bash scripts/install.sh
 
 uninstall: ## Remove .venv, caches, and build outputs (keeps uv.lock)
@@ -41,24 +41,40 @@ clean: ## Remove caches and build outputs (keeps .venv)
 build: ## Build wheel + sdist into dist/
 	@uv build
 
-test: ## Run the unit lane (tests/unit); what CI runs
-	@uv run pytest || ([ $$? -eq 5 ] && $(INFO) "no tests collected")
+# The web lane: Node's built-in runner, no package.json or node_modules. --import needs
+# the ./ prefix or the path is read as a bare specifier; the glob is quoted so Node,
+# not the shell, expands it.
+_NODE_TEST := node --import ./tests/web/support/hooks.mjs --test
+_WEB_TESTS := 'tests/web/**/*.test.mjs'
+# The selected count from pytest's summary: "N tests collected" or "N/M tests collected (K deselected)".
+_SELECTED := sed -nE 's/^([0-9]+)(\/[0-9]+)? tests? collected.*/\1/p'
+
+# ARGS belongs to the single-lane targets: pytest and Node take different flags.
+test: test-unit test-web ## Run the unit lane, then the web lane; what the PR gate runs
+
+test-unit: ## Run the unit lane (tests/unit) alone (ARGS="-k name")
+	@uv run pytest $(ARGS) || ([ $$? -eq 5 ] && $(INFO) "no tests collected")
+
+test-web: ## Run the web lane (tests/web) alone on Node's built-in runner (ARGS="--test-name-pattern=name")
+	@$(_NODE_TEST) $(ARGS) $(_WEB_TESTS)
 
 test-comfyui: ## Run the ComfyUI lane on ComfyUI's interpreter, read-only (ARGS="-v -k name")
 	@bash scripts/test-comfyui.sh $(ARGS)
 
-test-count: ## Collected tests per lane; compare with the budgets in CLAUDE.md
-	@printf 'unit lane:    '; uv run pytest --collect-only -q | tail -1
-	@printf 'comfyui lane: '; bash scripts/test-comfyui.sh --collect-only -q 2>/dev/null | tail -1 || $(INFO) "skipped (no ComfyUI install)"
+test-count: ## Selected cases per lane; compare with the budgets in CLAUDE.md
+	@printf 'unit lane:    '; uv run pytest --collect-only -q | $(_SELECTED)
+	@printf 'comfyui lane: '; bash scripts/test-comfyui.sh --collect-only -q 2>/dev/null | $(_SELECTED) || $(INFO) "skipped (no ComfyUI install)"
+	@printf 'web lane:     '; $(_NODE_TEST) --test-reporter=tap $(_WEB_TESTS) | awk '/^# tests/ {print $$3}'
 
 comfyui-path: ## Print the resolved ComfyUI install root (the CLAUDE.md hard boundary)
 	@printf '%s\n' '$(COMFYUI_ABS)'
 
-lint: ## Check only: ruff check + ruff format --check
+lint: ## Check only: ruff check, ruff format --check, biome ci
 	@uv run ruff check .
 	@uv run ruff format --check .
+	@bash scripts/biome.sh ci
 
-tidy: ## Rewrite in place: ruff format, ruff check --fix, uv-sort, beautysh, mbake
+tidy: ## Rewrite in place: ruff format, ruff check --fix, uv-sort, beautysh, mbake, biome
 	@bash tidy.sh
 
 format: tidy ## Alias for tidy
