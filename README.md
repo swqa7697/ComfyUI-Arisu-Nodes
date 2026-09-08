@@ -86,6 +86,30 @@ target equals the generation size the two conditionings are the same object.
 
 ---
 
+### MiniMax H3 Context Latent Resize (beta)
+
+`ArisuMiniMaxH3ContextLatentResize` — category **Arisu Nodes/MiniMax H3** ·
+[full reference](web/docs/ArisuMiniMaxH3ContextLatentResize/en.md)
+
+Resize a saved H3 AV latent to a new resolution so a motion-context clip chain can change size at a
+join. Chaining packs such as **H3 Motion Context** slice the previous clip's tail straight out of its
+latent and refuse when the resolution differs, and ComfyUI's stock **Upscale Latent** nodes cannot
+handle the video/audio pair (nor H3's 16x grid). This node decodes the video stream, lanczos-resizes
+it and encodes it again with the H3 video VAE; the audio stream and the frame count pass through
+untouched.
+
+| Input | Notes |
+|---|---|
+| `latent` | The previous clip's AV latent: the chain's Load Latent output, or a sampler's AV latent. |
+| `vae` | The H3 video VAE, the same one the Motion Context node takes. |
+| `width`, `height` | Resolution of the clip being generated next, multiples of 16 (default 1344 × 768). |
+| `crop` | `disabled` stretches, `center` keeps the aspect ratio and crops the overflow. |
+
+Outputs `latent` (LATENT) in the same container as the input, for the `context_latent` input only.
+Returns the input untouched when the size already matches.
+
+---
+
 ## Requirements
 
 | Requirement | Version | Notes |

@@ -16,8 +16,11 @@ from src.arisu_nodes.minimax_h3.core import (
     qwen_timestamps,
     ref_image_canvas,
     ref_video_canvas,
+    resize_target,
     soundtrack_key,
     temporal_shape,
+    validate_context_streams,
+    video_frame_count,
     video_latent_t,
 )
 
@@ -124,3 +127,48 @@ def test_keyframe_canvases_collapses_equal_target():
 )
 def test_frame_needs_resize(shape, expected):
     assert frame_needs_resize(shape, 1344, 768) is expected
+
+
+@pytest.mark.parametrize(("latent_t", "expected"), [(2, 5), (7, 22), (37, 124)])
+def test_video_frame_count_inverts_video_latent_t(latent_t, expected):
+    assert video_frame_count(latent_t) == expected
+    assert video_latent_t(expected) == latent_t
+
+
+@pytest.mark.parametrize("latent_t", [0, 1, 3, 8])
+def test_video_frame_count_rejects_off_grid_lengths(latent_t):
+    with pytest.raises(ValueError, match="5k\\+2"):
+        video_frame_count(latent_t)
+
+
+def test_validate_context_streams_accepts_h3_av_layout():
+    validate_context_streams((1, 24, 37, 48, 84), (1, 32, 2, 207))
+
+
+@pytest.mark.parametrize(
+    ("video_shape", "audio_shape", "match"),
+    [
+        ((1, 16, 37, 48, 84), (1, 32, 2, 207), "video latent"),
+        ((24, 37, 48, 84), (1, 32, 2, 207), "video latent"),
+        ((1, 24, 8, 48, 84), (1, 32, 2, 207), "5k\\+2"),
+        ((1, 24, 37, 48, 84), (1, 32, 207), "audio latent"),
+        ((1, 24, 37, 48, 84), (1, 32, 1, 207), "audio latent"),
+    ],
+)
+def test_validate_context_streams_rejects_other_layouts(video_shape, audio_shape, match):
+    with pytest.raises(ValueError, match=match):
+        validate_context_streams(video_shape, audio_shape)
+
+
+def test_resize_target_is_none_when_size_already_matches():
+    assert resize_target((1, 24, 7, 48, 84), 1344, 768) is None
+
+
+def test_resize_target_returns_latent_height_then_width():
+    assert resize_target((1, 24, 7, 48, 84), 864, 480) == (30, 54)
+
+
+@pytest.mark.parametrize(("width", "height"), [(1000, 768), (1344, 770)])
+def test_resize_target_rejects_sizes_off_the_16_grid(width, height):
+    with pytest.raises(ValueError, match="multiples of 16"):
+        resize_target((1, 24, 7, 48, 84), width, height)
