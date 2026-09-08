@@ -187,7 +187,8 @@ ComfyUI-Arisu-Nodes/
 │   └── js/<family>/             # frontend assets
 ├── tests/
 │   ├── unit/                    # ComfyUI-free lane; what CI runs
-│   └── comfyui/                 # loads the pack like ComfyUI; needs its interpreter
+│   ├── comfyui/                 # loads the pack like ComfyUI; needs its interpreter
+│   └── support/                 # shared fakes for the ComfyUI lane
 ├── scripts/                     # make target bodies + release CLIs
 └── Makefile                     # every dev task; `make help` lists them
 ```
@@ -218,6 +219,7 @@ make build            # wheel + sdist into dist/
 | `make lint` | Check only: `ruff check` + `ruff format --check`. |
 | `make test` | The unit lane (`tests/unit`). This is what CI runs. |
 | `make test-comfyui` | The ComfyUI lane on ComfyUI's interpreter. `ARGS="-v -k name"` passes flags through. |
+| `make test-count` | Collected tests per lane, to compare with the budgets in `CLAUDE.md`. |
 | `make build` | Build wheel + sdist into `dist/`. |
 | `make upgrade` | Re-resolve dependencies at latest and raise the `pyproject.toml` minimums. |
 | `make bump-patch\|minor\|major` | Rewrite the version, roll `CHANGELOG.md`, `uv lock`. No git writes. |
@@ -236,12 +238,15 @@ Two pytest lanes, both configured in `pyproject.toml`:
   ephemeral pytest on that install's Python, and **writes nothing** into it.
 
 Anything that does not need a tensor belongs in `core.py` with a unit test; anything importing
-`comfy_api` or torch belongs in `nodes.py` with a test in the ComfyUI lane.
+`comfy_api` or torch belongs in `nodes.py` with a test in the ComfyUI lane. The suite is deliberately
+kept small and regression-first: read the test growth rules in [CLAUDE.md](CLAUDE.md#testing) before
+adding a test.
 
 ### Adding a node
 
 1. Pure logic in `src/arisu_nodes/<family>/core.py`, with tests in `tests/unit/<family>/`.
-2. The `io.ComfyNode` class in `nodes.py`, registered in that family's `NODES` list.
+2. The `io.ComfyNode` class in `nodes.py`, registered in that family's `NODES` list, with execute-level
+   tests in `tests/comfyui/<family>/` built on the fakes in `tests/support/comfy.py`.
 3. A help page at `web/docs/<node_id>/en.md`.
 4. The new id appended to `EXPECTED_NODE_IDS` in `tests/comfyui/test_pack.py`.
 5. A `CHANGELOG.md` entry under `[Unreleased]` if it is user-visible.

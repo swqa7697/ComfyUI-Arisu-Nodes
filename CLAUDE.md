@@ -59,6 +59,10 @@ Human-only steps. The agent may print these commands but never runs them:
 - `tests/unit/<family>/` — ComfyUI-free lane. `tests/comfyui/<family>/` plus
   `tests/comfyui/test_pack.py` (loads the pack like ComfyUI, asserts the node-id list) — opt-in
   lane, marker `comfyui`. Test subdirectories carry an `__init__.py` so basenames may repeat.
+  One test module per source module (`test_core.py`, `test_nodes.py`); a module split by
+  behaviour is `test_<module>_<behaviour>.py` (`test_nodes_context_resize.py`).
+- `tests/support/` — shared fakes for the ComfyUI lane, one module per seam (`comfy.py`: stub
+  CLIP and VAEs, tensor builders). It imports torch, so only `tests/comfyui/` may import it.
 - `tests/conftest.py` — sys.path wiring (repo root, then `scripts/`, then ComfyUI); collects
   the repo root as a plain directory so the entry `__init__.py` is never imported during
   collection. Do not weaken this.
@@ -85,6 +89,7 @@ make tidy                        # write mode: ruff format, ruff check --fix, uv
 make lint                        # check only: ruff check, ruff format --check
 make test                        # unit lane; what CI runs
 make test-comfyui ARGS="-v"      # ComfyUI lane; reads ~/apps/comfyui, writes nothing
+make test-count                  # collected cases per lane; compare with the budgets below
 make build                       # uv build; dist/ is gitignored
 make clean                       # caches and dist/; `make uninstall` also removes .venv
 make bump-patch|minor|major      # rewrite pyproject version, roll CHANGELOG, uv lock; no git writes
@@ -98,17 +103,66 @@ so whatever `make tidy` rewrites must be committed. `pytest` alone deselects the
 marker via `addopts`; `scripts/test-comfyui.sh` passes `-m comfyui` to override it, and `ARGS`
 is appended word-split (quote-free flags only).
 
-## Testing rules
+## Testing
+
+### Lanes and layout
 
 - Every decision, validation, or string-building step that does not need a tensor goes in
-  `core.py` with a test in `tests/unit/`. Cover the happy path and at least one edge case.
-  The same split applies to the release CLIs: pure helpers in `scripts/release_common.py`,
-  tested in `tests/unit/test_release_common.py`; git and prompts stay in the CLI `main()`s.
-- Anything importing `comfy_api` or `torch` lives in `nodes.py` and is tested in
-  `tests/comfyui/` with `pytestmark = pytest.mark.comfyui`. Never import either in `tests/unit/`.
+  `core.py`; anything importing `comfy_api` or `torch` lives in `nodes.py` and is tested in
+  `tests/comfyui/` with `pytestmark = pytest.mark.comfyui`. The same split applies to the
+  release CLIs: pure helpers in `scripts/release_common.py`, tested in
+  `tests/unit/test_release_common.py`; git and prompts stay in the CLI `main()`s.
+- The unit lane stays ComfyUI-free: nothing under `tests/unit/` imports `comfy_api`, `torch`,
+  or `tests.support.comfy`, and `make test` must pass with no ComfyUI install.
+- One test module per source module, `test_<module>.py`, inside the family directory. Split a
+  large module by behaviour as `test_<module>_<behaviour>.py`, never by node count.
+- Shared fakes live in `tests/support/`, one module per seam (`comfy.py`). A double used by one
+  file may stay local; the moment a second file needs it, it moves. Never import from another
+  test module. Local `@pytest.fixture`s and driver helpers are fine (`pack` in `test_pack.py`).
+- The two `conftest.py` files do `sys.path` wiring and collection control only; no fixtures
+  or fakes go there.
 - The ComfyUI lane must be green before asking the user to run a manual E2E. Its
   `GET_SCHEMA()` test is the only early warning that the node will load.
 - Fix code, not tests, when a test fails.
+
+### Test growth rules
+
+The suite was pruned from 102 to 28 collected cases on 2026-09-07 (unit 78 → 15, ComfyUI
+24 → 13). These rules keep it that way: a new test must earn its place.
+
+- **Regression-first, mandatory decision ladder.** The regression trunks, highest first:
+  `tests/comfyui/test_pack.py` (the pack loads like ComfyUI, the node-id list, the
+  input-id/`execute` contract, help pages); `tests/comfyui/<family>/test_nodes*.py`
+  (execute-level with stubs: conditioning payload, latent geometry, refusals);
+  `tests/unit/<family>/test_core.py` (boundaries and branches no execute test reaches). Before
+  writing ANY new test, read the trunk tests for the changed behaviour, then stop at the first
+  step that applies:
+  1. Existing regression tests already verify the change → add **nothing**.
+  2. They don't, but extending one is a suitable way to verify it → **extend that test only**.
+  3. Only when neither holds may a new test be added, at the highest layer that owns the
+     behaviour. A new node is usually step 2 at the pack layer (append to `EXPECTED_NODE_IDS`)
+     plus step 3 for behaviour no stub test covers. A pure helper gets a unit test only for a
+     boundary or branch the execute tests cannot reach.
+- **Banned test shapes.** No tests of constants (`*_MODES` tuples, regexes on their own),
+  `io.Schema` defaults, getters, enum values, or test doubles; no "the stub was called with the
+  args the source passes" mirrors; no assertions on help-page or README copy; no `read_text()`
+  substring assertions against `pyproject.toml`, `CHANGELOG.md`, `web/docs`, or source files.
+  Parity between duplicated text (README node table vs schema, docs vs code, changelog vs
+  version) is kept by review, never by tests.
+- **Scope floor.** No one-assert micro tests or micro test files. Anything smaller than
+  behaviour worth breaking becomes another step of an existing scenario test, carrying its story
+  as a comment.
+- **Parametrize policy.** `@pytest.mark.parametrize` is for small curated tables only; an
+  exhaustive input→output table goes in one loop-bodied test with a per-case message
+  (`assert actual == expected, f"case={case!r}"`). Parametrize does not reduce the collected
+  count: N params collect as N tests.
+- **Shared fakes only.** See the layout rule above.
+- **Nothing disabled.** No committed `xfail` or `pytest.mark.skip`. The only environment guard is
+  `collect_ignore_glob` in `tests/comfyui/conftest.py`; do not add runtime skips to tests.
+- **Budget (collected cases).** Unit lane ≤ 50, ComfyUI lane ≤ 30; landed counts 15 and 13.
+  These are round ceilings that should never be reached, not targets to fill. Check with
+  `make test-count`. A change that materially grows a count must say why a regression test could
+  not cover it. Nothing enforces this in CI; it holds because you read it.
 
 ## Node conventions (V3)
 

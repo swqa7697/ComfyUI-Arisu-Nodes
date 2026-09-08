@@ -1,7 +1,7 @@
 SHELL := /bin/bash
 .SHELLFLAGS := -euo pipefail -c
 .DEFAULT_GOAL := help
-.PHONY: help install uninstall clean build test test-comfyui lint format tidy upgrade bump-major bump-minor bump-patch release-commit tag
+.PHONY: help install uninstall clean build test test-comfyui test-count lint format tidy upgrade bump-major bump-minor bump-patch release-commit tag
 
 # Hard boundary (CLAUDE.md): never run project commands inside the live ComfyUI
 # install, including a clone of this repo under its custom_nodes/.
@@ -38,6 +38,10 @@ test: ## Run the unit lane (tests/unit); what CI runs
 
 test-comfyui: ## Run the ComfyUI lane on ComfyUI's interpreter, read-only (ARGS="-v -k name")
 	@bash scripts/test-comfyui.sh $(ARGS)
+
+test-count: ## Collected tests per lane; compare with the budgets in CLAUDE.md
+	@printf 'unit lane:    '; uv run pytest --collect-only -q | tail -1
+	@printf 'comfyui lane: '; bash scripts/test-comfyui.sh --collect-only -q 2>/dev/null | tail -1 || $(INFO) "skipped (no ComfyUI install)"
 
 lint: ## Check only: ruff check + ruff format --check
 	@uv run ruff check .

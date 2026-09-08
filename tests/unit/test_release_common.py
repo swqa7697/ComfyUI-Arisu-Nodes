@@ -52,116 +52,71 @@ All notable changes to this project are documented in this file.
 """
 
 
-# ── parse_version / bump_version / set_version ───────────────────────────────
-def test_parse_version_reads_the_project_version():
+def test_version_line_is_parsed_and_rewritten_in_place():
     assert parse_version(PYPROJECT) == "0.1.0"
 
-
-def test_parse_version_rejects_missing_line():
-    with pytest.raises(ReleaseError, match="no `version"):
-        parse_version("[project]\nname = 'x'\n")
-
-
-def test_parse_version_rejects_duplicate_lines():
-    with pytest.raises(ReleaseError, match="more than one"):
-        parse_version(PYPROJECT + '\n[tool.other]\nversion = "9.9.9"\n')
-
-
-@pytest.mark.parametrize(("part", "expected"), [("major", "2.0.0"), ("minor", "1.3.0"), ("patch", "1.2.4")])
-def test_bump_version_resets_lower_parts(part: str, expected: str):
-    assert bump_version("1.2.3", part) == expected
-
-
-def test_bump_version_rejects_unknown_part():
-    with pytest.raises(ReleaseError, match="unknown part"):
-        bump_version("1.2.3", "micro")
-
-
-def test_bump_version_rejects_non_semver():
-    with pytest.raises(ReleaseError, match="not X.Y.Z"):
-        bump_version("1.2", "patch")
-
-
-def test_set_version_changes_only_the_version_line():
     rewritten = set_version(PYPROJECT, "0.2.0")
     changed = [(a, b) for a, b in zip(PYPROJECT.splitlines(), rewritten.splitlines()) if a != b]
     assert changed == [('version = "0.1.0"', 'version = "0.2.0"')]
     assert parse_version(rewritten) == "0.2.0"
 
+    with pytest.raises(ReleaseError, match="no `version"):
+        parse_version("[project]\nname = 'x'\n")
+    with pytest.raises(ReleaseError, match="more than one"):
+        parse_version(PYPROJECT + '\n[tool.other]\nversion = "9.9.9"\n')
 
-# ── changelog_section ────────────────────────────────────────────────────────
-def test_changelog_section_stops_at_next_heading():
+
+def test_bump_version_resets_lower_parts_and_rejects_bad_input():
+    for part, expected in [("major", "2.0.0"), ("minor", "1.3.0"), ("patch", "1.2.4")]:
+        assert bump_version("1.2.3", part) == expected, f"case={part!r}"
+    with pytest.raises(ReleaseError, match="unknown part"):
+        bump_version("1.2.3", "micro")
+    with pytest.raises(ReleaseError, match="not X.Y.Z"):
+        bump_version("1.2", "patch")
+
+
+def test_changelog_section_is_bounded_by_headings():
     section = changelog_section(CHANGELOG, "Unreleased")
     assert section.startswith("### Added")
     assert section.endswith("- Fix the widget order.")
     assert "[0.1.0]" not in section
 
-
-def test_changelog_section_last_section_runs_to_eof():
+    # the last section runs to EOF, and a heading needs no date
     assert changelog_section(CHANGELOG, "0.1.0") == "### Added\n\n- Initial release."
-
-
-def test_changelog_section_heading_without_date():
     assert changelog_section("## [1.0.0]\n\n- Done.\n", "1.0.0") == "- Done."
 
-
-def test_changelog_section_rejects_missing_heading():
     with pytest.raises(ReleaseError, match=r"no `## \[9\.9\.9\]`"):
         changelog_section(CHANGELOG, "9.9.9")
 
 
-# ── roll_changelog ───────────────────────────────────────────────────────────
-def test_roll_changelog_renames_unreleased_and_opens_a_new_one():
+def test_roll_changelog_moves_unreleased_under_a_dated_heading_once():
     rolled = roll_changelog(CHANGELOG, "0.2.0", "2026-09-05")
     assert "## [Unreleased]\n\n## [0.2.0] - 2026-09-05\n" in rolled
     assert changelog_section(rolled, "0.2.0") == changelog_section(CHANGELOG, "Unreleased")
     assert changelog_section(rolled, "Unreleased") == ""
     assert changelog_section(rolled, "0.1.0") == changelog_section(CHANGELOG, "0.1.0")
 
-
-def test_roll_changelog_rejects_missing_unreleased():
+    # a second roll finds nothing to release; neither does a heading with no entries, or no [Unreleased] at all
+    with pytest.raises(ReleaseError, match="nothing under"):
+        roll_changelog(rolled, "0.3.0", "2026-09-06")
+    with pytest.raises(ReleaseError, match="nothing under"):
+        roll_changelog("# Changelog\n\n## [Unreleased]\n\n### Added\n\n## [0.1.0] - 2026-01-01\n\n- x\n", "0.2.0", "2026-09-05")
     with pytest.raises(ReleaseError, match=r"no `## \[Unreleased\]`"):
         roll_changelog("# Changelog\n\n## [0.1.0] - 2026-01-01\n\n- x\n", "0.2.0", "2026-09-05")
 
 
-def test_roll_changelog_rejects_headings_without_entries():
-    text = "# Changelog\n\n## [Unreleased]\n\n### Added\n\n## [0.1.0] - 2026-01-01\n\n- x\n"
-    with pytest.raises(ReleaseError, match="nothing under"):
-        roll_changelog(text, "0.2.0", "2026-09-05")
-
-
-def test_roll_changelog_twice_is_refused():
-    rolled = roll_changelog(CHANGELOG, "0.2.0", "2026-09-05")
-    with pytest.raises(ReleaseError, match="nothing under"):
-        roll_changelog(rolled, "0.3.0", "2026-09-06")
-
-
-# ── Formats ──────────────────────────────────────────────────────────────────
-def test_release_subject_matches_its_regex():
+def test_release_subject_and_tag_formats_satisfy_their_gates():
     assert RELEASE_SUBJECT_RE.match(release_subject("0.2.0"))
+    for subject in ("chore: bump version to 1.2", "chore: bump version to 1.2.3 again", "feat: bump version to 1.2.3"):
+        assert RELEASE_SUBJECT_RE.match(subject) is None, f"case={subject!r}"
 
-
-@pytest.mark.parametrize("subject", ["chore: bump version to 1.2", "chore: bump version to 1.2.3 again", "feat: bump version to 1.2.3"])
-def test_release_subject_regex_rejects_near_misses(subject: str):
-    assert RELEASE_SUBJECT_RE.match(subject) is None
-
-
-def test_tag_name_matches_its_regex():
     assert tag_name("0.2.0") == "v0.2.0"
     assert TAG_RE.match(tag_name("0.2.0"))
     assert TAG_RE.match("v2026-09-05") is None
+    assert tag_message("0.2.0", "### Added\n\n- Thing.") == "Release v0.2.0\n\n### Added\n\n- Thing.\n"
 
 
-def test_tag_message_titles_the_section():
-    message = tag_message("0.2.0", "### Added\n\n- Thing.")
-    assert message == "Release v0.2.0\n\n### Added\n\n- Thing.\n"
-
-
-# ── changed_paths ────────────────────────────────────────────────────────────
-def test_changed_paths_parses_porcelain_including_renames():
+def test_changed_paths_parses_porcelain_including_renames_and_empty_output():
     porcelain = " M pyproject.toml\nM  CHANGELOG.md\nMM uv.lock\nR  old.py -> new.py\n"
     assert changed_paths(porcelain) == ["pyproject.toml", "CHANGELOG.md", "uv.lock", "new.py"]
-
-
-def test_changed_paths_empty_output():
     assert changed_paths("") == []
