@@ -145,8 +145,8 @@ switches the first off.
 
 Join separate text fields into one `/`-separated path for `filename_prefix` inputs (`minimax_h3` +
 `test` → `minimax_h3/test`). The node starts with one field; a `+ field` / `- field` button row adds
-and removes fields (up to 16), blanks are skipped, and surrounding slashes and spaces are trimmed. The
-visible field count is saved with the workflow.
+and removes fields and their sockets (up to 16), blanks are skipped, and surrounding slashes and spaces
+are trimmed. The visible field count is saved with the workflow.
 
 ---
 

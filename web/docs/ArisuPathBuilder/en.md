@@ -15,9 +15,10 @@ fields on one node, so each part can be edited on its own and the whole prefix i
 | Parameter     | Type   | Description                                                                                     |
 |---------------|--------|-------------------------------------------------------------------------------------------------|
 | `segment_N`   | STRING | One path piece each, in order. Blank pieces are skipped; a piece may itself contain `/`.        |
-| `+ field` / `- field` | button row | One row of two buttons: the left shows the next field (up to 16), the right hides the last visible field and clears it. |
+| `+ field` / `- field` | button row | One row of two buttons: the left shows the next field (up to 16), the right removes the last visible field: its text is cleared and its input socket, with any link into it, goes away. |
 
-The node starts with one field. The number of visible fields is saved with the workflow.
+The node starts with one field. The number of visible fields is saved with the workflow; on load, a
+field that holds text or a link is shown even if it lies past the saved count.
 
 ## Outputs
 
@@ -40,5 +41,6 @@ Path Builder ─▶ (filename_prefix) Save Video
   `/h3_clip` give `videos/h3_clip`. A leading `/` on the first field is dropped too; ComfyUI does not
   accept absolute prefixes.
 - The `+` / `-` button row and the hidden fields are handled by the pack's frontend script, which
-  draws the row itself so both buttons share one line. If the row does not appear, check the browser
-  console for a failed load of `path_builder.js`.
+  draws the row itself so both buttons share one line. A hidden field has no input socket, so a
+  removed field cannot be wired by accident and nothing but the visible fields reaches the join. If
+  the row does not appear, check the browser console for a failed load of `path_builder.js`.
