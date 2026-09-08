@@ -25,7 +25,7 @@ git log -1 --format='%s' origin/$BRANCH
 The subject must match exactly (`RELEASE_SUBJECT_RE` in `scripts/release_common.py`):
 
 ```
-^chore: bump version to \d+\.\d+\.\d+$
+^release arisu_nodes: \d+\.\d+\.\d+$
 ```
 
 If `origin/$BRANCH` does not exist or the subject does not match, **stop** and tell the user the tip of `origin/$BRANCH` is not a release commit; they should run `make bump-patch|minor|major` then `make release-commit`.

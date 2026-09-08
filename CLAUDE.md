@@ -107,13 +107,13 @@ If you reach for an inline import for any other reason (avoiding work, hiding a 
 
 - Never `git add`, `git commit`, or `git push` unless explicitly asked; ask before planning one. `make release-commit`, `make tag`, and `/release-pr` all write to git, so the rule covers them.
 - Never commit directly to `main`: non-trivial work goes on a branch with a PR to `main`, and only the PR gate gates a merge (the ComfyUI lane workflow fires from the default branch only, never on a feature branch). Commit directly to `dev` only if the user has confirmed they are a repo admin; otherwise branch off `dev` and open a PR. `make tag` pushing `vX.Y.Z` from `main` is the one exception, and it pushes a tag, not a commit.
-- Conventional Commits: `<type>(<scope>): <summary>`, imperative, lowercase, no period, <=72 chars. Types: feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert. Scopes (optional): `nodes`, `core`, `tests`, `ci`, `docs`, `web`. Body: optional one-paragraph summary, then concise bullets, e.g. `feat(nodes): add BrightnessGate node` over `- Add mean-brightness gate with above/below modes` and `- Keep threshold clamping in core.py with unit tests`.
+- Conventional Commits: `<type>(<scope>): <summary>`, imperative, lowercase, no period, <=72 chars. Types: feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert. Scopes (optional): `nodes`, `core`, `tests`, `ci`, `docs`, `web`. Body: optional one-paragraph summary, then concise bullets, e.g. `feat(nodes): add BrightnessGate node` over `- Add mean-brightness gate with above/below modes` and `- Keep threshold clamping in core.py with unit tests`. The one exempt commit is the release commit, whose subject is fixed at `release arisu_nodes: X.Y.Z` by `release_subject` in `scripts/release_common.py`.
 
 ## Changelog and versioning
 
 `CHANGELOG.md` follows Keep a Changelog: user-visible changes only, one imperative bullet each under `[Unreleased]` in Added / Changed / Deprecated / Removed / Fixed / Security; skip refactors, formatting, and dependency bumps. `pyproject.toml`'s `version` is the only version file. Release flow, each step refusing when its preconditions fail (documented in `scripts/release_*.py`):
 1. `git switch -c release/X.Y.Z` from an up-to-date `main`.
 2. `make bump-patch|minor|major` rewrites the version, renames `[Unreleased]` to `[X.Y.Z] - YYYY-MM-DD` with a new empty `[Unreleased]` above it, and runs `uv lock`; no git writes.
-3. `make release-commit [YES=1]` commits `chore: bump version to X.Y.Z` and pushes the branch; only `pyproject.toml`, `CHANGELOG.md`, and `uv.lock` may have changed.
+3. `make release-commit [YES=1]` commits `release arisu_nodes: X.Y.Z` and pushes the branch; only `pyproject.toml`, `CHANGELOG.md`, and `uv.lock` may have changed.
 4. `/release-pr` opens `main <- release/X.Y.Z`; title from the commit, body from the changelog.
 5. After the merge, on `main` at `origin/main`: `make tag` creates the annotated tag `vX.Y.Z` behind a rendered CAPTCHA and pushes it, triggering `publish_node.yml` (`REGISTRY_ACCESS_TOKEN`).

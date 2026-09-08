@@ -84,7 +84,7 @@ bump-minor: ## Bump minor (x.Y.0): pyproject.toml, roll CHANGELOG [Unreleased], 
 bump-patch: ## Bump patch (x.y.Z): pyproject.toml, roll CHANGELOG [Unreleased], uv lock; no git writes
 	@$(_PY) scripts/release_bump.py patch
 
-release-commit: ## On a release branch: commit + push the bump as 'chore: bump version to X.Y.Z' (YES=1 skips the prompt)
+release-commit: ## On a release branch: commit + push the bump as 'release arisu_nodes: X.Y.Z' (YES=1 skips the prompt)
 	@$(_PY) scripts/release_commit.py $(if $(filter 1 true yes,$(YES)),--yes)
 
 tag: ## On the latest main: annotated tag v<pyproject version> after a CAPTCHA, then push (triggers publish_node.yml)

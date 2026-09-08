@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="400" height="400" role="img" aria-label="ComfyUI Arisu Nodes">
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0.45" y2="1">
+      <stop offset="0" stop-color="#20222f"></stop>
+      <stop offset="0.6" stop-color="#161826"></stop>
+      <stop offset="1" stop-color="#101220"></stop>
+    </linearGradient>
+  </defs>
+  <rect x="1" y="1" width="510" height="510" rx="114" fill="url(#tile)" stroke="#3f424d" stroke-width="2"></rect>
+  <g transform="translate(65.286 52.571) scale(6.35714)">
+    <path d="M25 17 H38 A10 10 0 0 1 48 27 V42" fill="none" stroke="#595d6c" stroke-width="7" stroke-linecap="round"></path>
+    <rect x="6" y="8" width="21" height="18" rx="6" fill="#cfd3e5"></rect>
+    <rect x="34" y="38" width="24" height="18" rx="6" fill="#cfd3e5"></rect>
+    <circle cx="6" cy="17" r="4" fill="#9397ab"></circle>
+  </g>
+</svg>

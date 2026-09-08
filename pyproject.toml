@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "arisu_nodes"
-version = "1.0.0"
+version = "1.0.1"
 description = "A package of useful ComfyUI nodes optimizing user experience."
 authors = [{ name = "swqa7697" }]
 readme = "README.md"
@@ -23,7 +23,7 @@ Repository = "https://github.com/swqa7697/ComfyUI-Arisu-Nodes"
 [tool.comfy]
 PublisherId = "swqa7697"
 DisplayName = "ComfyUI-Arisu-Nodes"
-Icon = ""
+Icon = "https://raw.githubusercontent.com/swqa7697/ComfyUI-Arisu-Nodes/main/assets/icon.svg"
 
 [tool.setuptools.packages.find]
 where = ["src"]
