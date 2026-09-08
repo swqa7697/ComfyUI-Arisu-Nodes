@@ -10,7 +10,7 @@ multiple, and the reference sizing rules.
 from __future__ import annotations
 
 import math
-from typing import Dict, List, Mapping, Optional, Sequence, Tuple, TypeVar
+from typing import List, Optional, Sequence, Tuple, TypeVar
 
 T = TypeVar("T")
 
@@ -411,21 +411,3 @@ def frames_for_duration(seconds: float) -> int:
         The aligned frame count, at least 5; 5.0 s gives 124, the stock default.
     """
     return align_frame_count(max(MIN_CLIP_FRAMES, round(seconds * FPS)))
-
-
-def apply_settings(settings: Optional[Mapping[str, int]], **values: int) -> Dict[str, int]:
-    """Override widget values with those of a settings bundle.
-
-    Args:
-        settings: The bundle from a video settings node, or ``None`` when none is connected.
-        **values: The consumer's own values, keyed by input id.
-
-    Returns:
-        ``values`` with every key present in ``settings`` replaced. Keys of the
-        bundle the consumer did not ask for are ignored, so an upscale bundle
-        fits the plain hybrid node and a plain bundle leaves the Advanced node's
-        target size to its widgets.
-    """
-    if not settings:
-        return dict(values)
-    return {key: settings.get(key, value) for key, value in values.items()}

@@ -1,11 +1,11 @@
-// Path Builder: show one text field, grow and shrink with "+ field" / "- field".
+// Path Builder: show one text field, grow and shrink with the "+ field" / "- field" button row.
 //
 // The backend declares every field (a V3 node must list its input ids up
 // front), so this script only hides the ones past the current count. The count
 // lives in node.properties so it survives save and reload; a hidden field is
 // cleared so stale text never reaches the join.
 import { app } from "../../../../scripts/app.js";
-import { addButton } from "./widgets.js";
+import { addButtonRow } from "./widgets.js";
 
 const NODE_TYPE = "ArisuPathBuilder";
 const COUNT_PROPERTY = "arisuSegments";
@@ -53,8 +53,10 @@ app.registerExtension({
     const onNodeCreated = nodeType.prototype.onNodeCreated;
     nodeType.prototype.onNodeCreated = function () {
       onNodeCreated?.apply(this, arguments);
-      addButton(this, "+ field", () => applyCount(this, currentCount(this) + 1));
-      addButton(this, "- field", () => applyCount(this, currentCount(this) - 1));
+      addButtonRow(this, [
+        { label: "+ field", onClick: () => applyCount(this, currentCount(this) + 1) },
+        { label: "- field", onClick: () => applyCount(this, currentCount(this) - 1) },
+      ]);
       applyCount(this, 1);
     };
 

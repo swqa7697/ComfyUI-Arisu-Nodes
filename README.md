@@ -47,10 +47,9 @@ latent.
 |---|---|
 | `clip`, `vae` | The H3 text encoder (Qwen3-VL) and video VAE. |
 | `audio_vae` | Optional; required only when an audio input is connected. |
-| `settings` | Optional. Bundle from a **MiniMax H3 Video Settings** node; when linked or advertised it overrides `width`, `height`, `length` and greys those widgets out. |
 | `prompt` | Refer to references with the usual `<Picture i>` / `<Video k>` / `<Audio j>` tags. |
-| `width`, `height` | Canvas in pixels, multiples of 32 (default 1344 × 768). |
-| `length` | Frames at 24 fps, snapped up to the model's 17k+5 grid (default 124 ≈ 5 s). |
+| `width`, `height` | Canvas in pixels, multiples of 32 (default 1344 × 768). Wire them from a **MiniMax H3 Video Settings** node, or let one advertise: the widgets then grey out and refuse links. |
+| `length` | Frames at 24 fps, snapped up to the model's 17k+5 grid (default 124 ≈ 5 s). Same sources as the canvas. |
 | `ref_image_size` | `match` scales references to the generation's pixel area; `max` caps the short edge at 2048 px for identity fidelity, at a real speed cost. |
 | `frame_picture_tags` | Whether keyframes take `<Picture>` ordinals `after_refs` (default), `before_refs`, or `none`. |
 | `first_frame`, `last_frame` | Optional keyframes pinned at frame 0 and the last frame. |
@@ -79,8 +78,7 @@ sharp anchors instead of resampled latents.
 | Input | Notes |
 |---|---|
 | everything above | Same inputs and behaviour as **MiniMax H3 Hybrid to Video**. |
-| `target_width`, `target_height` | Size of the upscaled video, multiples of 32 (default 2688 × 1536). Must equal the latent upscaler's output. |
-| `settings` | From the **(Upscale)** settings variant it also overrides `target_width` / `target_height`; the plain variant's bundle leaves them manual. |
+| `target_width`, `target_height` | Size of the upscaled video, multiples of 32 (default 2688 × 1536). Must equal the latent upscaler's output. An advertising **(Upscale)** settings node drives them too; the plain settings variant leaves them manual. |
 
 Outputs `positive` and `latent` exactly like the hybrid node, plus `positive (upscaled)` for the
 second guider. Keyframes and reference images are sized for each pass (`ref_image_size = match`
@@ -129,11 +127,11 @@ two-sampler latent-upscale pass.
 | `megapixels` | Pixel budget in 1024 × 1024 megapixels (default 1.0; the stock 1344 × 768 canvas is ≈ 0.98 MP). |
 | `upscale_factor` | (Upscale) Factor of the latent upscaler (default 2.0); targets are rounded to multiples of 32. |
 | `duration` | Seconds at 24 fps (default 5.0 = 124 frames), snapped up to the 17k+5 grid. |
-| `advertise` | Off by default. On, every hybrid node in the same graph without a `settings` link takes the bundle, and its size and length widgets grey out the moment the switch flips. |
+| `advertise` | Off by default. On, every hybrid node in the same graph takes these values, and its size and length widgets grey out and refuse links the moment the switch flips. |
 
-Outputs the plain numbers (`width`, `height`, `length`, plus `upscale_factor`, `target_width`,
-`target_height` on the upscale variant) and a `settings` bundle for the hybrid nodes. The plain
-outputs are always available. Advertising covers the root graph; inside a subgraph, link `settings`
+Outputs `width`, `height`, `length`, plus `upscale_factor`, `target_width`, `target_height` on the
+upscale variant; wire them into the hybrid nodes' inputs of the same name, or advertise. The outputs
+are always available. Advertising covers the root graph; inside a subgraph, wire the outputs
 explicitly. Only one node per graph advertises at a time; switching on a second hands it the slot and
 switches the first off.
 
@@ -146,8 +144,8 @@ switches the first off.
 `ArisuPathBuilder` — category **Arisu Nodes/Common** · [full reference](web/docs/ArisuPathBuilder/en.md)
 
 Join separate text fields into one `/`-separated path for `filename_prefix` inputs (`minimax_h3` +
-`test` → `minimax_h3/test`). The node starts with one field; `+ field` / `- field` buttons add and
-remove fields (up to 16), blanks are skipped, and surrounding slashes and spaces are trimmed. The
+`test` → `minimax_h3/test`). The node starts with one field; a `+ field` / `- field` button row adds
+and removes fields (up to 16), blanks are skipped, and surrounding slashes and spaces are trimmed. The
 visible field count is saved with the workflow.
 
 ---
@@ -246,7 +244,7 @@ For a two-sampler latent upscale, use **MiniMax H3 Hybrid to Video (Advanced)** 
 
 To stop retyping sizes, drop in **MiniMax H3 Video Settings** (or its **(Upscale)** variant): with
 `advertise` switched on, the hybrid nodes in the same graph take its canvas and length without a link
-and grey out their own widgets at once; its plain outputs feed resize nodes, upscalers, or anything else. Use
+and grey out their own widgets at once; its outputs also feed resize nodes, upscalers, or anything else. Use
 **Path Builder** for the `filename_prefix` of your save nodes and **Extract Last Images** to grab the
 ending frame of a decoded clip. Put **Preview & Save Image** where you would put a preview node and
 click **save** on the results worth keeping; the **(Upscale)** variant upscales them on the way.
@@ -403,10 +401,10 @@ need the identity fidelity.
 <details>
 <summary>The hybrid node's width, height or length widgets are greyed out</summary>
 
-A **MiniMax H3 Video Settings** node in the same graph is advertising, or a `settings` link is
-connected: those values now come from the settings node and the widgets are ignored. Turn `advertise`
-off on the settings node, or remove the link, to edit them again. If a greyed widget is fed by a link
-of its own, remove that link too; the bundle overrides it.
+A **MiniMax H3 Video Settings** node in the same graph is advertising: those values now come from
+the settings node and the widgets are ignored. While it advertises, a link into a greyed widget is
+refused and one that was already there has been removed with a notice. Turn `advertise` off on the
+settings node to edit or wire them again.
 </details>
 
 <details>

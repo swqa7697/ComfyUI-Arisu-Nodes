@@ -1,19 +1,21 @@
-// MiniMax H3 Video Settings: hand the bundle to the hybrid nodes without a link.
+// MiniMax H3 Video Settings: drive the hybrid nodes' size and length widgets without a link.
 //
-// A hybrid node takes its size and length from a settings node in two ways: an
-// explicit link into its `settings` input (works in any graph, subgraphs
-// included), or an advertising settings node in the root graph. Advertising
-// is resolved here: the affected widgets are greyed out, and at queue time the
-// prompt sent to the server gets the missing `settings` link injected. The
-// saved workflow is never touched.
+// A hybrid node takes its width, height and length (and target size, on the
+// Advanced node) from a settings node in two ways: by wiring the settings
+// node's outputs into those widget inputs (works in any graph, subgraphs
+// included), or from an advertising settings node in the root graph.
+// Advertising is resolved here: the handed-over widgets are greyed out, links
+// into them are refused and existing ones removed, and at queue time the
+// prompt sent to the server gets one link per widget injected, from the
+// settings node's output of the same name. The saved workflow is never touched.
 //
 // The greying is recomputed when a node joins or leaves the root graph, when
-// the advertise switch is flipped, when a `settings` link changes, and after
-// a workflow loads. Hooks go on `onAdded`, not `onNodeCreated`: LiteGraph runs
-// the latter inside createNode(), before the node has a graph or is listed in
-// it, so a scan from there sees nothing. Muting or bypassing a settings node
-// has no callback; its widgets update on the next such event, and the run is
-// unaffected because a muted node is not in the prompt.
+// the advertise switch is flipped, and after a workflow loads. Hooks go on
+// `onAdded`, not `onNodeCreated`: LiteGraph runs the latter inside
+// createNode(), before the node has a graph or is listed in it, so a scan from
+// there sees nothing. Muting or bypassing a settings node has no callback; its
+// widgets update on the next such event, and the run is unaffected because a
+// muted node is not in the prompt.
 //
 // Only one settings node per graph advertises at a time, muted or not. Flipping
 // a second switch on hands it the slot and switches the previous one off (later
@@ -22,13 +24,11 @@
 import { app } from "../../../../scripts/app.js";
 import { api } from "../../../../scripts/api.js";
 
-const BUNDLE_TYPE = "ARISU_MINIMAX_H3_SETTINGS";
-const SETTINGS_INPUT = "settings";
 const ADVERTISE_WIDGET = "advertise";
 // LiteGraph node mode 0: runs normally (not muted, not bypassed).
 const MODE_ALWAYS = 0;
 
-// Widgets a hybrid node can hand over, and the keys each settings variant carries.
+// Widgets a hybrid node can hand over, and the outputs each settings variant carries, by shared name.
 const HYBRID_WIDGETS = {
   ArisuMiniMaxH3HybridToVideo: ["width", "height", "length"],
   ArisuMiniMaxH3HybridToVideoAdvanced: ["width", "height", "length", "target_width", "target_height"],
@@ -92,32 +92,34 @@ function switchOffOnArrival(node) {
   toast("info", `MiniMax H3 Video Settings node #${node.id} was pasted with advertise on; switched off.`);
 }
 
-function settingsInputIndex(node) {
-  return node.inputs?.findIndex((input) => input.name === SETTINGS_INPUT) ?? -1;
-}
-
-function linkedSource(node) {
-  const index = settingsInputIndex(node);
-  if (index < 0 || node.inputs[index].link == null) return null;
-  return node.getInputNode(index);
-}
-
-/** Keys a hybrid node currently hands over: from its link, else from the root graph's advertiser. */
+/** Widget names a hybrid node hands over to the root graph's advertiser: the outputs both carry. */
 function handedOverKeys(node) {
-  const linked = linkedSource(node);
-  if (linked) {
-    // a link through a subgraph boundary hides the origin type: assume the full set
-    return SETTINGS_KEYS[linked.type] ?? HYBRID_WIDGETS[node.type];
-  }
   if (node.graph !== rootGraph()) return [];
   const source = soleAdvertiser();
-  return source ? SETTINGS_KEYS[source.type] : [];
+  if (!source) return [];
+  return SETTINGS_KEYS[source.type].filter((key) => HYBRID_WIDGETS[node.type].includes(key));
+}
+
+/** Remove the links into a hybrid node's handed-over widgets; returns the names that had one. */
+function unlinkHandedOver(node, keys) {
+  const removed = [];
+  for (const [index, input] of (node.inputs ?? []).entries()) {
+    if (keys.has(input.name) && input.link != null) {
+      node.disconnectInput(index);
+      removed.push(input.name);
+    }
+  }
+  return removed;
 }
 
 function refreshHybrid(node) {
   const keys = new Set(handedOverKeys(node));
   for (const widget of node.widgets ?? []) {
     if (HYBRID_WIDGETS[node.type].includes(widget.name)) widget.disabled = keys.has(widget.name);
+  }
+  const removed = unlinkHandedOver(node, keys);
+  if (removed.length) {
+    toast("info", `Hybrid node #${node.id}: ${removed.join(", ")} come from the advertising settings node; the link(s) into them were removed.`);
   }
   node.setDirtyCanvas(true, true);
 }
@@ -128,35 +130,45 @@ function refreshRoot() {
   }
 }
 
-/** Add the advertised settings link to every root-graph hybrid node the prompt runs without one. */
-function injectSettingsLinks(output) {
+/** LiteGraph's onConnectInput contract: `false` refuses the connection. */
+function refuseHandedOverLink(node, inputIndex) {
+  const name = node.inputs?.[inputIndex]?.name;
+  if (!handedOverKeys(node).includes(name)) return true;
+  toast("warn", `${name} of hybrid node #${node.id} comes from the advertising settings node; switch advertise off to wire it.`);
+  return false;
+}
+
+/** Point every handed-over widget of the root-graph hybrid nodes in the prompt at the advertiser's outputs. */
+function injectAdvertisedValues(output) {
   const source = soleAdvertiser();
   if (!source) return;
   const sourceId = String(source.id);
-  const slot = source.outputs.findIndex((out) => out.type === BUNDLE_TYPE);
-  if (slot < 0) return;
   const skipped = [];
   for (const node of rootGraph().nodes) {
     if (!(node.type in HYBRID_WIDGETS) || !isActive(node)) continue;
     const entry = output[String(node.id)];
-    if (!entry || entry.inputs[SETTINGS_INPUT] !== undefined) continue;
+    if (!entry) continue;
     if (!output[sourceId]) {
       skipped.push(node.id);
       continue;
     }
-    entry.inputs[SETTINGS_INPUT] = [sourceId, slot];
+    for (const key of handedOverKeys(node)) {
+      const slot = source.outputs.findIndex((out) => out.name === key);
+      if (slot >= 0) entry.inputs[key] = [sourceId, slot];
+    }
   }
   if (skipped.length) {
     toast("warn", `Settings node #${sourceId} is not part of this run; hybrid node(s) ${skipped.join(", ")} use their own widgets.`);
   }
 }
 
+/** Run `extra` after the prototype's `name` hook; a `false` from either side is returned, as LiteGraph's veto hooks expect. */
 function chain(prototype, name, extra) {
   const original = prototype[name];
   prototype[name] = function () {
     const result = original?.apply(this, arguments);
-    extra.apply(this, arguments);
-    return result;
+    if (result === false) return false;
+    return extra.apply(this, arguments) === false ? false : result;
   };
 }
 
@@ -165,7 +177,7 @@ app.registerExtension({
   setup() {
     const queuePrompt = api.queuePrompt;
     api.queuePrompt = async function (index, prompt, ...rest) {
-      if (prompt?.output) injectSettingsLinks(prompt.output);
+      if (prompt?.output) injectAdvertisedValues(prompt.output);
       return queuePrompt.call(this, index, prompt, ...rest);
     };
   },
@@ -174,8 +186,8 @@ app.registerExtension({
       chain(nodeType.prototype, "onAdded", function () {
         refreshHybrid(this);
       });
-      chain(nodeType.prototype, "onConnectionsChange", function () {
-        refreshHybrid(this);
+      chain(nodeType.prototype, "onConnectInput", function (inputIndex) {
+        return refuseHandedOverLink(this, inputIndex);
       });
     }
     if (nodeData.name in SETTINGS_KEYS) {
@@ -208,7 +220,7 @@ app.registerExtension({
     }
   },
   afterConfigureGraph() {
-    // widget values are restored after onAdded ran, so the rule is applied here for a load
+    // widget values and links are restored after onAdded ran, so the rule is applied here for a load
     const first = rootGraph().nodes.find(advertiseOn);
     if (first) enforceSingleAdvertiser(first);
     refreshRoot();
