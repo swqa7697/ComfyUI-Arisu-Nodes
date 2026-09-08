@@ -28,6 +28,8 @@ EXPECTED_NODE_IDS = [
     "ArisuMiniMaxH3VideoSettingsUpscale",
     "ArisuPathBuilder",
     "ArisuExtractLastImages",
+    "ArisuPreviewSaveImage",
+    "ArisuPreviewSaveImageUpscale",
 ]
 
 

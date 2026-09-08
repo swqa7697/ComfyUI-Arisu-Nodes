@@ -5,6 +5,7 @@
 // lives in node.properties so it survives save and reload; a hidden field is
 // cleared so stale text never reaches the join.
 import { app } from "../../../scripts/app.js";
+import { addButton } from "./widgets.js";
 
 const NODE_TYPE = "ArisuPathBuilder";
 const COUNT_PROPERTY = "arisuSegments";
@@ -42,13 +43,6 @@ function applyCount(node, count) {
   }
   node.setSize(node.computeSize());
   node.setDirtyCanvas(true, true);
-}
-
-function addButton(node, label, onClick) {
-  const widget = node.addWidget("button", label, null, onClick);
-  widget.serialize = false;
-  widget.options.serialize = false;
-  return widget;
 }
 
 app.registerExtension({

@@ -20,7 +20,7 @@ Human-only steps, which the agent may print but never runs: manual E2E (clone a 
 ## Layout
 
 - `__init__.py` — the module ComfyUI imports: `ComfyExtension` subclass + `comfy_entrypoint`.
-- `src/arisu_nodes/<family>/core.py` — stdlib-only logic. `nodes.py` — `io.ComfyNode` classes importing `comfy_api` and torch; ends with `NODES: List[Type[io.ComfyNode]]`, which the root `__init__.py` concatenates. Families: `minimax_h3` (live), `common` and `anima` (reserved). Every subpackage needs an `__init__.py`: `find_packages` silently drops a directory without one.
+- `src/arisu_nodes/<family>/core.py` — stdlib-only logic. `nodes.py` — `io.ComfyNode` classes importing `comfy_api` and torch; ends with `NODES: List[Type[io.ComfyNode]]`, which the root `__init__.py` concatenates. `routes.py` (only `common` has one) — aiohttp handlers behind frontend buttons, registered on `PromptServer.instance.routes` from the extension's `on_load`; validation stays in `core.py`. Families: `minimax_h3` and `common` (live), `anima` (reserved). Every subpackage needs an `__init__.py`: `find_packages` silently drops a directory without one.
 - `tests/unit/`, `tests/comfyui/`, `tests/support/` — the two lanes and their shared fakes (see Testing). `scripts/` — `test-comfyui.sh`, the stdlib release CLIs (`release_*.py`), and the shell bodies of the make targets, each touching only this checkout.
 - `.github/workflows/` — `build-pipeline.yml` (PR gate), `comfyui-lane.yml` (weekly and manual, a throwaway ComfyUI clone on CPU-only torch, never a gate), `publish_node.yml` (`vX.Y.Z` tags only).
 - `.claude/` — only `skills/release-pr/SKILL.md` and `comfyui-env.example.md` are tracked. `Makefile` — every dev task (`make help`); refuses to run under `$COMFYUI_PATH`. `tidy.sh` — the formatter chain behind `make tidy`. `web/docs/<node_id>/en.md` — node help pages, flat by id (ComfyUI's lookup contract). `web/js/<family>/` — frontend assets, globbed `**/*.js`.
@@ -64,7 +64,7 @@ The suite was pruned from 102 to 28 collected cases on 2026-09-07 (unit 78 → 1
 - **Parametrize policy.** `@pytest.mark.parametrize` is for small curated tables only; an exhaustive input→output table goes in one loop-bodied test with a per-case message (`assert actual == expected, f"case={case!r}"`). Parametrize does not reduce the collected count: N params collect as N tests.
 - **Shared fakes only.** See the layout rule above.
 - **Nothing disabled.** No committed `xfail` or `pytest.mark.skip`. Both environment guards live in `tests/comfyui/conftest.py` — `collect_ignore_glob` for no ComfyUI, the CPU-mode shim for no CUDA — and neither one disables a case: the lane runs whole on CPU. Do not add runtime skips to tests, and never make a case conditional on the hardware.
-- **Budget (collected cases).** Unit lane ≤ 50, ComfyUI lane ≤ 30; landed counts 15 and 13. These are round ceilings that should never be reached, not targets to fill. Check with `make test-count`. A change that materially grows a count must say why a regression test could not cover it. Nothing enforces this in CI; it holds because you read it.
+- **Budget (collected cases).** Unit lane ≤ 50, ComfyUI lane ≤ 30; landed counts 19 and 19 (2026-09-08). These are round ceilings that should never be reached, not targets to fill. Check with `make test-count`. A change that materially grows a count must say why a regression test could not cover it. Nothing enforces this in CI; it holds because you read it.
 
 ## Node conventions (V3)
 

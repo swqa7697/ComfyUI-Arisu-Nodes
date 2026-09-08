@@ -162,6 +162,29 @@ output is a copy.
 
 ---
 
+### Preview & Save Image / (Upscale)
+
+`ArisuPreviewSaveImage`, `ArisuPreviewSaveImageUpscale` — category **Arisu Nodes/Common** ·
+[reference](web/docs/ArisuPreviewSaveImage/en.md) · [upscale reference](web/docs/ArisuPreviewSaveImageUpscale/en.md)
+
+Preview an image batch, pass it through unchanged, and save it only when you click **save**. A run
+writes nothing but the preview (ComfyUI's temp directory, like **Preview Image**); the button posts
+the preview to a route the pack registers on ComfyUI's server, which copies it under the output
+directory at `path`, so nothing is queued. The **(Upscale)** variant runs the selected upscale model
+inside that save, the way **Upscale Image (using Model)** does, and `none` saves the original size.
+
+| Input | Notes |
+|---|---|
+| `images` | The batch to preview; every image in it is saved on click. |
+| `path` | A filename prefix under the output directory with **Save Image**'s `filename_prefix` rules (default `ComfyUI`): `shots/a` saves `output/shots/a_00001_.png`. Absolute paths and `..` are refused. Link it from **Path Builder** or edit it between clicks. |
+| `upscale_model` | (Upscale) A model from `models/upscale_models`, or `none`. Applied when saving, never during the run. |
+
+Outputs `images` (IMAGE), the input unchanged. Saved files are PNG with the preview's workflow
+metadata and a counter suffix, so a second click never overwrites the first. After a page reload or
+a ComfyUI restart the preview must be produced again; the button says so.
+
+---
+
 ## Requirements
 
 | Requirement | Version | Notes |
@@ -225,7 +248,8 @@ To stop retyping sizes, drop in **MiniMax H3 Video Settings** (or its **(Upscale
 `advertise` switched on, the hybrid nodes in the same graph take its canvas and length without a link
 and grey out their own widgets at once; its plain outputs feed resize nodes, upscalers, or anything else. Use
 **Path Builder** for the `filename_prefix` of your save nodes and **Extract Last Images** to grab the
-ending frame of a decoded clip.
+ending frame of a decoded clip. Put **Preview & Save Image** where you would put a preview node and
+click **save** on the results worth keeping; the **(Upscale)** variant upscales them on the way.
 
 ---
 
@@ -239,12 +263,13 @@ ComfyUI-Arisu-Nodes/
 │   │   ├── core.py              # stdlib-only logic (geometry, frame grids); no torch
 │   │   └── nodes.py             # io.ComfyNode classes; needs comfy_api + torch
 │   ├── common/
-│   │   ├── core.py              # stdlib-only logic (path join, batch tail)
-│   │   └── nodes.py             # Path Builder, Extract Last Images
+│   │   ├── core.py              # stdlib-only logic (path join, batch tail, save-request checks)
+│   │   ├── nodes.py             # Path Builder, Extract Last Images, Preview & Save Image
+│   │   └── routes.py            # the save button's HTTP route; registered from on_load
 │   └── anima/                   # reserved
 ├── web/
 │   ├── docs/<node_id>/en.md     # in-app node help pages
-│   └── js/<family>/*.js         # frontend scripts (Path Builder buttons, settings advertising)
+│   └── js/<family>/*.js         # frontend scripts (Path Builder and save buttons, settings advertising)
 ├── tests/
 │   ├── unit/                    # ComfyUI-free lane; what the PR gate runs
 │   ├── comfyui/                 # loads the pack like ComfyUI; needs its interpreter
