@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Ship only the runtime files in the Comfy Registry archive, leaving dev tooling and the test suite out of a ComfyUI-Manager install.
+
 ## [1.0.1] - 2026-09-08
 
 ### Added

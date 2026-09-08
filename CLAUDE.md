@@ -24,6 +24,7 @@ Human-only steps, which the agent may print but never runs: manual E2E (clone a 
 - `tests/unit/`, `tests/comfyui/`, `tests/support/` — the two lanes and their shared fakes (see Testing). `scripts/` — `test-comfyui.sh`, the stdlib release CLIs (`release_*.py`), and the shell bodies of the make targets, each touching only this checkout.
 - `.github/workflows/` — `build-pipeline.yml` (PR gate), `comfyui-lane.yml` (weekly and manual, a throwaway ComfyUI clone on CPU-only torch, never a gate), `publish_node.yml` (`vX.Y.Z` tags only).
 - `.claude/` — only `skills/release-pr/SKILL.md` and `comfyui-env.example.md` are tracked. `Makefile` — every dev task (`make help`); refuses to run under `$COMFYUI_PATH`. `tidy.sh` — the formatter chain behind `make tidy`. `web/docs/<node_id>/en.md` — node help pages, flat by id (ComfyUI's lookup contract). `web/js/<family>/` — frontend assets, globbed `**/*.js`; served at `/extensions/<pack dir>/js/<family>/`, so a script imports the frontend core with four `../` (`../../../../scripts/app.js`), which `test_pack.py` checks.
+- `.comfyignore` — the paths `comfy node publish` leaves out of the registry archive, which is otherwise every git-tracked file; it ships `__init__.py`, `src/`, `web/`, `assets/`, `pyproject.toml`, `README.md`, `CHANGELOG.md`, and `LICENSE`, and nothing else. A new top-level dev-only file or directory has to be added to it, or it lands in every ComfyUI-Manager install and in front of the registry's security scan.
 
 ## Commands
 
