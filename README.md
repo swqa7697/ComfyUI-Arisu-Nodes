@@ -319,8 +319,9 @@ need the identity fidelity.
 <details>
 <summary><code>make test-comfyui</code> says there is no interpreter</summary>
 
-The script looks for `$COMFYUI_PATH/.venv/bin/python`, defaulting to `~/apps/comfyui`. Point it at
-your install: `make test-comfyui COMFYUI_PATH=/path/to/ComfyUI`.
+The script looks for `$COMFYUI_PATH/.venv/bin/python`, defaulting to `~/apps/comfyui`. Run
+`make comfyui-path` to see the resolved root, then point it at your install:
+`make test-comfyui COMFYUI_PATH=/path/to/ComfyUI`.
 </details>
 
 <details>

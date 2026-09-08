@@ -114,6 +114,7 @@ node.zip
 !.vscode/settings.example.jsonc
 .claude/*
 !.claude/skills/
+!.claude/comfyui-env.example.md
 
 # --- local additions ---
 .venv/

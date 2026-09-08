@@ -17,4 +17,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add CI workflows: linting and the unit lane on Python 3.10 and 3.13 for pull requests, the ComfyUI lane weekly against ComfyUI's latest release, and publishing to the Comfy registry on tag.
 - Add two test lanes: `tests/unit` runs without ComfyUI, `tests/comfyui` loads the pack the way ComfyUI does and runs on ComfyUI's interpreter via `scripts/test-comfyui.sh`.
 - Add a `Makefile` (`make help`) wrapping install, tidy, lint, test, and build, and run CI through it.
+- Add `make comfyui-path`, which prints the ComfyUI install root that the ComfyUI lane and the repo's hard boundary resolve to.
 - Add the release flow: `make bump-patch|minor|major`, `make release-commit`, and a CAPTCHA-gated `make tag`, plus the `/release-pr` Claude skill that opens the release PR.
