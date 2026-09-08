@@ -14,7 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add the `ArisuMiniMaxH3ContextLatentResize` node (category `Arisu Nodes/MiniMax H3`, beta): resize a saved MiniMax H3 AV latent to a new resolution for the `context_latent` input of motion-context clip chaining, decoding, lanczos-resizing, and re-encoding the video stream with the H3 video VAE while the audio stream and frame count pass through untouched.
 - Add the ComfyUI extension entrypoint exposing the node list and the `./web` directory for frontend assets.
 - Add project scaffolding: `src` layout, GPL-3.0-only license, README, ruff configuration, and a uv lockfile.
-- Add CI workflows for linting and tests on Python 3.10 and 3.13, and publishing to the Comfy registry on tag.
-- Add two test lanes: `tests/unit` runs without ComfyUI (and in CI), `tests/comfyui` loads the pack the way ComfyUI does and runs on ComfyUI's interpreter via `scripts/test-comfyui.sh`.
+- Add CI workflows: linting and the unit lane on Python 3.10 and 3.13 for pull requests, the ComfyUI lane weekly against ComfyUI's latest release, and publishing to the Comfy registry on tag.
+- Add two test lanes: `tests/unit` runs without ComfyUI, `tests/comfyui` loads the pack the way ComfyUI does and runs on ComfyUI's interpreter via `scripts/test-comfyui.sh`.
 - Add a `Makefile` (`make help`) wrapping install, tidy, lint, test, and build, and run CI through it.
 - Add the release flow: `make bump-patch|minor|major`, `make release-commit`, and a CAPTCHA-gated `make tag`, plus the `/release-pr` Claude skill that opens the release PR.

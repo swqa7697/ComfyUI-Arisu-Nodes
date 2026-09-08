@@ -1,0 +1,48 @@
+name: ComfyUI lane
+
+on:
+  # Off the hour, because GitHub delays runs scheduled at :00; Monday early UTC so the
+  # week opens with a verdict on whatever ComfyUI released over the weekend. Schedules
+  # fire from the default branch only, and GitHub disables them after 60 days idle.
+  schedule:
+    - cron: '17 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  comfyui:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      PYTHONIOENCODING: 'utf8'
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v10.0.1
+        with:
+          python-version: '3.13'
+      - name: Provision ComfyUI at its latest release tag
+        run: |
+          COMFYUI_PATH="${{ runner.temp }}/comfyui"
+          echo "COMFYUI_PATH=$COMFYUI_PATH" >> "$GITHUB_ENV"
+          # The releases API lags behind the tags, so read the tags. sed rather than
+          # head, which closes the pipe and SIGPIPEs git under pipefail.
+          tag=$(git ls-remote --tags --refs --sort=-v:refname https://github.com/comfyanonymous/ComfyUI.git 'v[0-9]*' | sed -n '1s#.*refs/tags/##p')
+          echo "ComfyUI $tag -> $COMFYUI_PATH"
+          git clone --depth 1 --branch "$tag" https://github.com/comfyanonymous/ComfyUI.git "$COMFYUI_PATH"
+          # ~0.6 GB of UI assets no test loads. Fails open if upstream renames them.
+          sed -i -E '/^comfyui-(frontend-package|workflow-templates|embedded-docs)/d' "$COMFYUI_PATH/requirements.txt"
+          uv venv --python 3.13 "$COMFYUI_PATH/.venv"
+          # ComfyUI pins bare `torch`, which resolves to the CUDA build on PyPI and drags in
+          # ~16 nvidia wheels. The CPU index plus unsafe-best-match keeps them off the runner.
+          uv pip install --python "$COMFYUI_PATH/.venv/bin/python" -r "$COMFYUI_PATH/requirements.txt" \
+            --extra-index-url https://download.pytorch.org/whl/cpu --index-strategy unsafe-best-match
+      - name: Test (ComfyUI lane)
+        run: make test-comfyui ARGS=-v

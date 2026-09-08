@@ -9,6 +9,7 @@
   <img src="https://img.shields.io/badge/python-3.10%2B-3776AB?logo=python&logoColor=white" alt="Python" />
   <img src="https://img.shields.io/badge/license-GPL--3.0--only-blue" alt="License" />
   <img src="https://img.shields.io/badge/API-ComfyUI%20V3-8a63d2" alt="ComfyUI V3 API" />
+  <a href="https://github.com/swqa7697/ComfyUI-Arisu-Nodes/actions/workflows/comfyui-lane.yml"><img src="https://github.com/swqa7697/ComfyUI-Arisu-Nodes/actions/workflows/comfyui-lane.yml/badge.svg" alt="ComfyUI lane" /></a>
 </p>
 
 ---
@@ -186,10 +187,11 @@ ComfyUI-Arisu-Nodes/
 │   ├── docs/<node_id>/en.md     # in-app node help pages
 │   └── js/<family>/             # frontend assets
 ├── tests/
-│   ├── unit/                    # ComfyUI-free lane; what CI runs
+│   ├── unit/                    # ComfyUI-free lane; what the PR gate runs
 │   ├── comfyui/                 # loads the pack like ComfyUI; needs its interpreter
 │   └── support/                 # shared fakes for the ComfyUI lane
 ├── scripts/                     # make target bodies + release CLIs
+├── .github/workflows/           # PR gate, weekly ComfyUI lane, registry publish
 └── Makefile                     # every dev task; `make help` lists them
 ```
 
@@ -217,7 +219,7 @@ make build            # wheel + sdist into dist/
 | `make clean` | Remove caches and build outputs (keeps `.venv`). |
 | `make tidy` / `make format` | Rewrite in place: ruff format, `ruff check --fix`, uv-sort, beautysh, mbake. |
 | `make lint` | Check only: `ruff check` + `ruff format --check`. |
-| `make test` | The unit lane (`tests/unit`). This is what CI runs. |
+| `make test` | The unit lane (`tests/unit`). This is what the PR gate runs. |
 | `make test-comfyui` | The ComfyUI lane on ComfyUI's interpreter. `ARGS="-v -k name"` passes flags through. |
 | `make test-count` | Collected tests per lane, to compare with the budgets in `CLAUDE.md`. |
 | `make build` | Build wheel + sdist into `dist/`. |
@@ -235,7 +237,9 @@ Two pytest lanes, both configured in `pyproject.toml`:
 - **`tests/comfyui/`** imports the pack the way ComfyUI's loader does and exercises `GET_SCHEMA()`,
   so it needs ComfyUI's interpreter and source tree. `make test-comfyui` wraps
   `scripts/test-comfyui.sh`, which reads `COMFYUI_PATH` (default `~/apps/comfyui`), layers an
-  ephemeral pytest on that install's Python, and **writes nothing** into it.
+  ephemeral pytest on that install's Python, and **writes nothing** into it. CI runs this lane
+  weekly and on demand against a fresh clone of ComfyUI's latest release on CPU-only torch
+  ([`comfyui-lane.yml`](.github/workflows/comfyui-lane.yml)); it reports, it does not gate.
 
 Anything that does not need a tensor belongs in `core.py` with a unit test; anything importing
 `comfy_api` or torch belongs in `nodes.py` with a test in the ComfyUI lane. The suite is deliberately

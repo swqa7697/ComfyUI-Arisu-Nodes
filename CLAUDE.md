@@ -26,6 +26,12 @@ Forbidden for the agent, without exception:
   `.venv/` and `custom_nodes/`. `git` commands that modify that checkout.
 - `systemctl --user start|stop|restart comfyui.service`.
 
+Every rule above is scoped to that path. The ComfyUI lane has a second execution context, the
+throwaway clone `.github/workflows/comfyui-lane.yml` builds on a CI runner, where `git clone`,
+`uv venv`, `uv pip install`, and editing `requirements.txt` are all fine: `COMFYUI_PATH` points
+at the clone, nothing is shared with this machine, and the runner is discarded. Never point that
+workflow, or `COMFYUI_PATH`, at `/home/ray/apps/comfyui`.
+
 Allowed reads:
 - `uv run --no-project --python /home/ray/apps/comfyui/.venv/bin/python --with <pkg> ...` with
   `PYTHONDONTWRITEBYTECODE=1` set, exactly as `scripts/test-comfyui.sh` does.
@@ -66,10 +72,18 @@ Human-only steps. The agent may print these commands but never runs them:
 - `tests/conftest.py` — sys.path wiring (repo root, then `scripts/`, then ComfyUI); collects
   the repo root as a plain directory so the entry `__init__.py` is never imported during
   collection. Do not weaken this.
+- `tests/comfyui/conftest.py` — the lane's environment gate: `collect_ignore_glob` when
+  `comfy_api` is missing, plus `comfy.cli_args.args.cpu = True` when torch reports no CUDA, set
+  before `comfy.model_management` imports and probes VRAM. ComfyUI takes CPU mode only from
+  `--cpu` and `cli_args` parses an empty argv off `main.py`, so there is nothing else to set; the
+  write is in-memory only.
 - `scripts/test-comfyui.sh` — runs the ComfyUI lane on ComfyUI's interpreter, writing nothing.
 - `scripts/release_common.py`, `release_bump.py`, `release_commit.py`, `release_tag.py` —
   stdlib-only release CLIs behind `make bump-*`, `make release-commit`, `make tag`. The pure
   helpers in `release_common.py` are unit-tested; the git plumbing is not.
+- `.github/workflows/build-pipeline.yml` — the PR gate. `comfyui-lane.yml` — the ComfyUI lane
+  weekly and on manual dispatch, against a throwaway clone of ComfyUI's latest tag on CPU-only
+  torch; never a gate. `publish_node.yml` — vendored from Comfy-Org, fires on `vX.Y.Z` tags only.
 - `.claude/skills/release-pr/SKILL.md` — the `/release-pr` skill; the only tracked part of
   `.claude/` (`.gitignore` ignores the rest).
 - `Makefile` — entry point for every dev task; `make help` lists targets. Refuses to run from
@@ -87,8 +101,8 @@ Human-only steps. The agent may print these commands but never runs them:
 make install                     # .venv + dev group; LOCKED=1 adds --locked (CI)
 make tidy                        # write mode: ruff format, ruff check --fix, uv-sort, beautysh, mbake
 make lint                        # check only: ruff check, ruff format --check
-make test                        # unit lane; what CI runs
-make test-comfyui ARGS="-v"      # ComfyUI lane; reads ~/apps/comfyui, writes nothing
+make test                        # unit lane; what the PR gate runs
+make test-comfyui ARGS="-v"      # ComfyUI lane; reads $COMFYUI_PATH, writes nothing
 make test-count                  # collected cases per lane; compare with the budgets below
 make build                       # uv build; dist/ is gitignored
 make clean                       # caches and dist/; `make uninstall` also removes .venv
@@ -97,11 +111,13 @@ make release-commit YES=1        # on a release branch: commit + push the bump; 
 make tag                         # on the latest main: CAPTCHA-gated annotated tag vX.Y.Z + push
 ```
 
-Run `make tidy`, then `make lint test`, then `make build`. CI runs `make install LOCKED=1`,
-`make tidy && git diff --exit-code`, `make lint`, `make test`, `make build` on 3.10 and 3.13,
-so whatever `make tidy` rewrites must be committed. `pytest` alone deselects the `comfyui`
-marker via `addopts`; `scripts/test-comfyui.sh` passes `-m comfyui` to override it, and `ARGS`
-is appended word-split (quote-free flags only).
+Run `make tidy`, then `make lint test`, then `make build`. The PR gate runs `make install
+LOCKED=1`, `make tidy && git diff --exit-code`, `make lint`, `make test`, `make build` on 3.10
+and 3.13, so whatever `make tidy` rewrites must be committed. A second workflow runs
+`make test-comfyui` weekly and on demand on 3.13 against a fresh clone of ComfyUI's latest tag
+with CPU-only torch; it gates nothing, and a red run means this pack or that release changed.
+`pytest` alone deselects the `comfyui` marker via `addopts`; `scripts/test-comfyui.sh` passes
+`-m comfyui` to override it, and `ARGS` is appended word-split (quote-free flags only).
 
 ## Testing
 
@@ -119,8 +135,9 @@ is appended word-split (quote-free flags only).
 - Shared fakes live in `tests/support/`, one module per seam (`comfy.py`). A double used by one
   file may stay local; the moment a second file needs it, it moves. Never import from another
   test module. Local `@pytest.fixture`s and driver helpers are fine (`pack` in `test_pack.py`).
-- The two `conftest.py` files do `sys.path` wiring and collection control only; no fixtures
-  or fakes go there.
+- The two `conftest.py` files do `sys.path` wiring, collection control, and the interpreter
+  setup that must land before the lane's modules import (the CPU-mode shim); no fixtures or
+  fakes go there.
 - The ComfyUI lane must be green before asking the user to run a manual E2E. Its
   `GET_SCHEMA()` test is the only early warning that the node will load.
 - Fix code, not tests, when a test fails.
@@ -157,8 +174,10 @@ The suite was pruned from 102 to 28 collected cases on 2026-09-07 (unit 78 → 1
   (`assert actual == expected, f"case={case!r}"`). Parametrize does not reduce the collected
   count: N params collect as N tests.
 - **Shared fakes only.** See the layout rule above.
-- **Nothing disabled.** No committed `xfail` or `pytest.mark.skip`. The only environment guard is
-  `collect_ignore_glob` in `tests/comfyui/conftest.py`; do not add runtime skips to tests.
+- **Nothing disabled.** No committed `xfail` or `pytest.mark.skip`. Both environment guards live in
+  `tests/comfyui/conftest.py` — `collect_ignore_glob` for no ComfyUI, the CPU-mode shim for no
+  CUDA — and neither one disables a case: the lane runs whole on CPU. Do not add runtime skips
+  to tests, and never make a case conditional on the hardware.
 - **Budget (collected cases).** Unit lane ≤ 50, ComfyUI lane ≤ 30; landed counts 15 and 13.
   These are round ceilings that should never be reached, not targets to fill. Check with
   `make test-count`. A change that materially grows a count must say why a regression test could
@@ -228,7 +247,9 @@ isort (`extend-select = ["I"]`); the first-party roots are `src = [".", "scripts
 - Never `git add`, `git commit`, or `git push` unless explicitly asked. Ask before planning one.
   `make release-commit` commits and pushes, `make tag` pushes a tag, and `/release-pr` opens a
   PR, so the same rule covers all three.
-- Non-trivial work goes on a branch with a PR to `main`; CI runs on PRs only.
+- Non-trivial work goes on a branch with a PR to `main`. Only the PR gate gates a merge; the
+  ComfyUI lane workflow runs on a weekly schedule and on manual dispatch, and GitHub fires both
+  of those from the default branch only, so it is never a signal on a feature branch.
 - Never commit directly to `main`. Never commit directly to `dev` either, unless the user
   has confirmed they are an admin of the repo; otherwise branch off `dev` and open a PR.
   `make tag` pushing `vX.Y.Z` from `main` is the one exception, and it pushes a tag, not a
