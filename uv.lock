@@ -1,10 +1,6 @@
 version = 1
 revision = 3
 requires-python = ">=3.10"
-resolution-markers = [
-    "python_full_version >= '3.15'",
-    "python_full_version < '3.15'",
-]
 
 [[package]]
 name = "annotated-doc"
@@ -17,7 +13,7 @@ wheels = [
 
 [[package]]
 name = "arisu-nodes"
-version = "0.1.0"
+version = "1.0.0"
 source = { editable = "." }
 
 [package.dev-dependencies]
@@ -276,14 +272,14 @@ wheels = [
 
 [[package]]
 name = "tomlrt"
-version = "2.2.6"
+version = "2.2.7"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "typing-extensions", marker = "python_full_version < '3.12'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/46/65/b9f342117c3274b3d241dca75f87b07486087e4ee3d8359b99c2577c74bc/tomlrt-2.2.6.tar.gz", hash = "sha256:feb13fdc094e7f7817d9c44d76f3141bfb511d95fe743f3611e77426808b8e78", size = 441511, upload-time = "2026-08-30T15:31:32.285Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/05/23/0af5c19e3f7aab0f3b8d357cf284ca76bc2078ea1cf6b888d3f63a5e02fd/tomlrt-2.2.7.tar.gz", hash = "sha256:b5f659d09abf60d20038dacb347e720bce4f997f228ad7abba808c52f06b8815", size = 451288, upload-time = "2026-09-06T12:31:54.759Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/2a/fb/610c2942858b6d6a0b8409ea6c0465d988a6f61ba7b4087169205ba8d21b/tomlrt-2.2.6-py3-none-any.whl", hash = "sha256:3ee4ddd5433e5a73d4e7cbce50392f2b629825f9c6e126315059b92c8eb1551c", size = 154507, upload-time = "2026-08-30T15:31:30.553Z" },
+    { url = "https://files.pythonhosted.org/packages/7c/db/7e7b5492cefa87f32af92e9cdf86dbb01e0c16bfa712c02805b07744b7c9/tomlrt-2.2.7-py3-none-any.whl", hash = "sha256:cc7e3661f8c1e77dc4c68ec06b29d540192a5510d2dd8604f5b921d9ba8ee33a", size = 154690, upload-time = "2026-09-06T12:31:53.148Z" },
 ]
 
 [[package]]

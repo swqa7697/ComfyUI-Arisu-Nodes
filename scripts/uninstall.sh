@@ -5,10 +5,10 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 source scripts/logger.sh
 
-log_info "removing .venv, build outputs, and caches..."
+log_info "removing .venv, then delegating to clean.sh for build outputs and caches..."
 
-rm -rf .venv dist build .ruff_cache .pytest_cache
-find . -type d -name __pycache__ -prune -exec rm -rf {} +
-find . -type d -name '*.egg-info' -prune -exec rm -rf {} +
+# .venv goes first, which is why clean.sh's './.venv/*' prune guards do not matter here.
+rm -rf .venv
+bash scripts/clean.sh
 
 log_ok "done. uv.lock and pyproject.toml are kept."

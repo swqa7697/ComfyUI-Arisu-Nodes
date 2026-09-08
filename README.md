@@ -1,86 +1,234 @@
-# ComfyUI-Arisu-Nodes
+<h1 align="center">ComfyUI-Arisu-Nodes</h1>
 
-A package of useful nodes optimizing user experience.
+<p align="center">
+  <strong>A package of useful ComfyUI nodes optimizing user experience.</strong>
+</p>
 
-> [!NOTE]
-> This projected was created with a [cookiecutter](https://github.com/Comfy-Org/cookiecutter-comfy-extension) template. It helps you start writing custom nodes without worrying about the Python setup.
+<p align="center">
+  <img src="https://img.shields.io/badge/ComfyUI-%E2%89%A5%200.30.0-1a1a1a" alt="ComfyUI" />
+  <img src="https://img.shields.io/badge/python-3.10%2B-3776AB?logo=python&logoColor=white" alt="Python" />
+  <img src="https://img.shields.io/badge/license-GPL--3.0--only-blue" alt="License" />
+  <img src="https://img.shields.io/badge/API-ComfyUI%20V3-8a63d2" alt="ComfyUI V3 API" />
+  <a href="https://github.com/swqa7697/ComfyUI-Arisu-Nodes/actions/workflows/comfyui-lane.yml"><img src="https://github.com/swqa7697/ComfyUI-Arisu-Nodes/actions/workflows/comfyui-lane.yml/badge.svg" alt="ComfyUI lane" /></a>
+</p>
 
-## Quickstart
+---
 
-1. Install [ComfyUI](https://docs.comfy.org/get_started).
-1. Install [ComfyUI-Manager](https://github.com/ltdrdata/ComfyUI-Manager)
-1. Look up this extension in ComfyUI-Manager. If you are installing manually, clone this repository under `ComfyUI/custom_nodes`.
-1. Restart ComfyUI.
+## Overview
 
-# Features
+Nodes that take the friction out of building and running ComfyUI workflows: fewer helper nodes to
+wire, fewer numbers to keep in sync by hand, fewer runs queued just to save one image. Some are
+general-purpose utilities, others belong to a model family — today MiniMax H3, with more to come.
 
-- A list of features
+- **Zero runtime dependencies.** Nothing is downloaded, built, or `pip install`ed on your behalf —
+  the pack only uses APIs ComfyUI already ships.
+- **In-app help.** Right-click a node and open its help for the full input reference; the same
+  pages live under [`web/docs/`](web/docs).
+- **No `NODE_CLASS_MAPPINGS`, no monkey-patching.** Pure V3 (`comfy_entrypoint` + `io.Schema`)
+  registration; nothing in ComfyUI's own modules is patched at import time.
+- **Tested before it ships.** Two test lanes, one of which loads the pack exactly the way
+  ComfyUI's loader does and validates every node schema.
 
-## Develop
+---
 
-Development uses [uv](https://docs.astral.sh/uv/) and GNU make. `make install` installs uv if it is missing and creates the project virtual environment with the dev tools; `make help` lists every target:
+## Installation
+
+### ComfyUI-Manager / comfy-cli
+
+Once a release is published to the [Comfy Registry](https://registry.comfy.org), search for
+**ComfyUI-Arisu-Nodes** in ComfyUI-Manager (**Manager → Install Custom Nodes**), or:
 
 ```bash
+comfy node registry-install arisu_nodes
+```
+
+### Manual (git clone)
+
+```bash
+cd ComfyUI/custom_nodes
+git clone https://github.com/swqa7697/ComfyUI-Arisu-Nodes.git
+```
+
+Restart ComfyUI. There is no requirements step — nothing to install into ComfyUI's environment.
+
+After the restart the nodes appear under **Add Node → Arisu Nodes**. If they do not, check
+ComfyUI's console for an import error at startup.
+
+---
+
+## Nodes
+
+### MiniMax H3 Hybrid to Video
+
+`ArisuMiniMaxH3HybridToVideo` · [reference](web/docs/ArisuMiniMaxH3HybridToVideo/en.md)
+
+First/last keyframes **and** image, video, and audio references in one conditioning. ComfyUI's
+stock **MiniMax H3 Image to Video** and **MiniMax H3 Reference to Video** each build their own AV
+latent and set only their own conditioning key, so they cannot be chained — you pick one or the
+other. The H3 model already packs keyframes and references together, so this node sets both keys on
+one conditioning and returns one latent. Every keyframe and reference input is optional: connect
+what the shot needs and refer to it in the prompt with the usual `<Picture i>` / `<Video k>` /
+`<Audio j>` tags.
+
+It is a drop-in replacement for either stock node — delete it, drop this one in, reconnect. The
+**(Advanced)** variant adds `target_width` / `target_height` and a third `positive (upscaled)`
+output for two-sampler latent upscaling, where it re-encodes the original pixel keyframes at the
+upscaled size instead of handing the second sampler resampled first-pass latents.
+
+### MiniMax H3 Video Settings
+
+`ArisuMiniMaxH3VideoSettings` · [reference](web/docs/ArisuMiniMaxH3VideoSettings/en.md)
+
+One place for the canvas and the clip length, so the numbers stop being retyped into every node. An
+aspect ratio and a megapixel budget give `width` and `height` on H3's 32-pixel grid; a duration in
+seconds gives `length` on its 17k+5 frame grid. The **(Upscale)** variant adds `upscale_factor` and
+derives the target size for an upscale pass.
+
+Wire the outputs wherever you want them, or switch on `advertise`: every MiniMax H3 hybrid node in
+the root graph then takes the values without a link, and their size and length widgets grey out at
+once. Advertising is off by default and only one settings node per graph holds the slot; inside a
+subgraph, wire the outputs explicitly.
+
+### Preview & Save Image
+
+`ArisuPreviewSaveImage` · [reference](web/docs/ArisuPreviewSaveImage/en.md)
+
+Preview an image batch, pass it through unchanged, and save it only when you click **save**. A run
+writes nothing but the preview, the way **Preview Image** does; the button posts the preview to a
+route the pack registers on ComfyUI's server, which writes the images under the output directory at
+`path`. Nothing is queued, so keeping a good result costs no second run and the results you do not
+want never reach `output/`. The **(Upscale)** variant runs the selected upscale model inside that
+save, so the upscale happens once, on the images worth keeping.
+
+`path` follows **Save Image**'s `filename_prefix` rules and can be fed from **Path Builder**; saved
+files get a counter suffix, so a second click never overwrites the first.
+
+### All nodes
+
+| Node | Category | What it does |
+|---|---|---|
+| [MiniMax H3 Hybrid to Video](web/docs/ArisuMiniMaxH3HybridToVideo/en.md) | MiniMax H3 | Keyframes and image/video/audio references in one conditioning, plus the AV latent. |
+| [MiniMax H3 Hybrid to Video (Advanced)](web/docs/ArisuMiniMaxH3HybridToVideoAdvanced/en.md) | MiniMax H3 | The same, plus a `positive (upscaled)` conditioning for two-sampler latent upscaling. |
+| [MiniMax H3 Context Latent Resize](web/docs/ArisuMiniMaxH3ContextLatentResize/en.md) *(experimental)* | MiniMax H3 | Resize a saved H3 AV latent so a motion-context clip chain can change resolution at a join. |
+| [MiniMax H3 Video Settings](web/docs/ArisuMiniMaxH3VideoSettings/en.md) | MiniMax H3 | Canvas from an aspect ratio and a megapixel budget, length from a duration in seconds. |
+| [MiniMax H3 Video Settings (Upscale)](web/docs/ArisuMiniMaxH3VideoSettingsUpscale/en.md) | MiniMax H3 | The same, plus the target size of a latent-upscale pass from an upscale factor. |
+| [Path Builder](web/docs/ArisuPathBuilder/en.md) | Common | Join separate text fields into one `/`-separated path for `filename_prefix` inputs. |
+| [Extract Last Images](web/docs/ArisuExtractLastImages/en.md) | Common | Keep the last N images of a batch, for example a decoded clip's ending frame. |
+| [Preview & Save Image](web/docs/ArisuPreviewSaveImage/en.md) | Common | Preview and pass through; save to the output directory on a button click, without a run. |
+| [Preview & Save Image (Upscale)](web/docs/ArisuPreviewSaveImageUpscale/en.md) | Common | The same, upscaling the images with the selected model as they are saved. |
+
+Categories are `Arisu Nodes/MiniMax H3` and `Arisu Nodes/Common`. Every node's inputs, outputs, and
+edge cases are documented on its reference page, which ComfyUI also serves in-app.
+
+---
+
+## Requirements
+
+| Requirement | Version | Notes |
+|---|---|---|
+| ComfyUI | >= 0.30.0 | The release that added MiniMax H3 support. Developed against 0.34.5. |
+| MiniMax H3 models | — | For the MiniMax H3 nodes only: the same checkpoint, CLIP, video VAE, and audio VAE the stock H3 nodes need. |
+| Python | >= 3.10 | The nodes run on ComfyUI's own interpreter; this is the floor for the dev tooling. |
+| [uv](https://docs.astral.sh/uv/) | any | Development only. `make install` installs it if missing. |
+| GNU make | any | Development only. |
+
+The pack itself declares no Python dependencies.
+
+---
+
+## Usage
+
+A MiniMax H3 workflow with the pack in it:
+
+1. Drop in **MiniMax H3 Video Settings** and set the aspect ratio, megapixels, and duration; switch
+   `advertise` on so the hybrid nodes take them.
+2. Replace the stock conditioning node with **MiniMax H3 Hybrid to Video**. Feed it `clip` and
+   `vae` from your H3 loaders, plus `audio_vae` if any audio reference is connected.
+3. Connect keyframes (`first_frame` / `last_frame`) and references (`ref_image_*`, `ref_video_*`,
+   `ref_audio_*`) in any combination — every one is optional.
+4. Send `positive` to the sampler's positive input and `latent` to its latent input.
+5. End on **Preview & Save Image** instead of **Save Image**, and click **save** on the results
+   worth keeping. **Path Builder** feeds its `path`; **Extract Last Images** grabs the ending frame
+   of a decoded clip for a preview or the next clip's keyframe.
+
+Reference order in the prompt is fixed: images, then videos (each soundtrack's `<Audio j>` right
+before its `<Video k>`), then standalone audio. Ordinals are 1-based per type.
+
+For a two-sampler latent upscale, use **MiniMax H3 Hybrid to Video (Advanced)** with the
+**(Upscale)** settings node: drive sampler 1 with `positive` and `latent`, and give sampler 2's
+guider `positive (upscaled)`.
+
+---
+
+## Project structure
+
+```
+ComfyUI-Arisu-Nodes/
+├── __init__.py                  # the module ComfyUI imports: ComfyExtension + comfy_entrypoint
+├── src/arisu_nodes/
+│   ├── minimax_h3/
+│   │   ├── core.py              # stdlib-only logic (geometry, frame grids); no torch
+│   │   └── nodes.py             # io.ComfyNode classes; needs comfy_api + torch
+│   ├── common/
+│   │   ├── core.py              # stdlib-only logic (path join, batch tail, save-request checks)
+│   │   ├── nodes.py             # Path Builder, Extract Last Images, Preview & Save Image
+│   │   └── routes.py            # the save button's HTTP route; registered from on_load
+│   └── anima/                   # reserved
+├── web/
+│   ├── docs/<node_id>/en.md     # in-app node help pages
+│   └── js/<family>/*.js         # frontend scripts (Path Builder and save buttons, settings advertising)
+├── tests/
+│   ├── unit/                    # ComfyUI-free lane; what the PR gate runs
+│   ├── comfyui/                 # loads the pack like ComfyUI; needs its interpreter
+│   └── support/                 # shared fakes for the ComfyUI lane
+├── scripts/                     # make target bodies + release CLIs
+├── .github/workflows/           # PR gate, weekly ComfyUI lane, registry publish
+└── Makefile                     # every dev task; `make help` lists them
+```
+
+---
+
+## Development
+
+```bash
+git clone https://github.com/swqa7697/ComfyUI-Arisu-Nodes.git
 cd ComfyUI-Arisu-Nodes
-make install   # .venv with pytest, ruff, and the formatters
-make tidy      # format everything in place
-make lint      # check only
-make test      # unit lane
-make build     # wheel + sdist into dist/
-make bump-patch        # or bump-minor / bump-major: version, CHANGELOG, uv.lock
-make release-commit    # commit + push the bump on a release branch
-make tag               # on main: tag vX.Y.Z and push (publishes to the registry)
+make install          # creates .venv with the dev group
+make tidy             # format everything in place
+make lint test        # what CI checks
+make test-comfyui     # the ComfyUI lane, read-only against your install
+make build            # wheel + sdist into dist/
 ```
 
-For VS Code, copy [.vscode/settings.example.jsonc](.vscode/settings.example.jsonc) to `.vscode/settings.json` and set the ComfyUI paths in it.
+| Target | Description |
+|---|---|
+| `make help` | List every target. |
+| `make install` | Create `.venv` with the dev group. `LOCKED=1` adds `--locked`, as CI does. |
+| `make uninstall` | Remove `.venv`, caches, and build outputs (keeps `uv.lock`). |
+| `make clean` | Remove caches and build outputs (keeps `.venv`). |
+| `make tidy` / `make format` | Rewrite in place: ruff format, `ruff check --fix`, uv-sort, beautysh, mbake. |
+| `make lint` | Check only: `ruff check` + `ruff format --check`. |
+| `make test` | The unit lane (`tests/unit`). This is what the PR gate runs. |
+| `make test-comfyui` | The ComfyUI lane on ComfyUI's interpreter. `ARGS="-v -k name"` passes flags through. |
+| `make test-count` | Collected tests per lane, to compare with the budgets in `CLAUDE.md`. |
+| `make comfyui-path` | Print the resolved ComfyUI install root the ComfyUI lane uses. |
+| `make build` | Build wheel + sdist into `dist/`. |
+| `make upgrade` | Re-resolve dependencies at latest and raise the `pyproject.toml` minimums. |
+| `make bump-patch\|minor\|major` | Rewrite the version, roll `CHANGELOG.md`, `uv lock`. No git writes. |
+| `make release-commit` | On a release branch: commit and push the bump. `YES=1` skips the prompt. |
+| `make tag` | On the latest `main`: CAPTCHA-gated annotated tag `vX.Y.Z`, pushed. |
 
-## Publish to Github
+The unit lane needs nothing but the project venv; the ComfyUI lane runs on ComfyUI's own
+interpreter and **writes nothing** into that install, reading `COMFYUI_PATH` (default
+`~/apps/comfyui`). [CLAUDE.md](CLAUDE.md) has the rest: the `core.py` / `nodes.py` split every node
+follows, the rules that keep the test suite small, the steps for adding a node, and the release
+flow. Release history is in [CHANGELOG.md](CHANGELOG.md).
 
-Install Github Desktop or follow these [instructions](https://docs.github.com/en/authentication/connecting-to-github-with-ssh/generating-a-new-ssh-key-and-adding-it-to-the-ssh-agent) for ssh.
+For VS Code, copy [.vscode/settings.example.jsonc](.vscode/settings.example.jsonc) to
+`.vscode/settings.json` and replace `/PATH/TO/ComfyUI` so Pylance can resolve `comfy_api` and torch.
 
-1. Create a Github repository that matches the directory name. 
-2. Push the files to Git
-```
-git add .
-git commit -m "project scaffolding"
-git push
-``` 
+---
 
-## Writing custom nodes
+## License
 
-Nodes use the V3 API (`comfy_entrypoint` + `io.Schema`). An example custom node is located in [nodes.py](src/arisu_nodes/nodes.py), with its ComfyUI-free logic in [core.py](src/arisu_nodes/core.py). To learn more, read the [docs](https://docs.comfy.org/custom-nodes/overview).
-
-
-## Tests
-
-Two pytest lanes live under `tests/`, both configured in `pyproject.toml`:
-
-- `tests/unit/` needs nothing but the project venv. Run it with `make test`. This is what CI runs.
-- `tests/comfyui/` imports the node pack the way ComfyUI does, so it needs ComfyUI's interpreter and source tree. Run it with `make test-comfyui ARGS="-v"`, which wraps `scripts/test-comfyui.sh`. The script reads `COMFYUI_PATH` (default `~/apps/comfyui`), runs pytest on that install's Python with an ephemeral pytest layered on top, and writes nothing into the install. A bare `uv run pytest` skips this lane.
-
-- [build-pipeline.yml](.github/workflows/build-pipeline.yml) runs `make install LOCKED=1`, `make tidy` (failing if it changed anything), `make lint`, `make test`, and `make build` on Python 3.10 and 3.13 for every open PR.
-
-## Publishing to Registry
-
-If you wish to share this custom node with others in the community, you can publish it to the registry. We've already auto-populated some fields in `pyproject.toml` under `tool.comfy`, but please double-check that they are correct.
-
-You need to make an account on https://registry.comfy.org and create an API key token.
-
-- [ ] Go to the [registry](https://registry.comfy.org). Login and create a publisher id (everything after the `@` sign on your registry profile). 
-- [ ] Add the publisher id into the pyproject.toml file.
-- [ ] Create an api key on the Registry for publishing from Github. [Instructions](https://docs.comfy.org/registry/publishing#create-an-api-key-for-publishing).
-- [ ] Add it to your Github Repository Secrets as `REGISTRY_ACCESS_TOKEN`.
-
-The publish action runs when a `vX.Y.Z` tag is pushed. Releases go through a short branch-and-PR flow driven by the release scripts in `scripts/release_*.py`:
-
-```bash
-git switch -c release/0.2.0      # from an up-to-date main
-make bump-minor                  # or bump-patch / bump-major: pyproject version, CHANGELOG roll, uv lock
-make release-commit              # guarded commit "chore: bump version to 0.2.0" + push
-# /release-pr in Claude Code opens the main <- release/0.2.0 PR; merge it
-git switch main && git pull
-make tag                         # CAPTCHA-confirmed annotated tag v0.2.0, pushed -> publish_node.yml
-```
-
-`make bump-*` refuses if `[Unreleased]` in `CHANGELOG.md` is empty, `make release-commit` refuses on `main` or when anything but `pyproject.toml`, `CHANGELOG.md`, and `uv.lock` changed, and `make tag` refuses unless you are on the latest `main` with an untagged HEAD. You can also run the Github action manually. Full instructions [here](https://docs.comfy.org/registry/publishing). Join our [discord](https://discord.com/invite/comfyorg) if you have any questions!
-
+[GPL-3.0-only](LICENSE).

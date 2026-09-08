@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "arisu_nodes"
-version = "0.1.0"
-description = "A package of useful nodes optimizing user experience."
+version = "1.0.0"
+description = "A package of useful ComfyUI nodes optimizing user experience."
 authors = [{ name = "swqa7697" }]
 readme = "README.md"
 license = "GPL-3.0-only"

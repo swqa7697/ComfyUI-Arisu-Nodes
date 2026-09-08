@@ -39,7 +39,7 @@ from release_common import (
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    parser = argparse.ArgumentParser(description=(__doc__ or "").split("\n\n")[0])
     parser.add_argument("-y", "--yes", action="store_true", help="skip the confirmation prompt")
     return parser.parse_args()
 

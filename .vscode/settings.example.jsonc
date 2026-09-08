@@ -6,6 +6,7 @@
   "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python",
   "python.analysis.typeCheckingMode": "basic",
   "python.analysis.extraPaths": [
+    "${workspaceFolder}/scripts",
     "/PATH/TO/ComfyUI",
     "/PATH/TO/ComfyUI/custom_nodes",
     "/PATH/TO/ComfyUI/.venv/lib/python3.13/site-packages"

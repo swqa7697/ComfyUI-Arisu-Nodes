@@ -6,12 +6,14 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 source scripts/logger.sh
 
+# make exports COMFYUI_PATH into this script (see the Makefile's hard-boundary
+# block); this default only covers running the script directly.
 COMFYUI_PATH="${COMFYUI_PATH:-$HOME/apps/comfyui}"
 COMFY_PY="$COMFYUI_PATH/.venv/bin/python"
 
 if [[ ! -x "$COMFY_PY" ]]; then
     log_error "no interpreter at $COMFY_PY"
-    log_warn "set COMFYUI_PATH to your ComfyUI root"
+    log_warn "set COMFYUI_PATH to your ComfyUI root; 'make comfyui-path' shows the current value"
     exit 1
 fi
 

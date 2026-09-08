@@ -1,14 +1,22 @@
 SHELL := /bin/bash
 .SHELLFLAGS := -euo pipefail -c
 .DEFAULT_GOAL := help
-.PHONY: help install uninstall clean build test test-comfyui lint format tidy upgrade bump-major bump-minor bump-patch release-commit tag
+.PHONY: help install uninstall clean build test test-comfyui test-count comfyui-path lint format tidy upgrade bump-major bump-minor bump-patch release-commit tag
 
 # Hard boundary (CLAUDE.md): never run project commands inside the live ComfyUI
 # install, including a clone of this repo under its custom_nodes/.
-COMFYUI_PATH ?= $(HOME)/apps/comfyui
-ifneq ($(filter $(abspath $(COMFYUI_PATH))/%,$(CURDIR)/),)
-$(error refusing to run inside the live ComfyUI install at $(COMFYUI_PATH); see CLAUDE.md)
+# The default here is the single source of truth; `make comfyui-path` prints what
+# it resolves to. The $(if ...) treats COMFYUI_PATH= (set but empty) as unset,
+# which would otherwise leave the guard pattern matching every directory.
+COMFYUI_PATH := $(if $(strip $(COMFYUI_PATH)),$(COMFYUI_PATH),$(HOME)/apps/comfyui)
+COMFYUI_ABS := $(abspath $(COMFYUI_PATH))
+ifneq ($(filter $(COMFYUI_ABS)/%,$(CURDIR)/),)
+$(error refusing to run inside the live ComfyUI install at $(COMFYUI_ABS); see CLAUDE.md)
 endif
+
+# Exported per target, not globally: tests/conftest.py puts COMFYUI_PATH on
+# sys.path whenever it is set, and the unit lane must stay ComfyUI-free.
+test-comfyui: export COMFYUI_PATH := $(COMFYUI_ABS)
 
 GREEN := \033[0;32m
 RED := \033[0;31m
@@ -38,6 +46,13 @@ test: ## Run the unit lane (tests/unit); what CI runs
 
 test-comfyui: ## Run the ComfyUI lane on ComfyUI's interpreter, read-only (ARGS="-v -k name")
 	@bash scripts/test-comfyui.sh $(ARGS)
+
+test-count: ## Collected tests per lane; compare with the budgets in CLAUDE.md
+	@printf 'unit lane:    '; uv run pytest --collect-only -q | tail -1
+	@printf 'comfyui lane: '; bash scripts/test-comfyui.sh --collect-only -q 2>/dev/null | tail -1 || $(INFO) "skipped (no ComfyUI install)"
+
+comfyui-path: ## Print the resolved ComfyUI install root (the CLAUDE.md hard boundary)
+	@printf '%s\n' '$(COMFYUI_ABS)'
 
 lint: ## Check only: ruff check + ruff format --check
 	@uv run ruff check .
