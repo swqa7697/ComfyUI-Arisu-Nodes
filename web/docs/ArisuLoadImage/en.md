@@ -33,11 +33,13 @@ browsers and reloads.
 
 The crop dialog shows the picked file with a box over it. Drag on the image to draw a box, drag the
 box to move it, and pull its handles to resize it; the readout gives the box in pixels. The **ratio**
-menu holds the box to an aspect ratio while you drag: `free` for no ratio, a preset (`1:1`, `3:2`,
-`2:3`, `4:3`, `3:4`, `16:9`, `9:16`), or `custom`, which shows a width and a height field. The choice
-is remembered until another image is picked. **reset** is the whole image, which is no crop at all,
-and leaves the ratio alone; **apply** stores the box and the node previews the cropped image at the
-cropped size. Nothing is resized or padded, and picking another file drops the crop.
+menu sets an aspect ratio: a preset (`1:1`, `3:2`, `2:3`, `4:3`, `3:4`, `16:9`, `9:16`), or
+`custom`, which shows a width and a height field, makes the box the largest one of that ratio in the
+image and holds it while you drag; `free` leaves the box as it is and lets it take any shape. The
+choice is remembered for the picked image and starts over as `free` on another one. **reset** is the
+whole image at `free`, which is no crop at all; **apply** stores the box and the node previews the
+cropped image at the cropped size. Nothing is resized or padded, and picking another file drops the
+crop.
 
 ## Outputs
 

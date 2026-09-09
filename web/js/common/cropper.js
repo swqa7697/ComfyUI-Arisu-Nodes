@@ -8,9 +8,10 @@
 // caller can hand it back next time. A drag on the image draws a new box, a
 // drag on the box moves it, and its eight handles resize it. The ratio menu
 // offers `free`, the presets, and `custom`, which shows a width and a height
-// field; a ratio fits the box to it and holds it through every drag. Reset is
-// the whole image, which the caller treats as no crop at all; it leaves the
-// ratio menu alone, since the ratio is a tool setting, not part of the crop.
+// field; choosing a ratio makes the box the largest one of that ratio in the
+// image, centred, and holds it through every drag, while `free` leaves the box
+// as it is. Reset is the whole image at `free`, which the caller treats as no
+// crop at all.
 //
 // Nothing here knows about nodes, widgets or routes: the caller loads the
 // image and stores the result. The geometry is pure functions over integer
@@ -198,7 +199,7 @@ export function cropImage(img, initial) {
       ratioColon,
       ratioParts[1],
       readout,
-      el('button', { textContent: 'reset', title: 'the whole image: no crop', onclick: reset }),
+      el('button', { textContent: 'reset', title: 'the whole image at a free ratio: no crop', onclick: reset }),
       el('button', { textContent: 'cancel', onclick: () => dialog.close() }),
       el('button', { className: 'arisu-cropper-apply', textContent: 'apply', onclick: apply }),
     ]),
@@ -206,20 +207,21 @@ export function cropImage(img, initial) {
   ]);
   closeOnBackdropClick(dialog);
 
-  /** Seed the menu and the fields from `ratioText`; the fields show only for a custom ratio. */
+  /** Seed the menu and the fields from `ratioText`; the fields show only for a custom ratio and are blank otherwise. */
   function showRatio() {
     const choice = ratioChoice(ratioText);
     ratioMenu.value = choice;
     const custom = choice === RATIO_CUSTOM;
-    if (custom) {
-      const [w = '', h = ''] = ratioText.split(':');
-      ratioParts[0].value = w;
-      ratioParts[1].value = h;
-    }
+    const [w = '', h = ''] = custom ? ratioText.split(':') : [];
+    ratioParts[0].value = w;
+    ratioParts[1].value = h;
     for (const element of [...ratioParts, ratioColon]) element.hidden = !custom;
   }
 
-  /** The menu or a field changed: read the ratio text back, hold the box to it, and show or hide the fields. */
+  /**
+   * The menu or a field changed: read the ratio text back, show or hide the fields, and make the box the largest one of
+   * the ratio in the image; a free ratio leaves the box alone.
+   */
   function onRatioChange() {
     const choice = ratioMenu.value;
     if (choice === RATIO_CUSTOM) {
@@ -231,7 +233,7 @@ export function cropImage(img, initial) {
     ratio = parseRatio(ratioText);
     const custom = choice === RATIO_CUSTOM;
     for (const element of [...ratioParts, ratioColon]) element.hidden = !custom;
-    show(fitRatio(rect, ratio, bounds));
+    if (ratio != null) show(fitRatio(fullRect(bounds), ratio, bounds));
   }
 
   /** The pointer's place in image pixels, held inside the image. */
@@ -272,7 +274,11 @@ export function cropImage(img, initial) {
     drag = null;
   }
 
+  /** Back to the whole image at a free ratio: no crop, and no ratio remembered. */
   function reset() {
+    ratioText = '';
+    ratio = null;
+    showRatio();
     show(fullRect(bounds));
   }
 

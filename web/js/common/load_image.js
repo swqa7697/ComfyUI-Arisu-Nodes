@@ -136,7 +136,7 @@ const STYLE = `
 
 /** A pending preview per node, so a load that finishes after a newer pick cannot overwrite it. */
 const previewTokens = new WeakMap();
-/** The aspect ratio the crop dialog last showed, per node; dropped when another file is picked. */
+/** The aspect ratio the crop dialog last showed, per node, as `{ path, ratio }` with the file it was chosen for; dropped when the node's file changes. */
 const cropRatios = new WeakMap();
 
 function toast(severity, detail) {
@@ -270,8 +270,11 @@ async function openCropper(node) {
     toast('warn', `Cannot crop ${path}: the browser cannot decode this file.`);
     return;
   }
-  const { rect, ratio } = await cropImage(img, { rect: parseCrop(crop.value), ratio: cropRatios.get(node) ?? '' });
-  cropRatios.set(node, ratio);
+  // a path typed into the field never passes through pick(): a ratio chosen for another file starts over as free
+  const remembered = cropRatios.get(node);
+  if (remembered && remembered.path !== path) cropRatios.delete(node);
+  const { rect, ratio } = await cropImage(img, { rect: parseCrop(crop.value), ratio: cropRatios.get(node)?.ratio ?? '' });
+  cropRatios.set(node, { path, ratio });
   if (!rect) return;
   setWidget(node, crop, formatCrop(rect, img));
   await showPreview(node);
