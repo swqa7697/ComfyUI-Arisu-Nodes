@@ -10,7 +10,8 @@
 // A hidden widget also loses its socket (see path_builder.js for why): the settings are
 // edited here, not fed by links. The dialog's controls come from the node definition,
 // so a combo lists what the backend declares and a number keeps its declared bounds;
-// nothing about the options is repeated here.
+// nothing about the options is repeated here. A combo arrives in one of two shapes:
+// V3 declares it as `["COMBO", { options }]`, the V1 form is `[[choices], options]`.
 //
 // The preview needs no code: the node returns its result as a ui preview, which the
 // frontend draws on the node in both renderers.
@@ -22,7 +23,7 @@ import { addButton, hideWidget, setWidget } from './widgets.js';
 const NODE_TYPE = 'ArisuResizeImage';
 const TITLE = 'Resize Image settings';
 /** The widgets the dialog edits, in its row order. */
-const CONFIG_WIDGETS = ['upscale_method', 'keep_proportion', 'pad_color', 'crop_position', 'divisible_by'];
+const CONFIG_WIDGETS = ['resize_method', 'mode', 'pad_color', 'crop_position', 'divisible_by'];
 const COLOR_WIDGETS = new Set(['pad_color']);
 
 /** The dialog's fields from the node definition, whose inputs are `[type or choices, options]`. */
@@ -30,16 +31,16 @@ function fieldsFrom(nodeData) {
   const inputs = { ...nodeData.input?.required, ...nodeData.input?.optional };
   return CONFIG_WIDGETS.filter((name) => name in inputs).map((name) => {
     const [type, options = {}] = inputs[name];
-    const combo = Array.isArray(type);
-    const kind = combo ? 'combo' : type === 'INT' ? 'number' : COLOR_WIDGETS.has(name) ? 'color' : 'text';
+    const choices = Array.isArray(type) ? type : type === 'COMBO' ? (options.options ?? []) : null;
+    const kind = choices ? 'combo' : type === 'INT' ? 'number' : COLOR_WIDGETS.has(name) ? 'color' : 'text';
     return {
       name,
       kind,
-      values: combo ? type : [],
+      values: choices ?? [],
       min: options.min,
       max: options.max,
       step: options.step,
-      default: options.default ?? (combo ? type[0] : ''),
+      default: options.default ?? choices?.[0] ?? '',
       tooltip: options.tooltip,
     };
   });

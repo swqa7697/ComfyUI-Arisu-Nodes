@@ -1,22 +1,27 @@
 // The crop dialog of Load Image (Browse): a box dragged over the picked image.
 //
-// `cropImage(img, initial)` shows a loaded image in a native <dialog> with a
-// crop box over it and resolves to the chosen box, `{ x, y, w, h }` in the
-// image's own pixels, or `null` when the dialog is cancelled. A drag on the
-// image draws a new box, a drag on the box moves it, and its eight handles
-// resize it. An aspect ratio typed or picked in the bar (`16:9`, `1.5`, blank
-// for free) fits the box to it and holds it through every drag; reset is the
-// whole image, which the caller treats as no crop at all.
+// `cropImage(img, { rect, ratio })` shows a loaded image in a native <dialog>
+// with a crop box over it, starting from `rect` (`{ x, y, w, h }` in the
+// image's own pixels, or the whole image when null) and the aspect ratio
+// `ratio`, and resolves to `{ rect, ratio }`: the applied box, or null when the
+// dialog is cancelled, and the ratio the bar showed when it closed, so the
+// caller can hand it back next time. A drag on the image draws a new box, a
+// drag on the box moves it, and its eight handles resize it. The ratio menu
+// offers `free`, the presets, and `custom`, which shows a width and a height
+// field; a ratio fits the box to it and holds it through every drag. Reset is
+// the whole image, which the caller treats as no crop at all; it leaves the
+// ratio menu alone, since the ratio is a tool setting, not part of the crop.
 //
 // Nothing here knows about nodes, widgets or routes: the caller loads the
 // image and stores the result. The geometry is pure functions over integer
 // rectangles inside the image; the pointer handlers only turn events into
 // calls to them, so a drag can be replayed with plain objects.
 
-import { el } from './dom.js';
+import { closeOnBackdropClick, el } from './dom.js';
 
+const RATIO_FREE = 'free';
+const RATIO_CUSTOM = 'custom';
 const RATIO_PRESETS = ['1:1', '3:2', '2:3', '4:3', '3:4', '16:9', '9:16'];
-const RATIO_LIST_ID = 'arisu-cropper-ratios';
 /** Each handle's place on the box as (x, y) fractions; a drag moves the sides it sits on and holds the others. */
 const HANDLES = { nw: [0, 0], n: [0.5, 0], ne: [1, 0], e: [1, 0.5], se: [1, 1], s: [0.5, 1], sw: [0, 1], w: [0, 0.5] };
 const MIN_SIDE = 1;
@@ -27,16 +32,17 @@ const STYLE = `
   font-size: 13px; box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55); overflow: hidden; }
 .arisu-cropper[open] { display: flex; flex-direction: column; animation: arisu-cropper-pop 160ms ease-out; }
 .arisu-cropper[open]::backdrop { background: rgba(0, 0, 0, 0.55); backdrop-filter: blur(3px); }
-.arisu-cropper :where(button, input) { font: inherit; color: inherit; border: 1px solid var(--border-color, #444); border-radius: 8px;
-  background: var(--comfy-input-bg, #333); transition: background-color 150ms ease, border-color 150ms ease; }
+.arisu-cropper :where(button, input, select) { font: inherit; color: inherit; border: 1px solid var(--border-color, #444);
+  border-radius: 8px; background: var(--comfy-input-bg, #333); transition: background-color 150ms ease, border-color 150ms ease; }
 .arisu-cropper :where(button) { padding: 6px 12px; cursor: pointer; }
-.arisu-cropper :where(input) { padding: 6px 10px; }
+.arisu-cropper :where(input, select) { padding: 6px 10px; }
 .arisu-cropper button:hover { border-color: var(--p-primary-color, #6ea8fe); }
 .arisu-cropper :focus-visible { outline: 2px solid var(--p-primary-color, #6ea8fe); outline-offset: 2px; }
-.arisu-cropper input:focus-visible { outline: none; border-color: var(--p-primary-color, #6ea8fe); }
+.arisu-cropper :where(input, select):focus-visible { outline: none; border-color: var(--p-primary-color, #6ea8fe); }
 .arisu-cropper-bar { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--border-color, #444); }
 .arisu-cropper-bar label { color: var(--descrip-text, #999); }
-.arisu-cropper-ratio { width: 96px; }
+.arisu-cropper-ratio { min-width: 96px; }
+.arisu-cropper-ratio-part { width: 64px; }
 .arisu-cropper-readout { flex: 1; text-align: center; color: var(--descrip-text, #999); font-variant-numeric: tabular-nums; }
 .arisu-cropper-apply { border-color: var(--p-primary-color, #6ea8fe); }
 .arisu-cropper-body { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; padding: 16px; background: #111; }
@@ -131,35 +137,48 @@ function resizeRect(origin, handle, point, ratio, bounds) {
 /** The width-over-height ratio of `text` (`16:9`, `16/9`, `1.78`), or `null` for free (blank, `free`, or nonsense). */
 function parseRatio(text) {
   const value = text.trim().toLowerCase();
-  if (!value || value === 'free') return null;
+  if (!value || value === RATIO_FREE) return null;
   const [w, h = '1'] = value.split(/[:/x]/);
   const ratio = Number(w) / Number(h);
   return Number.isFinite(ratio) && ratio > 0 ? ratio : null;
 }
 
+/** The menu entry for a ratio text: a preset by name, blank is free, anything else is custom. */
+function ratioChoice(text) {
+  if (!text) return RATIO_FREE;
+  return RATIO_PRESETS.includes(text) ? text : RATIO_CUSTOM;
+}
+
 /**
- * Let the user crop `img`, a loaded image, starting from `initial` (`{ x, y, w, h }` in image pixels) or the whole
- * image; resolves to the applied box, or `null` when the dialog is cancelled.
+ * Let the user crop `img`, a loaded image, starting from `initial.rect` (`{ x, y, w, h }` in image pixels, or null for
+ * the whole image) with the aspect ratio `initial.ratio` (a `w:h` text, blank for free); resolves to `{ rect, ratio }`,
+ * `rect` being the applied box or `null` when the dialog is cancelled, and `ratio` the text the bar ended on.
  */
 export function cropImage(img, initial) {
   const bounds = { w: img.naturalWidth, h: img.naturalHeight };
-  let rect = initial ? clampRect(initial, bounds) : fullRect(bounds);
-  let ratio = null;
+  let rect = initial.rect ? clampRect(initial.rect, bounds) : fullRect(bounds);
+  let ratioText = initial.ratio ?? '';
+  let ratio = parseRatio(ratioText);
   let drag = null;
   let result = null;
 
   const readout = el('output', { className: 'arisu-cropper-readout' });
-  const ratioField = el('input', {
-    className: 'arisu-cropper-ratio',
-    type: 'text',
-    placeholder: 'free',
-    title: 'aspect ratio, width:height; blank for free',
-    onchange: () => {
-      ratio = parseRatio(ratioField.value);
-      show(fitRatio(rect, ratio, bounds));
-    },
-  });
-  ratioField.setAttribute('list', RATIO_LIST_ID);
+  const ratioMenu = el(
+    'select',
+    { className: 'arisu-cropper-ratio', title: 'aspect ratio, width:height', onchange: onRatioChange },
+    [RATIO_FREE, ...RATIO_PRESETS, RATIO_CUSTOM].map((value) => el('option', { value, textContent: value })),
+  );
+  const ratioParts = ['width', 'height'].map((axis) =>
+    el('input', {
+      className: 'arisu-cropper-ratio-part',
+      type: 'number',
+      min: '0',
+      step: 'any',
+      placeholder: axis,
+      oninput: onRatioChange,
+    }),
+  );
+  const ratioColon = el('span', { textContent: ':' });
   const handles = Object.entries(HANDLES).map(([handle, [ax, ay]]) =>
     el('div', { className: 'arisu-cropper-handle', handle, style: `left: ${ax * 100}%; top: ${ay * 100}%; cursor: ${handle}-resize;` }),
   );
@@ -170,30 +189,50 @@ export function cropImage(img, initial) {
     img,
     box,
   ]);
-  const dialog = el(
-    'dialog',
-    {
-      className: 'arisu-cropper',
-      onclick: (event) => (event.target === dialog ? dialog.close() : undefined),
-    },
-    [
-      el('style', { textContent: STYLE }),
-      el('div', { className: 'arisu-cropper-bar' }, [
-        el('label', { textContent: 'ratio' }),
-        ratioField,
-        el(
-          'datalist',
-          { id: RATIO_LIST_ID },
-          RATIO_PRESETS.map((value) => el('option', { value })),
-        ),
-        readout,
-        el('button', { textContent: 'reset', title: 'the whole image: no crop', onclick: reset }),
-        el('button', { textContent: 'cancel', onclick: () => dialog.close() }),
-        el('button', { className: 'arisu-cropper-apply', textContent: 'apply', onclick: apply }),
-      ]),
-      el('div', { className: 'arisu-cropper-body' }, [stage]),
-    ],
-  );
+  const dialog = el('dialog', { className: 'arisu-cropper' }, [
+    el('style', { textContent: STYLE }),
+    el('div', { className: 'arisu-cropper-bar' }, [
+      el('label', { textContent: 'ratio' }),
+      ratioMenu,
+      ratioParts[0],
+      ratioColon,
+      ratioParts[1],
+      readout,
+      el('button', { textContent: 'reset', title: 'the whole image: no crop', onclick: reset }),
+      el('button', { textContent: 'cancel', onclick: () => dialog.close() }),
+      el('button', { className: 'arisu-cropper-apply', textContent: 'apply', onclick: apply }),
+    ]),
+    el('div', { className: 'arisu-cropper-body' }, [stage]),
+  ]);
+  closeOnBackdropClick(dialog);
+
+  /** Seed the menu and the fields from `ratioText`; the fields show only for a custom ratio. */
+  function showRatio() {
+    const choice = ratioChoice(ratioText);
+    ratioMenu.value = choice;
+    const custom = choice === RATIO_CUSTOM;
+    if (custom) {
+      const [w = '', h = ''] = ratioText.split(':');
+      ratioParts[0].value = w;
+      ratioParts[1].value = h;
+    }
+    for (const element of [...ratioParts, ratioColon]) element.hidden = !custom;
+  }
+
+  /** The menu or a field changed: read the ratio text back, hold the box to it, and show or hide the fields. */
+  function onRatioChange() {
+    const choice = ratioMenu.value;
+    if (choice === RATIO_CUSTOM) {
+      // a blank side reads as free until both are filled; the text still says custom when it comes back
+      ratioText = ratioParts.map((part) => part.value.trim()).join(':');
+    } else {
+      ratioText = choice === RATIO_FREE ? '' : choice;
+    }
+    ratio = parseRatio(ratioText);
+    const custom = choice === RATIO_CUSTOM;
+    for (const element of [...ratioParts, ratioColon]) element.hidden = !custom;
+    show(fitRatio(rect, ratio, bounds));
+  }
 
   /** The pointer's place in image pixels, held inside the image. */
   function pointAt(event) {
@@ -234,8 +273,6 @@ export function cropImage(img, initial) {
   }
 
   function reset() {
-    ratio = null;
-    ratioField.value = '';
     show(fullRect(bounds));
   }
 
@@ -247,10 +284,11 @@ export function cropImage(img, initial) {
   return new Promise((resolve) => {
     dialog.onclose = () => {
       dialog.remove();
-      resolve(result);
+      resolve({ rect: result, ratio: ratioText });
     };
     document.body.append(dialog);
     dialog.showModal();
+    showRatio();
     show(rect);
   });
 }

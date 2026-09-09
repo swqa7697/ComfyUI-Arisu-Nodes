@@ -53,9 +53,8 @@ USER_MEDIA_PREFIX = "/run/media"
 _MOUNT_ESCAPE = re.compile(r"\\([0-7]{3})")
 # Resize Image: the option lists its settings dialog shows (the resampling methods ComfyUI's own upscalers offer),
 # the size bounds, the ``[1, 64, 64]`` zeros ComfyUI's loaders emit for "no mask", and the pad colour forms.
-UPSCALE_METHODS = ("nearest-exact", "bilinear", "area", "bicubic", "lanczos")
-KEEP_PROPORTION_MODES = ("stretch", "resize", "pad", "pad_edge", "pad_edge_pixel", "crop", "pillarbox_blur", "total_pixels")
-PAD_MODES = ("pad", "pad_edge", "pad_edge_pixel", "pillarbox_blur")
+RESIZE_METHODS = ("nearest-exact", "bilinear", "area", "bicubic", "lanczos")
+RESIZE_MODES = ("crop", "pad", "resize", "stretch")
 CROP_POSITIONS = ("center", "top", "bottom", "left", "right")
 MAX_RESOLUTION = 16384
 MAX_DIVISIBLE_BY = 512
@@ -148,7 +147,7 @@ class ResizePlan:
     """How **Resize Image** runs once: the source box it keeps, the size it scales to, and the canvas it lands on.
 
     ``crop`` is ``left, top, width, height`` in source pixels, ``None`` for the
-    whole image; ``scaled`` and ``canvas`` are ``(width, height)``, equal unless a
+    whole image; ``scaled`` and ``canvas`` are ``(width, height)``, equal unless the
     pad mode leaves room; ``offset`` is where the scaled image sits on the canvas.
     """
 
@@ -644,10 +643,10 @@ def _anchor(space: int, extent: int, position: str, start: str, end: str) -> int
     return (space - extent) // 2
 
 
-def _target(source: Tuple[int, int], width: int, height: int, keep_proportion: str) -> Tuple[int, int]:
+def _target(source: Tuple[int, int], width: int, height: int, mode: str) -> Tuple[int, int]:
     """The requested size with zeros resolved: from the source in ``stretch`` and ``crop``, by aspect ratio otherwise."""
     source_width, source_height = source
-    if keep_proportion in ("stretch", "crop") or (width == 0 and height == 0):
+    if mode in ("stretch", "crop") or (width == 0 and height == 0):
         return width or source_width, height or source_height
     if width == 0:
         return max(1, round(source_width * height / source_height)), height
@@ -671,25 +670,23 @@ def _cover_crop(source: Tuple[int, int], canvas: Tuple[int, int], position: str)
     return left, top, crop_width, crop_height
 
 
-def resize_plan(
-    source: Tuple[int, int], width: int, height: int, keep_proportion: str, crop_position: str, divisible_by: int
-) -> ResizePlan:
+def resize_plan(source: Tuple[int, int], width: int, height: int, mode: str, crop_position: str, divisible_by: int) -> ResizePlan:
     """Work out the geometry of one **Resize Image** run, without touching pixels.
 
     A zero ``width`` or ``height`` means "from the source": the source dimension
-    in ``stretch`` and ``crop``, the one keeping the aspect ratio otherwise, and
-    both zero the source size. ``divisible_by`` above 1 rounds the output size
-    down to its multiples (never below one multiple); in the pad modes the
-    canvas is snapped first and the image fitted inside it, so the output is
+    in ``stretch`` and ``crop``, the one keeping the aspect ratio in ``resize``
+    and ``pad``, and both zero the source size. ``divisible_by`` above 1 rounds
+    the output size down to its multiples (never below one multiple); in ``pad``
+    the canvas is snapped first and the image fitted inside it, so the output is
     always exactly the canvas. ``crop_position`` anchors the kept region in
-    ``crop`` and the image on the canvas in the pad modes (``top`` puts the
-    padding at the bottom); the other axis is centred.
+    ``crop`` and the image on the canvas in ``pad`` (``top`` puts the padding at
+    the bottom); the other axis is centred.
 
     Args:
         source: The image's ``(width, height)``.
         width: The requested width, ``0`` for "from the source".
         height: The requested height, likewise.
-        keep_proportion: One of ``KEEP_PROPORTION_MODES``.
+        mode: One of ``RESIZE_MODES``.
         crop_position: One of ``CROP_POSITIONS``.
         divisible_by: The pixel grid; ``0`` and ``1`` mean none.
 
@@ -697,31 +694,21 @@ def resize_plan(
         The plan: what to cut, how large to scale, the canvas, and where the image sits on it.
 
     Raises:
-        ValueError: For an unknown mode or position, or ``total_pixels`` with a zero dimension.
+        ValueError: For an unknown mode or position.
     """
-    if keep_proportion not in KEEP_PROPORTION_MODES:
-        raise ValueError(f"unknown keep_proportion {keep_proportion!r}")
+    if mode not in RESIZE_MODES:
+        raise ValueError(f"unknown mode {mode!r}")
     if crop_position not in CROP_POSITIONS:
         raise ValueError(f"unknown crop_position {crop_position!r}")
-    if keep_proportion == "total_pixels":
-        if width < 1 or height < 1:
-            raise ValueError("total_pixels needs both width and height: their product is the pixel budget")
-        aspect = source[0] / source[1]
-        budget = width * height
-        scaled = (
-            _snap(max(1, int(math.sqrt(budget * aspect))), divisible_by),
-            _snap(max(1, int(math.sqrt(budget / aspect))), divisible_by),
-        )
-        return ResizePlan(None, scaled, scaled, (0, 0))
-    target = _target(source, width, height, keep_proportion)
-    if keep_proportion == "resize":
+    target = _target(source, width, height, mode)
+    if mode == "resize":
         fitted = _fit(source, target)
         scaled = (_snap(fitted[0], divisible_by), _snap(fitted[1], divisible_by))
         return ResizePlan(None, scaled, scaled, (0, 0))
     canvas = (_snap(target[0], divisible_by), _snap(target[1], divisible_by))
-    if keep_proportion == "stretch":
+    if mode == "stretch":
         return ResizePlan(None, canvas, canvas, (0, 0))
-    if keep_proportion == "crop":
+    if mode == "crop":
         return ResizePlan(_cover_crop(source, canvas, crop_position), canvas, canvas, (0, 0))
     scaled = _fit(source, canvas)
     offset = (_anchor(canvas[0], scaled[0], crop_position, "left", "right"), _anchor(canvas[1], scaled[1], crop_position, "top", "bottom"))

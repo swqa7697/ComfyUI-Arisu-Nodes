@@ -27,12 +27,17 @@ filesystem root and other users' homes are not listed, but a path typed into the
 Enter) opens anywhere and the tree grows a branch for it. The filter box narrows the images of the
 current directory by any part of their name; folders are never filtered. Click an image to pick it.
 
+**Saved** lists the directories you pinned: **+ save** adds the one you are in, a row opens it, and
+its **✕** forgets it. The list is kept in your ComfyUI user settings, so it follows you across
+browsers and reloads.
+
 The crop dialog shows the picked file with a box over it. Drag on the image to draw a box, drag the
-box to move it, and pull its handles to resize it; the readout gives the box in pixels. Pick or type
-an aspect ratio (`16:9`, `1:1`, or any `width:height`) to fit the box to it and hold it while you
-drag; leave the field blank for a free box. **reset** is the whole image, which is no crop at all;
-**apply** stores the box and the node previews the cropped image at the cropped size. Nothing is
-resized or padded, and picking another file drops the crop.
+box to move it, and pull its handles to resize it; the readout gives the box in pixels. The **ratio**
+menu holds the box to an aspect ratio while you drag: `free` for no ratio, a preset (`1:1`, `3:2`,
+`2:3`, `4:3`, `3:4`, `16:9`, `9:16`), or `custom`, which shows a width and a height field. The choice
+is remembered until another image is picked. **reset** is the whole image, which is no crop at all,
+and leaves the ratio alone; **apply** stores the box and the node previews the cropped image at the
+cropped size. Nothing is resized or padded, and picking another file drops the crop.
 
 ## Outputs
 

@@ -113,8 +113,8 @@ def test_resize_image_scales_pads_crops_and_previews(tmp_path: Path, monkeypatch
     monkeypatch.setattr(folder_paths, "temp_directory", str(tmp_path / "temp"))
     image = torch.rand(2, 40, 60, 3)
     base = {
-        "upscale_method": "bilinear",
-        "keep_proportion": "stretch",
+        "resize_method": "bilinear",
+        "mode": "stretch",
         "pad_color": "0, 0, 0",
         "crop_position": "center",
         "divisible_by": 2,
@@ -131,7 +131,7 @@ def test_resize_image_scales_pads_crops_and_previews(tmp_path: Path, monkeypatch
     assert [p["type"] for p in previews] == ["temp", "temp"]
     assert all((tmp_path / "temp" / p["subfolder"] / p["filename"]).is_file() for p in previews)
     # a zero side comes from the image: fitted at the aspect ratio here
-    assert ArisuResizeImage.execute(image=image, width=0, height=20, **{**base, "keep_proportion": "resize"}).args[0].shape == (
+    assert ArisuResizeImage.execute(image=image, width=0, height=20, **{**base, "mode": "resize"}).args[0].shape == (
         2,
         20,
         30,
@@ -140,7 +140,7 @@ def test_resize_image_scales_pads_crops_and_previews(tmp_path: Path, monkeypatch
 
     # pad: the canvas is the request snapped to the grid (96x48), the image fitted inside it (72x48) and anchored left, the
     # rest the colour; the mask is 1 over the padding and 0 under the image, batch-sized without a mask input
-    settings = {**base, "keep_proportion": "pad", "pad_color": "#ff0000", "crop_position": "left", "divisible_by": 16}
+    settings = {**base, "mode": "pad", "pad_color": "#ff0000", "crop_position": "left", "divisible_by": 16}
     padded, mask = ArisuResizeImage.execute(image=image, width=100, height=50, **settings).args
     assert padded.shape == (2, 48, 96, 3) and mask.shape == (2, 48, 96)
     assert torch.allclose(padded[:, :, 72:], torch.tensor([1.0, 0.0, 0.0]))
@@ -151,35 +151,24 @@ def test_resize_image_scales_pads_crops_and_previews(tmp_path: Path, monkeypatch
     ).args
     assert torch.allclose(padded[:, :, 72:], torch.tensor([1.0, 1.0, 1.0]))
     assert mask.shape == (1, 48, 96) and mask.eq(1).all()
-    # the modes that fill from the image itself land on the canvas too
-    for mode in ["pad_edge", "pad_edge_pixel", "pillarbox_blur"]:
-        filled, mask = ArisuResizeImage.execute(image=image, width=100, height=100, **{**base, "keep_proportion": mode}).args
-        assert filled.shape == (2, 100, 100, 3) and mask.shape == (2, 100, 100), f"case={mode!r}"
-    # pad_edge_pixel repeats the edge pixels outward: the padding rows above the image equal its top row
-    filled, _ = ArisuResizeImage.execute(
-        image=image, width=60, height=80, **{**base, "keep_proportion": "pad_edge_pixel", "divisible_by": 0}
-    ).args
-    assert torch.allclose(filled[:, 0], filled[:, 20])
 
     # crop: the source is cut to the target's aspect ratio at the anchor before scaling, and a given mask takes the same cut;
     # the right 40 of 60 columns are marked, so the right-anchored cut keeps only marked pixels and the left-anchored one
     # keeps 20 unmarked columns, half the cut, hence half the output
     marked = torch.zeros(2, 40, 60)
     marked[:, :, 20:] = 1.0
-    settings = {**base, "keep_proportion": "crop", "upscale_method": "nearest-exact"}
+    settings = {**base, "mode": "crop", "resize_method": "nearest-exact"}
     cropped, mask = ArisuResizeImage.execute(image=image, mask=marked, width=20, height=20, **{**settings, "crop_position": "right"}).args
     assert cropped.shape == (2, 20, 20, 3) and mask.eq(1).all()
     _, mask = ArisuResizeImage.execute(image=image, mask=marked, width=20, height=20, **{**settings, "crop_position": "left"}).args
     assert mask[:, :, :10].eq(0).all() and mask[:, :, 10:].eq(1).all()
 
-    # validation before the run: linked inputs pass; a total_pixels budget with a zero side and an unfillable pad colour are
-    # refused, the colour only when the pad mode would use it
+    # validation before the run: linked inputs pass; an unfillable pad colour is refused, only when the pad mode would use it
     assert ArisuResizeImage.validate_inputs() is True
-    assert ArisuResizeImage.validate_inputs(width=0, height=512, keep_proportion="stretch", pad_color="white") is True
-    assert isinstance(ArisuResizeImage.validate_inputs(width=0, height=512, keep_proportion="total_pixels"), str)
-    assert isinstance(ArisuResizeImage.validate_inputs(keep_proportion="pad", pad_color="no such colour"), str)
+    assert ArisuResizeImage.validate_inputs(mode="stretch", pad_color="white") is True
+    assert isinstance(ArisuResizeImage.validate_inputs(mode="pad", pad_color="no such colour"), str)
     assert isinstance(ArisuResizeImage.validate_inputs(pad_color="1, 2"), str)
-    assert ArisuResizeImage.validate_inputs(keep_proportion="stretch", pad_color="no such colour") is True
+    assert ArisuResizeImage.validate_inputs(mode="stretch", pad_color="no such colour") is True
 
     # a bypassed node passes each output through the input at the same slot when the types match, else the first input of
     # its type: image is the first input and output, mask the only MASK input and the second output

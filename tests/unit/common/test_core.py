@@ -204,7 +204,7 @@ auto.nas /mnt/auto autofs rw 0 0
 
 
 def test_resize_plan_covers_every_mode():
-    # a 3:2 source; each case is (width, height, keep_proportion, crop_position, divisible_by) -> the plan
+    # a 3:2 source; each case is (width, height, mode, crop_position, divisible_by) -> the plan
     source = (600, 400)
     cases = [
         # stretch: exactly the request, 0 taking the source side, snapped down to the grid but never below one multiple
@@ -219,12 +219,12 @@ def test_resize_plan_covers_every_mode():
         ((100, 0, "resize", "center", 0), ResizePlan(None, (100, 67), (100, 67), (0, 0))),
         ((0, 0, "resize", "center", 0), ResizePlan(None, (600, 400), (600, 400), (0, 0))),
         ((300, 300, "resize", "center", 16), ResizePlan(None, (288, 192), (288, 192), (0, 0))),
-        # pad modes: the canvas is the snapped request, the image fits inside it, the position anchors it along its
+        # pad: the canvas is the snapped request, the image fits inside it, the position anchors it along its
         # own axis and the other axis is centred; a derived side leaves no room, so the canvas is the image
         ((300, 300, "pad", "center", 0), ResizePlan(None, (300, 200), (300, 300), (0, 50))),
-        ((300, 300, "pad_edge", "top", 0), ResizePlan(None, (300, 200), (300, 300), (0, 0))),
-        ((300, 300, "pad_edge_pixel", "bottom", 0), ResizePlan(None, (300, 200), (300, 300), (0, 100))),
-        ((100, 500, "pillarbox_blur", "right", 0), ResizePlan(None, (100, 67), (100, 500), (0, 216))),
+        ((300, 300, "pad", "top", 0), ResizePlan(None, (300, 200), (300, 300), (0, 0))),
+        ((300, 300, "pad", "bottom", 0), ResizePlan(None, (300, 200), (300, 300), (0, 100))),
+        ((100, 500, "pad", "right", 0), ResizePlan(None, (100, 67), (100, 500), (0, 216))),
         ((1000, 500, "pad", "left", 16), ResizePlan(None, (744, 496), (992, 496), (0, 0))),
         ((0, 200, "pad", "center", 0), ResizePlan(None, (300, 200), (300, 200), (0, 0))),
         # crop: the largest source box of the canvas's aspect, anchored, then scaled to the canvas; a matching aspect cuts nothing
@@ -233,13 +233,11 @@ def test_resize_plan_covers_every_mode():
         ((600, 100, "crop", "bottom", 0), ResizePlan((0, 300, 600, 100), (600, 100), (600, 100), (0, 0))),
         ((300, 200, "crop", "center", 0), ResizePlan(None, (300, 200), (300, 200), (0, 0))),
         ((0, 0, "crop", "center", 0), ResizePlan(None, (600, 400), (600, 400), (0, 0))),
-        # total_pixels: width x height is a budget spent at the source's aspect ratio
-        ((400, 300, "total_pixels", "center", 0), ResizePlan(None, (424, 282), (424, 282), (0, 0))),
-        ((400, 300, "total_pixels", "center", 8), ResizePlan(None, (424, 280), (424, 280), (0, 0))),
     ]
     for case, expected in cases:
         assert resize_plan(source, *case) == expected, f"case={case!r}"
-    for case in [(0, 300, "total_pixels", "center", 0), (300, 300, "shrink", "center", 0), (300, 300, "pad", "middle", 0)]:
+    # an unknown mode (the dropped total_pixels among them) or position is refused
+    for case in [(300, 300, "total_pixels", "center", 0), (300, 300, "shrink", "center", 0), (300, 300, "pad", "middle", 0)]:
         with pytest.raises(ValueError):
             resize_plan(source, *case)
 

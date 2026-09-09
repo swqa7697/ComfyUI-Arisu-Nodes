@@ -14,20 +14,19 @@ import folder_paths
 import node_helpers
 import numpy as np
 import torch
-import torch.nn.functional as F
 from comfy_api.latest import io, ui
 from PIL import Image, ImageColor, ImageOps, ImageSequence
 
 from .core import (
     CROP_POSITIONS,
     DEFAULT_PAD_COLOR,
-    KEEP_PROPORTION_MODES,
     MAX_DIVISIBLE_BY,
     MAX_PATH_SEGMENTS,
     MAX_RESOLUTION,
     NO_UPSCALE,
     PLACEHOLDER_MASK_SIZE,
-    UPSCALE_METHODS,
+    RESIZE_METHODS,
+    RESIZE_MODES,
     CropBox,
     ResizePlan,
     crop_box,
@@ -54,18 +53,15 @@ _LOAD_CROP_TOOLTIP = (
     "An optional crop as left,top,width,height in pixels of the upright image; blank loads the whole image. "
     "The crop button fills it in and the frontend hides it. A box reaching past the image is cut to it."
 )
-_RESIZE_SIZE_TOOLTIP = "The output {axis} in pixels; 0 takes it from the image (keeping the aspect ratio in the fit and pad modes)."
+_RESIZE_SIZE_TOOLTIP = "The output {axis} in pixels; 0 takes it from the image (keeping the aspect ratio in resize and pad)."
 _RESIZE_METHOD_TOOLTIP = "How pixels are resampled; lanczos is the sharpest for photos, nearest-exact keeps hard edges."
 _RESIZE_MODE_TOOLTIP = (
-    "stretch ignores the aspect ratio; resize fits inside width x height; the pad modes fit and fill the rest with a colour, "
-    "the edge colours, the edge pixels, or a blurred copy; crop cuts the image to the aspect ratio first; total_pixels "
-    "keeps the aspect ratio at about width x height pixels."
+    "crop cuts the image to the aspect ratio of width x height first; pad fits it inside and fills the rest with pad_color; "
+    "resize fits it inside width x height; stretch ignores the aspect ratio."
 )
-_RESIZE_PAD_COLOR_TOOLTIP = (
-    "The pad mode's fill: r, g, b (0-255, or 0.0-1.0 with a decimal point), #rrggbb, one grey value, or a colour name."
-)
-_RESIZE_POSITION_TOOLTIP = "Where the image stays: the region kept in crop, the side the image sits on in the pad modes."
-_RESIZE_GRID_TOOLTIP = "Round the output size down to a multiple of this; 0 or 1 for none. The pad modes snap the canvas, not the image."
+_RESIZE_PAD_COLOR_TOOLTIP = "The pad fill: r, g, b (0-255, or 0.0-1.0 with a decimal point), #rrggbb, one grey value, or a colour name."
+_RESIZE_POSITION_TOOLTIP = "Where the image stays: the region kept in crop, the side the image sits on in pad."
+_RESIZE_GRID_TOOLTIP = "Round the output size down to a multiple of this; 0 or 1 for none. pad snaps the canvas, not the image."
 _RESIZE_MASK_TOOLTIP = "Optional; follows the image through the crop, scale and pad. Without it the mask output marks only the padding."
 
 
@@ -528,60 +524,12 @@ def _fill_color(value: str, channels: int) -> torch.Tensor:
     return fill
 
 
-def _gaussian_blur(images: torch.Tensor, sigma: float) -> torch.Tensor:
-    """Blur a ``[B, C, H, W]`` batch with a separable gaussian of ``sigma`` pixels, edges replicated by zero padding."""
-    radius = max(1, int(3.0 * sigma))
-    offsets = torch.arange(-radius, radius + 1, dtype=images.dtype)
-    kernel = torch.exp(-(offsets * offsets) / (2.0 * sigma * sigma))
-    kernel = kernel / kernel.sum()
-    channels = images.shape[1]
-    horizontal = kernel.view(1, 1, 1, -1).repeat(channels, 1, 1, 1)
-    vertical = kernel.view(1, 1, -1, 1).repeat(channels, 1, 1, 1)
-    blurred = F.conv2d(images, horizontal, padding=(0, radius), groups=channels)
-    return F.conv2d(blurred, vertical, padding=(radius, 0), groups=channels)
-
-
-def _pillarbox(images: torch.Tensor, canvas: Tuple[int, int]) -> torch.Tensor:
-    """A ``pillarbox_blur`` canvas: the batch scaled to cover the canvas, cut to it, blurred, desaturated and dimmed."""
-    _, height, width, channels = images.shape
-    canvas_width, canvas_height = canvas
-    scale = max(canvas_width / width, canvas_height / height)
-    cover = comfy.utils.common_upscale(
-        images.movedim(-1, 1), max(canvas_width, round(width * scale)), max(canvas_height, round(height * scale)), "bilinear", "disabled"
-    )
-    left = (cover.shape[-1] - canvas_width) // 2
-    top = (cover.shape[-2] - canvas_height) // 2
-    background = _gaussian_blur(cover[:, :, top : top + canvas_height, left : left + canvas_width], max(1.0, 0.006 * min(canvas)))
-    if channels >= 3:
-        luma = 0.2126 * background[:, 0:1] + 0.7152 * background[:, 1:2] + 0.0722 * background[:, 2:3]
-        background = torch.cat([background[:, :3] * 0.8 + luma * 0.2, background[:, 3:]], dim=1)
-    return (background * 0.35).clamp(0.0, 1.0).movedim(1, -1)
-
-
-def _pad(images: torch.Tensor, plan: ResizePlan, mode: str, pad_color: str) -> torch.Tensor:
-    """Place the scaled batch on the plan's canvas, filling the rest the way ``mode`` (one of ``PAD_MODES``) says.
-
-    ``pad`` fills with ``pad_color``; ``pad_edge`` with the mean colour of each
-    edge row or column (the side fills win the corners); ``pad_edge_pixel``
-    repeats the edge pixels outward; ``pillarbox_blur`` shows a blurred, dimmed
-    copy of the image behind it.
-    """
+def _pad(images: torch.Tensor, plan: ResizePlan, pad_color: str) -> torch.Tensor:
+    """Place the scaled batch on the plan's canvas, the rest filled with ``pad_color``."""
     batch, height, width, channels = images.shape
     canvas_width, canvas_height = plan.canvas
     left, top = plan.offset
-    if mode == "pad_edge_pixel":
-        right, bottom = canvas_width - width - left, canvas_height - height - top
-        return F.pad(images.movedim(-1, 1), (left, right, top, bottom), mode="replicate").movedim(1, -1)
-    if mode == "pillarbox_blur":
-        canvas = _pillarbox(images, plan.canvas)
-    elif mode == "pad_edge":
-        canvas = images.new_empty((batch, canvas_height, canvas_width, channels))
-        canvas[:, :top] = images[:, 0].mean(dim=1)[:, None, None]
-        canvas[:, top + height :] = images[:, -1].mean(dim=1)[:, None, None]
-        canvas[:, :, :left] = images[:, :, 0].mean(dim=1)[:, None, None]
-        canvas[:, :, left + width :] = images[:, :, -1].mean(dim=1)[:, None, None]
-    else:
-        canvas = _fill_color(pad_color, channels).to(images.dtype).expand(batch, canvas_height, canvas_width, channels).clone()
+    canvas = _fill_color(pad_color, channels).to(images.dtype).expand(batch, canvas_height, canvas_width, channels).clone()
     canvas[:, top : top + height, left : left + width] = images
     return canvas
 
@@ -597,13 +545,13 @@ def _pad_mask(mask: Optional[torch.Tensor], plan: ResizePlan, batch: int) -> tor
 
 
 class ArisuResizeImage(io.ComfyNode):
-    """Resize an image batch by stretching, fitting, padding or cropping, with only the size on the node.
+    """Resize an image batch by cropping, padding, fitting or stretching, with only the size on the node.
 
     **Upscale Image** stretches to a size or centre-crops to it, so filling a
     canvas takes hand-computed offsets for **Pad Image for Outpainting** and
     landing on a model's pixel grid takes arithmetic in the workflow. This node
-    does both, and the options that rarely change (``upscale_method``,
-    ``keep_proportion``, ``pad_color``, ``crop_position``, ``divisible_by``) are
+    does both, and the options that rarely change (``resize_method``, ``mode``,
+    ``pad_color``, ``crop_position``, ``divisible_by``) are
     ordinary inputs that the pack's frontend script hides and edits in a
     settings dialog, leaving ``width`` and ``height`` on the node. The result is
     previewed the way ComfyUI's own **Image Crop** previews it. The geometry is
@@ -625,7 +573,7 @@ class ArisuResizeImage(io.ComfyNode):
             category="Arisu Nodes/Common",
             search_aliases=["resize image", "scale image", "fit pad crop"],
             description=(
-                "Resize an image batch to width x height: stretched, fitted, padded or cropped to the size and snapped to a "
+                "Resize an image batch to width x height: cropped, padded, fitted or stretched to the size and snapped to a "
                 "pixel grid, with the result shown on the node. The options live behind the settings button; 0 for a "
                 "dimension takes it from the image."
             ),
@@ -633,17 +581,15 @@ class ArisuResizeImage(io.ComfyNode):
                 io.Image.Input("image", tooltip="The batch to resize; every image gets the same geometry."),
                 io.Int.Input("width", default=512, min=0, max=MAX_RESOLUTION, tooltip=_RESIZE_SIZE_TOOLTIP.format(axis="width")),
                 io.Int.Input("height", default=512, min=0, max=MAX_RESOLUTION, tooltip=_RESIZE_SIZE_TOOLTIP.format(axis="height")),
-                io.Combo.Input("upscale_method", options=list(UPSCALE_METHODS), default="lanczos", tooltip=_RESIZE_METHOD_TOOLTIP),
-                io.Combo.Input("keep_proportion", options=list(KEEP_PROPORTION_MODES), default="stretch", tooltip=_RESIZE_MODE_TOOLTIP),
+                io.Combo.Input("resize_method", options=list(RESIZE_METHODS), default="lanczos", tooltip=_RESIZE_METHOD_TOOLTIP),
+                io.Combo.Input("mode", options=list(RESIZE_MODES), default="stretch", tooltip=_RESIZE_MODE_TOOLTIP),
                 io.String.Input("pad_color", default=DEFAULT_PAD_COLOR, tooltip=_RESIZE_PAD_COLOR_TOOLTIP),
                 io.Combo.Input("crop_position", options=list(CROP_POSITIONS), default="center", tooltip=_RESIZE_POSITION_TOOLTIP),
                 io.Int.Input("divisible_by", default=2, min=0, max=MAX_DIVISIBLE_BY, tooltip=_RESIZE_GRID_TOOLTIP),
                 io.Mask.Input("mask", optional=True, tooltip=_RESIZE_MASK_TOOLTIP),
             ],
             outputs=[
-                io.Image.Output(
-                    "image", tooltip="The resized batch, exactly width x height after the grid in every mode but resize and total_pixels."
-                ),
+                io.Image.Output("image", tooltip="The resized batch, exactly width x height after the grid in every mode but resize."),
                 io.Mask.Output(
                     "mask", tooltip="The input mask resized alike, 1 over any padding; ComfyUI's 64x64 empty mask when there is neither."
                 ),
@@ -657,8 +603,8 @@ class ArisuResizeImage(io.ComfyNode):
         image: torch.Tensor,
         width: int,
         height: int,
-        upscale_method: str,
-        keep_proportion: str,
+        resize_method: str,
+        mode: str,
         pad_color: str,
         crop_position: str,
         divisible_by: int,
@@ -670,8 +616,8 @@ class ArisuResizeImage(io.ComfyNode):
             image: The batch shaped ``[B, H, W, C]``.
             width: The requested width, ``0`` for "from the image".
             height: The requested height, likewise.
-            upscale_method: One of ``UPSCALE_METHODS``.
-            keep_proportion: One of ``KEEP_PROPORTION_MODES``.
+            resize_method: One of ``RESIZE_METHODS``.
+            mode: One of ``RESIZE_MODES``.
             pad_color: The fill of the ``pad`` mode; see ``core.parse_pad_color``.
             crop_position: One of ``CROP_POSITIONS``.
             divisible_by: The pixel grid; ``0`` and ``1`` mean none.
@@ -683,44 +629,35 @@ class ArisuResizeImage(io.ComfyNode):
         batch, source_height, source_width, _ = image.shape
         source = (source_width, source_height)
         mask = _usable_mask(mask, source)
-        plan = resize_plan(source, width, height, keep_proportion, crop_position, divisible_by)
+        plan = resize_plan(source, width, height, mode, crop_position, divisible_by)
         if plan.crop is not None:
             left, top, crop_width, crop_height = plan.crop
             image = image.narrow(2, left, crop_width).narrow(1, top, crop_height)
             if mask is not None:
                 mask = mask.narrow(2, left, crop_width).narrow(1, top, crop_height)
-        image = _scale(image, plan.scaled, upscale_method)
+        image = _scale(image, plan.scaled, resize_method)
         if mask is not None:
-            mask = _scale_mask(mask, plan.scaled, upscale_method)
+            mask = _scale_mask(mask, plan.scaled, resize_method)
         if plan.canvas != plan.scaled:
-            image = _pad(image, plan, keep_proportion, pad_color)
+            image = _pad(image, plan, pad_color)
             mask = _pad_mask(mask, plan, batch)
         if mask is None:
             mask = torch.zeros((1, PLACEHOLDER_MASK_SIZE, PLACEHOLDER_MASK_SIZE))
         return io.NodeOutput(image, mask, ui=ui.PreviewImage(image))
 
     @classmethod
-    def validate_inputs(
-        cls,
-        width: Optional[int] = None,
-        height: Optional[int] = None,
-        keep_proportion: Optional[str] = None,
-        pad_color: Optional[str] = None,
-    ) -> Union[bool, str]:
-        """Refuse a ``total_pixels`` budget with a zero side, and a ``pad_color`` the ``pad`` mode cannot fill with.
+    def validate_inputs(cls, mode: Optional[str] = None, pad_color: Optional[str] = None) -> Union[bool, str]:
+        """Refuse a ``pad_color`` the ``pad`` mode cannot fill with.
 
         Args:
-            width: The widget value; ``None`` when fed by a link, which the executor leaves out of validation.
-            height: Likewise.
-            keep_proportion: Likewise; the colour is only checked when it is ``pad`` or unknown.
+            mode: The widget value; ``None`` when fed by a link, which the executor leaves out of validation.
+                The colour is only checked when it is ``pad`` or unknown.
             pad_color: Likewise.
 
         Returns:
             ``True`` when the run can go ahead, otherwise the error to show.
         """
-        if keep_proportion == "total_pixels" and (width == 0 or height == 0):
-            return "total_pixels needs both width and height: their product is the pixel budget"
-        if pad_color is not None and keep_proportion in (None, "pad"):
+        if pad_color is not None and mode in (None, "pad"):
             try:
                 _fill_color(pad_color, 3)
             except (TypeError, ValueError) as error:

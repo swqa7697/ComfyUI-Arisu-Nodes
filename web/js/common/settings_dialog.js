@@ -2,7 +2,8 @@
 //
 // `editSettings(title, fields, values)` shows one row per field, seeded from `values`
 // by field name, and resolves to the edited values, or `null` when the dialog is
-// cancelled: cancel, ✕, Escape, or a click on the backdrop. A field is
+// cancelled: cancel, ✕, Escape, or a click on the backdrop (a press there too, so a drag
+// out of a field that ends on the backdrop is not one). A field is
 // `{ name, kind, values, min, max, step, default, tooltip }`. `combo` is a <select>
 // over `values`; `number` an <input type="number"> whose result is a rounded integer
 // held to min..max (a blank or unreadable field keeps the value it opened with);
@@ -16,7 +17,7 @@
 // part has a decimal point), `#rgb` / `#rrggbb` / `#rrggbbaa`, one grey value. A
 // colour name is left to the backend and leaves the picker where it is.
 
-import { el } from './dom.js';
+import { closeOnBackdropClick, el } from './dom.js';
 
 const HEX_COLOR = /^#([0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
 
@@ -148,40 +149,34 @@ export function editSettings(title, fields, values) {
     }),
     el('div', { className: 'arisu-settings-field' }, elements),
   ]);
-  const dialog = el(
-    'dialog',
-    {
-      className: 'arisu-settings',
-      onclick: (event) => (event.target === dialog ? dialog.close() : undefined),
-    },
-    [
-      el('style', { textContent: STYLE }),
-      el('div', { className: 'arisu-settings-head' }, [
-        el('h2', { className: 'arisu-settings-title', textContent: title }),
-        el('button', { textContent: '✕', title: 'close', onclick: () => dialog.close() }),
-      ]),
-      el('div', { className: 'arisu-settings-body' }, rows),
-      el('div', { className: 'arisu-settings-bar' }, [
-        el('button', {
-          textContent: 'reset',
-          title: 'the declared defaults',
-          onclick: () => {
-            for (const control of controls) control.set(control.field.default);
-          },
-        }),
-        el('span', { className: 'arisu-settings-spacer' }),
-        el('button', { textContent: 'cancel', onclick: () => dialog.close() }),
-        el('button', {
-          className: 'arisu-settings-apply',
-          textContent: 'apply',
-          onclick: () => {
-            result = Object.fromEntries(controls.map((control) => [control.field.name, control.get()]));
-            dialog.close();
-          },
-        }),
-      ]),
-    ],
-  );
+  const dialog = el('dialog', { className: 'arisu-settings' }, [
+    el('style', { textContent: STYLE }),
+    el('div', { className: 'arisu-settings-head' }, [
+      el('h2', { className: 'arisu-settings-title', textContent: title }),
+      el('button', { textContent: '✕', title: 'close', onclick: () => dialog.close() }),
+    ]),
+    el('div', { className: 'arisu-settings-body' }, rows),
+    el('div', { className: 'arisu-settings-bar' }, [
+      el('button', {
+        textContent: 'reset',
+        title: 'the declared defaults',
+        onclick: () => {
+          for (const control of controls) control.set(control.field.default);
+        },
+      }),
+      el('span', { className: 'arisu-settings-spacer' }),
+      el('button', { textContent: 'cancel', onclick: () => dialog.close() }),
+      el('button', {
+        className: 'arisu-settings-apply',
+        textContent: 'apply',
+        onclick: () => {
+          result = Object.fromEntries(controls.map((control) => [control.field.name, control.get()]));
+          dialog.close();
+        },
+      }),
+    ]),
+  ]);
+  closeOnBackdropClick(dialog);
   return new Promise((resolve) => {
     dialog.onclose = () => {
       dialog.remove();

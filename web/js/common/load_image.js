@@ -15,10 +15,14 @@
 // asks for no chain (`tree=0`), since it already has one. Clicking a row
 // navigates, the chevron only expands, and "collapse" folds everything but the
 // chain to the current directory. The filter box narrows the image cards only.
+// Above the tree sits a "Saved" list of directories the user pinned with the
+// `+ save` button, each with a remove button; they live in a hidden ComfyUI
+// setting, so they follow the ComfyUI user rather than the browser.
 //
 // The browser is a native <dialog>: it sits in the browser's top layer above
 // the canvas and the frontend's own layers, traps focus, and closes on Escape,
-// on the close button, or on a backdrop click. Every element is built through
+// on the close button, or on a backdrop click (a press there too: a drag out of
+// a field that ends on the backdrop is not one). Every element is built through
 // `el()`, so the dialog touches a small DOM surface. Motion and state live in
 // the stylesheet: the dialog pops in, the image cards rise once when a
 // directory is entered (never on a tree click or a filter keystroke, and the
@@ -30,8 +34,9 @@
 // in pixels of the upright image, which this script hides: the dialog is its
 // editor and the preview shows its effect. A blank crop is the whole image, so
 // applying the whole image or pressing reset stores nothing, and picking
-// another file drops the crop of the previous one. Nothing is uploaded: the
-// run crops in memory and the preview asks /arisu/view for the cropped pixels.
+// another file drops the crop of the previous one, and the aspect ratio chosen
+// in the dialog, which is remembered per node until then. Nothing is uploaded:
+// the run crops in memory and the preview asks /arisu/view for the cropped pixels.
 //
 // The preview goes through `node.imgs`, which the classic node canvas draws
 // below the widgets. The frontend captions it with the loaded image's own
@@ -43,7 +48,7 @@
 import { api } from '../../../../scripts/api.js';
 import { app } from '../../../../scripts/app.js';
 import { cropImage } from './cropper.js';
-import { el } from './dom.js';
+import { closeOnBackdropClick, el } from './dom.js';
 import { addButton, hideWidget, setWidget } from './widgets.js';
 
 const NODE_TYPE = 'ArisuLoadImage';
@@ -52,12 +57,14 @@ const CROP_WIDGET = 'crop';
 const BROWSE_ROUTE = '/arisu/browse';
 const VIEW_ROUTE = '/arisu/view';
 const THUMBNAIL_MAX = 256;
+/** The hidden ComfyUI setting holding the browser's saved directories, an array of absolute paths. */
+const SAVED_PATHS_SETTING = 'Arisu.LoadImage.SavedPaths';
 /** The preview's fallback bound, for a file the browser cannot decode itself (TIFF, for one). */
 const PREVIEW_MAX = 1024;
 /** The context-menu entry the frontend adds to every previewing node; see beforeRegisterNodeDef for why it goes. */
 const MASK_EDITOR_ENTRY = /mask ?editor/i;
 /** Tree icons by row kind: the home root, a mounted disk, an ad-hoc root for a path outside them, a folder. */
-const ICONS = { home: '\u{1F3E0}', disk: '\u{1F4BE}', adhoc: '\u{1F5A5}', folder: '\u{1F4C1}' };
+const ICONS = { home: '\u{1F3E0}', disk: '\u{1F4BE}', adhoc: '\u{1F5A5}', folder: '\u{1F4C1}', saved: '\u{1F4CC}' };
 
 const STYLE = `
 .arisu-browser { width: min(1100px, 92vw); height: min(760px, 88vh); padding: 0; border: 1px solid var(--border-color, #444);
@@ -89,6 +96,10 @@ const STYLE = `
 .arisu-browser-tree-head { display: flex; justify-content: space-between; align-items: center; padding: 4px 6px;
   font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--descrip-text, #999); }
 .arisu-browser-tree-head button { padding: 2px 8px; font-size: 11px; text-transform: none; letter-spacing: 0; }
+.arisu-browser-saved { display: flex; align-items: center; flex-shrink: 0; }
+.arisu-browser-saved-remove { width: 22px; height: 26px; padding: 0; flex-shrink: 0; background: none; border-color: transparent;
+  color: var(--descrip-text, #999); }
+.arisu-browser-saved-remove:hover { color: inherit; }
 .arisu-browser-tree-node { display: flex; align-items: center; flex-shrink: 0; padding-left: calc(var(--depth, 0) * 14px); }
 .arisu-browser-tree-toggle { width: 22px; height: 26px; padding: 0; flex-shrink: 0; background: none; border-color: transparent;
   color: var(--descrip-text, #999); }
@@ -125,6 +136,8 @@ const STYLE = `
 
 /** A pending preview per node, so a load that finishes after a newer pick cannot overwrite it. */
 const previewTokens = new WeakMap();
+/** The aspect ratio the crop dialog last showed, per node; dropped when another file is picked. */
+const cropRatios = new WeakMap();
 
 function toast(severity, detail) {
   app.extensionManager?.toast?.add?.({ severity, summary: 'Load Image (Browse)', detail, life: 8000 });
@@ -156,6 +169,16 @@ function formatCrop(rect, img) {
 function hideCrop(node) {
   const widget = cropWidget(node);
   if (widget) hideWidget(node, widget);
+}
+
+/** The saved directories, from the user's ComfyUI settings. */
+function savedPaths() {
+  const value = app.extensionManager?.setting?.get?.(SAVED_PATHS_SETTING);
+  return Array.isArray(value) ? value : [];
+}
+
+function storeSavedPaths(paths) {
+  return app.extensionManager?.setting?.set?.(SAVED_PATHS_SETTING, paths);
 }
 
 function isLinked(node, name) {
@@ -224,13 +247,16 @@ function pick(node, path) {
   const widget = pathWidget(node);
   if (!widget) return undefined;
   const crop = cropWidget(node);
-  if (crop && widget.value !== path) crop.value = '';
+  if (widget.value !== path) {
+    if (crop) crop.value = '';
+    cropRatios.delete(node);
+  }
   setWidget(node, widget, path);
   if (isLinked(node, PATH_WIDGET)) toast('warn', 'path is fed by a link, so a run uses the linked value, not the picked file.');
   return showPreview(node);
 }
 
-/** Open the crop dialog on the picked file and keep its result in the hidden crop widget. */
+/** Open the crop dialog on the picked file and keep its result in the hidden crop widget, and its ratio for next time. */
 async function openCropper(node) {
   const path = pathWidget(node)?.value?.trim();
   const crop = cropWidget(node);
@@ -244,7 +270,8 @@ async function openCropper(node) {
     toast('warn', `Cannot crop ${path}: the browser cannot decode this file.`);
     return;
   }
-  const rect = await cropImage(img, parseCrop(crop.value));
+  const { rect, ratio } = await cropImage(img, { rect: parseCrop(crop.value), ratio: cropRatios.get(node) ?? '' });
+  cropRatios.set(node, ratio);
   if (!rect) return;
   setWidget(node, crop, formatCrop(rect, img));
   await showPreview(node);
@@ -273,12 +300,16 @@ async function openBrowser(node) {
     title: "ComfyUI's output directory",
     onclick: () => navigate(places.output),
   });
+  const saveButton = el('button', { textContent: '+ save', title: 'save the current directory', onclick: () => savePath() });
+  const savedList = el('div', { className: 'arisu-browser-saved-list' });
   const treeList = el('div', { className: 'arisu-browser-tree-list' });
   const treePane = el('div', { className: 'arisu-browser-tree' }, [
     el('div', { className: 'arisu-browser-places' }, [
       el('button', { textContent: 'input dir', title: "ComfyUI's input directory", onclick: () => navigate('') }),
       outputPlace,
     ]),
+    el('div', { className: 'arisu-browser-tree-head' }, [el('span', { textContent: 'Saved' }), saveButton]),
+    savedList,
     el('div', { className: 'arisu-browser-tree-head' }, [
       el('span', { textContent: 'Folders' }),
       el('button', { textContent: 'collapse', title: 'collapse every folder but the current one', onclick: () => collapseAll() }),
@@ -287,24 +318,17 @@ async function openBrowser(node) {
   ]);
   const grid = el('div', { className: 'arisu-browser-grid' });
   const panes = el('div', { className: 'arisu-browser-body' }, [treePane, grid]);
-  const dialog = el(
-    'dialog',
-    {
-      className: 'arisu-browser',
-      onclose: () => dialog.remove(),
-      onclick: (event) => (event.target === dialog ? dialog.close() : undefined),
-    },
-    [
-      el('style', { textContent: STYLE }),
-      el('div', { className: 'arisu-browser-bar' }, [
-        pathField,
-        upButton,
-        filterField,
-        el('button', { textContent: '✕', title: 'close', onclick: () => dialog.close() }),
-      ]),
-      panes,
-    ],
-  );
+  const dialog = el('dialog', { className: 'arisu-browser', onclose: () => dialog.remove() }, [
+    el('style', { textContent: STYLE }),
+    el('div', { className: 'arisu-browser-bar' }, [
+      pathField,
+      upButton,
+      filterField,
+      el('button', { textContent: '✕', title: 'close', onclick: () => dialog.close() }),
+    ]),
+    panes,
+  ]);
+  closeOnBackdropClick(dialog);
 
   function matches(name) {
     return name.toLowerCase().includes(filterField.value.trim().toLowerCase());
@@ -374,6 +398,50 @@ async function openBrowser(node) {
     return rows;
   }
 
+  /** One saved directory: a row that opens it, outlined when it is the current one, and a button that forgets it. */
+  function savedRow(path) {
+    const name =
+      path
+        .replace(/[\\/]+$/, '')
+        .split(/[\\/]/)
+        .pop() || path;
+    const row = el(
+      'button',
+      {
+        className: 'arisu-browser-tree-row',
+        title: path,
+        ariaCurrent: path === listing.path ? 'true' : null,
+        onclick: () => navigate(path),
+      },
+      [el('span', { textContent: ICONS.saved }), el('span', { textContent: name })],
+    );
+    const remove = el('button', {
+      className: 'arisu-browser-saved-remove',
+      textContent: '✕',
+      title: 'remove',
+      onclick: () => forgetPath(path),
+    });
+    return el('div', { className: 'arisu-browser-saved' }, [row, remove]);
+  }
+
+  function renderSaved() {
+    const saved = savedPaths();
+    saveButton.disabled = !listing.path || saved.includes(listing.path);
+    savedList.replaceChildren(...saved.map(savedRow));
+  }
+
+  async function savePath() {
+    const saved = savedPaths();
+    if (!listing.path || saved.includes(listing.path)) return;
+    await storeSavedPaths([...saved, listing.path]);
+    renderSaved();
+  }
+
+  async function forgetPath(path) {
+    await storeSavedPaths(savedPaths().filter((saved) => saved !== path));
+    renderSaved();
+  }
+
   function renderTree() {
     outputPlace.disabled = !places.output;
     const rows = [];
@@ -424,6 +492,7 @@ async function openBrowser(node) {
   function render() {
     upButton.disabled = listing.parent == null;
     renderGrid(true);
+    renderSaved();
     renderTree();
   }
 
@@ -467,6 +536,8 @@ async function openBrowser(node) {
 
   document.body.append(dialog);
   dialog.showModal();
+  // the saved directories are there before, and whether or not, the first listing arrives
+  renderSaved();
   // open where the current file lives (the route lists a file's directory); fall back to the input directory
   const start = pathWidget(node)?.value?.trim() ?? '';
   await navigate(start);
@@ -475,6 +546,8 @@ async function openBrowser(node) {
 
 app.registerExtension({
   name: 'Arisu.Common.LoadImage',
+  // hidden: edited from the browse dialog, persisted per ComfyUI user by the frontend's settings store
+  settings: [{ id: SAVED_PATHS_SETTING, name: 'Load Image (Browse): saved browse paths', type: 'hidden', defaultValue: [] }],
   beforeRegisterNodeDef(nodeType, nodeData) {
     if (nodeData.name !== NODE_TYPE) return;
 

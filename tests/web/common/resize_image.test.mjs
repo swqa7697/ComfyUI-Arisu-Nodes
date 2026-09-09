@@ -9,7 +9,11 @@ import { body, descendants, resetDom } from '../support/dom.mjs';
 import { makeGraph, makeNode } from '../support/litegraph.mjs';
 import '../../../web/js/common/resize_image.js';
 
-/** The node definition as the frontend hands it to beforeRegisterNodeDef: `[type or choices, options]` per input. */
+/**
+ * The node definition as the frontend hands it to beforeRegisterNodeDef: `[type, options]` per input, a V3 combo
+ * being `["COMBO", { options }]` (the shape object_info serves for io.Combo.Input); `mode` is in the V1 shape,
+ * `[[choices], options]`, which older backends serve.
+ */
 const NODE_DATA = {
   name: 'ArisuResizeImage',
   input: {
@@ -17,16 +21,16 @@ const NODE_DATA = {
       image: ['IMAGE', {}],
       width: ['INT', { default: 512, min: 0, max: 16384 }],
       height: ['INT', { default: 512, min: 0, max: 16384 }],
-      upscale_method: [['nearest-exact', 'bilinear', 'area', 'bicubic', 'lanczos'], { default: 'lanczos' }],
-      keep_proportion: [['stretch', 'resize', 'pad', 'pad_edge', 'pad_edge_pixel', 'crop', 'pillarbox_blur', 'total_pixels'], {}],
+      resize_method: ['COMBO', { options: ['nearest-exact', 'bilinear', 'area', 'bicubic', 'lanczos'], default: 'lanczos' }],
+      mode: [['crop', 'pad', 'resize', 'stretch'], { default: 'stretch' }],
       pad_color: ['STRING', { default: '0, 0, 0' }],
-      crop_position: [['center', 'top', 'bottom', 'left', 'right'], { default: 'center' }],
+      crop_position: ['COMBO', { options: ['center', 'top', 'bottom', 'left', 'right'], default: 'center' }],
       divisible_by: ['INT', { default: 2, min: 0, max: 512, step: 1 }],
     },
     optional: { mask: ['MASK', {}] },
   },
 };
-const CONFIG = ['upscale_method', 'keep_proportion', 'pad_color', 'crop_position', 'divisible_by'];
+const CONFIG = ['resize_method', 'mode', 'pad_color', 'crop_position', 'divisible_by'];
 const SOCKETS = ['image', 'width', 'height', ...CONFIG, 'mask'];
 
 const ResizeImage = { prototype: {} };
@@ -87,7 +91,7 @@ test('creation and a workflow load hide the five option widgets on both renderer
   assert.equal(settings.name, 'settings…');
   assert.equal(settings.serialize, false);
   // a loaded workflow restores every saved socket and knows nothing of hidden: configure hides again, twice is the same
-  const loaded = makeResizeNode({ keep_proportion: 'pad' });
+  const loaded = makeResizeNode({ mode: 'pad' });
   ResizeImage.prototype.onNodeCreated.call(loaded);
   loaded.inputs = sockets();
   ResizeImage.prototype.onConfigure.call(loaded, {});
@@ -97,7 +101,7 @@ test('creation and a workflow load hide the five option widgets on both renderer
     loaded.inputs.map((input) => input.name),
     ['image', 'width', 'height', 'mask'],
   );
-  assert.equal(widget(loaded, 'keep_proportion').value, 'pad');
+  assert.equal(widget(loaded, 'mode').value, 'pad');
 });
 
 test('the settings button opens a dialog seeded from the widgets; apply writes the changed ones, reset restores the defaults, cancel and Escape write nothing', async () => {
@@ -106,14 +110,19 @@ test('the settings button opens a dialog seeded from the widgets; apply writes t
   ResizeImage.prototype.onNodeCreated.call(node);
   const written = [];
   for (const name of CONFIG) widget(node, name).callback = (value) => written.push([name, value]);
-  // the controls come from the definition: the combo's choices, the number's bounds, the colour's picker
+  // the controls come from the definition: a combo's choices in either shape, the number's bounds, the colour's picker
   let applied = widget(node, 'settings…').callback();
   let dialog = openDialog();
   assert.equal(dialog.open, true);
-  const mode = control(dialog, 'keep_proportion');
+  const mode = control(dialog, 'mode');
   assert.equal(mode.tagName, 'SELECT');
   assert.equal(mode.value, 'stretch');
-  assert.equal(mode.children.length, 8);
+  assert.equal(mode.children.length, 4);
+  for (const name of ['resize_method', 'crop_position']) {
+    assert.equal(control(dialog, name).tagName, 'SELECT', `case=${name}`);
+    assert.equal(control(dialog, name).children.length, 5, `case=${name}`);
+  }
+  assert.equal(control(dialog, 'resize_method').value, 'lanczos');
   const grid = control(dialog, 'divisible_by');
   assert.deepEqual([grid.type, grid.value, grid.min, grid.max], ['number', '2', '0', '512']);
   const color = control(dialog, 'pad_color');
@@ -137,36 +146,41 @@ test('the settings button opens a dialog seeded from the widgets; apply writes t
   assert.equal(dialog.open, false);
   assert.equal(openDialog(), undefined);
   assert.deepEqual(written, [
-    ['keep_proportion', 'pad'],
+    ['mode', 'pad'],
     ['pad_color', '0, 255, 0'],
     ['divisible_by', 512],
   ]);
-  assert.deepEqual([widget(node, 'upscale_method').value, widget(node, 'crop_position').value], ['lanczos', 'center']);
+  assert.deepEqual([widget(node, 'resize_method').value, widget(node, 'crop_position').value], ['lanczos', 'center']);
   // reopening starts from the widgets; reset is the declared defaults, applied like any edit
   applied = widget(node, 'settings…').callback();
   dialog = openDialog();
-  assert.deepEqual([control(dialog, 'keep_proportion').value, control(dialog, 'divisible_by').value], ['pad', '512']);
+  assert.deepEqual([control(dialog, 'mode').value, control(dialog, 'divisible_by').value], ['pad', '512']);
   button(dialog, 'reset').onclick();
-  assert.deepEqual([control(dialog, 'keep_proportion').value, control(dialog, 'divisible_by').value], ['stretch', '2']);
+  assert.deepEqual([control(dialog, 'mode').value, control(dialog, 'divisible_by').value], ['stretch', '2']);
   button(dialog, 'apply').onclick();
   await applied;
   assert.deepEqual(written.slice(3), [
-    ['keep_proportion', 'stretch'],
+    ['mode', 'stretch'],
     ['pad_color', '0, 0, 0'],
     ['divisible_by', 2],
   ]);
-  // cancel, and the dialog closing on its own (Escape, a backdrop click), write nothing
+  // cancel, and the dialog closing on its own (Escape, a backdrop click), write nothing; a press in a field that
+  // ends on the backdrop is not a backdrop click
   applied = widget(node, 'settings…').callback();
   dialog = openDialog();
-  control(dialog, 'keep_proportion').value = 'crop';
+  control(dialog, 'mode').value = 'crop';
   button(dialog, 'cancel').onclick();
   await applied;
   applied = widget(node, 'settings…').callback();
   dialog = openDialog();
   control(dialog, 'divisible_by').value = '64';
-  dialog.close();
+  dialog.onpointerdown({ target: control(dialog, 'divisible_by') });
+  dialog.onclick({ target: dialog });
+  assert.equal(dialog.open, true);
+  dialog.onpointerdown({ target: dialog });
+  dialog.onclick({ target: dialog });
   await applied;
-  assert.deepEqual([widget(node, 'keep_proportion').value, widget(node, 'divisible_by').value], ['stretch', 2]);
+  assert.deepEqual([widget(node, 'mode').value, widget(node, 'divisible_by').value], ['stretch', 2]);
   assert.equal(written.length, 6);
   assert.equal(openDialog(), undefined);
 });
