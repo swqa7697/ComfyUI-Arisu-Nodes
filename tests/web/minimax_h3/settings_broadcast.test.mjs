@@ -1,23 +1,23 @@
 // MiniMax H3 Video Settings advertising: the one-advertiser rule, the hybrid
 // widgets it hands over, and the links injected into the queued prompt.
-import assert from "node:assert/strict";
-import { test } from "node:test";
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
 
-import { api, resetApi } from "../support/api.mjs";
-import { app, extensionNamed, resetApp, toastSeverities } from "../support/app.mjs";
-import { makeGraph, makeNode } from "../support/litegraph.mjs";
-import "../../../web/js/minimax_h3/settings_broadcast.js";
+import { api, resetApi } from '../support/api.mjs';
+import { app, extensionNamed, resetApp, toastSeverities } from '../support/app.mjs';
+import { makeGraph, makeNode } from '../support/litegraph.mjs';
+import '../../../web/js/minimax_h3/settings_broadcast.js';
 
-const SETTINGS = "ArisuMiniMaxH3VideoSettings";
-const SETTINGS_UPSCALE = "ArisuMiniMaxH3VideoSettingsUpscale";
-const HYBRID = "ArisuMiniMaxH3HybridToVideo";
-const HYBRID_ADVANCED = "ArisuMiniMaxH3HybridToVideoAdvanced";
+const SETTINGS = 'ArisuMiniMaxH3VideoSettings';
+const SETTINGS_UPSCALE = 'ArisuMiniMaxH3VideoSettingsUpscale';
+const HYBRID = 'ArisuMiniMaxH3HybridToVideo';
+const HYBRID_ADVANCED = 'ArisuMiniMaxH3HybridToVideoAdvanced';
 // the widgets and outputs the backend declares: the plain nodes carry the size keys, the
 // Upscale settings node and the Advanced hybrid add the target size
-const SIZE_KEYS = ["width", "height", "length"];
-const TARGET_KEYS = ["target_width", "target_height"];
+const SIZE_KEYS = ['width', 'height', 'length'];
+const TARGET_KEYS = ['target_width', 'target_height'];
 
-const extension = extensionNamed("Arisu.MiniMaxH3.SettingsBroadcast");
+const extension = extensionNamed('Arisu.MiniMaxH3.SettingsBroadcast');
 const prototypes = {};
 for (const name of [SETTINGS, SETTINGS_UPSCALE, HYBRID, HYBRID_ADVANCED]) {
   const nodeType = { prototype: {} };
@@ -32,7 +32,7 @@ function keysOf(type) {
 
 /** A settings node LiteGraph just added to `graph`, its switch already at `advertise` (a duplicate restores widgets first). */
 function addSettings(graph, id, type = SETTINGS, advertise = false) {
-  const node = makeNode({ id, type, graph, widgets: [{ name: "advertise", value: advertise }], outputs: keysOf(type) });
+  const node = makeNode({ id, type, graph, widgets: [{ name: 'advertise', value: advertise }], outputs: keysOf(type) });
   prototypes[type].onAdded.call(node);
   return node;
 }
@@ -52,7 +52,7 @@ function addHybrid(graph, id, type = HYBRID, links = []) {
 }
 
 function advertiseWidget(node) {
-  return node.widgets.find((widget) => widget.name === "advertise");
+  return node.widgets.find((widget) => widget.name === 'advertise');
 }
 
 /** The user flips the switch: the widget takes the value, then its callback runs. */
@@ -74,7 +74,7 @@ function inputIndex(node, name) {
   return node.inputs.findIndex((input) => input.name === name);
 }
 
-test("one settings node advertises at a time: a later switch wins, a pasted one is switched off, a load keeps the first", () => {
+test('one settings node advertises at a time: a later switch wins, a pasted one is switched off, a load keeps the first', () => {
   const graph = makeGraph();
   resetApp(graph);
   const first = addSettings(graph, 1);
@@ -87,7 +87,7 @@ test("one settings node advertises at a time: a later switch wins, a pasted one 
   flip(second, true);
   assert.equal(advertiseWidget(first).value, false);
   assert.equal(advertiseWidget(second).value, true);
-  assert.deepEqual(toastSeverities(), ["warn"]);
+  assert.deepEqual(toastSeverities(), ['warn']);
   assert.deepEqual(disabledWidgets(hybrid), SIZE_KEYS);
   // switching it off releases the widgets
   flip(second, false);
@@ -95,7 +95,7 @@ test("one settings node advertises at a time: a later switch wins, a pasted one 
   // a duplicate arrives with its switch already on: switched off on arrival
   const duplicate = addSettings(graph, 4, SETTINGS, true);
   assert.equal(advertiseWidget(duplicate).value, false);
-  assert.deepEqual(toastSeverities(), ["warn", "info"]);
+  assert.deepEqual(toastSeverities(), ['warn', 'info']);
   // a paste restores the switch after the node was added: onConfigure catches it
   const pasted = addSettings(graph, 5);
   advertiseWidget(pasted).value = true;
@@ -116,20 +116,20 @@ test("one settings node advertises at a time: a later switch wins, a pasted one 
   assert.deepEqual(disabledWidgets(advanced), [...SIZE_KEYS, ...TARGET_KEYS]);
 });
 
-test("the handed-over widgets are the keys both nodes carry: greyed, unlinked, and released when the advertiser leaves", async () => {
+test('the handed-over widgets are the keys both nodes carry: greyed, unlinked, and released when the advertiser leaves', async () => {
   const graph = makeGraph();
   resetApp(graph);
   const settings = addSettings(graph, 1);
   flip(settings, true);
   // an Advanced hybrid arrives wired on width and target_width: the plain settings node hands over the size keys only
-  const hybrid = addHybrid(graph, 2, HYBRID_ADVANCED, ["width", "target_width"]);
+  const hybrid = addHybrid(graph, 2, HYBRID_ADVANCED, ['width', 'target_width']);
   assert.deepEqual(disabledWidgets(hybrid), SIZE_KEYS);
-  assert.deepEqual(linkedInputs(hybrid), ["target_width"]);
-  assert.deepEqual(toastSeverities(), ["info"]);
+  assert.deepEqual(linkedInputs(hybrid), ['target_width']);
+  assert.deepEqual(toastSeverities(), ['info']);
   // a hybrid inside a subgraph is left alone
-  const inner = addHybrid(makeGraph("sub"), 3, HYBRID, ["width"]);
+  const inner = addHybrid(makeGraph('sub'), 3, HYBRID, ['width']);
   assert.deepEqual(disabledWidgets(inner), []);
-  assert.deepEqual(linkedInputs(inner), ["width"]);
+  assert.deepEqual(linkedInputs(inner), ['width']);
   // a muted advertiser keeps the slot but hands nothing over; the widgets update on the next refresh
   settings.mode = 2;
   flip(settings, true);
@@ -153,12 +153,12 @@ test("a link into a handed-over widget is refused, and chained hooks keep either
   const hybrid = addHybrid(graph, 2, HYBRID_ADVANCED);
   const onConnectInput = prototypes[HYBRID_ADVANCED].onConnectInput;
   // width comes from the advertiser: refused with a warning; target_width is free
-  assert.equal(onConnectInput.call(hybrid, inputIndex(hybrid, "width")), false);
-  assert.deepEqual(toastSeverities(), ["warn"]);
-  assert.notEqual(onConnectInput.call(hybrid, inputIndex(hybrid, "target_width")), false);
+  assert.equal(onConnectInput.call(hybrid, inputIndex(hybrid, 'width')), false);
+  assert.deepEqual(toastSeverities(), ['warn']);
+  assert.notEqual(onConnectInput.call(hybrid, inputIndex(hybrid, 'target_width')), false);
   // with advertising off nothing is refused
   flip(settings, false);
-  assert.notEqual(onConnectInput.call(hybrid, inputIndex(hybrid, "width")), false);
+  assert.notEqual(onConnectInput.call(hybrid, inputIndex(hybrid, 'width')), false);
   // a hook installed before ours keeps its own veto (ours never runs: no warning), and its
   // result stands when neither side refuses
   const vetoing = { prototype: { onConnectInput: () => false } };
@@ -167,12 +167,12 @@ test("a link into a handed-over widget is refused, and chained hooks keep either
   extension.beforeRegisterNodeDef(allowing, { name: HYBRID });
   const plain = addHybrid(graph, 3, HYBRID);
   flip(settings, true);
-  assert.equal(vetoing.prototype.onConnectInput.call(plain, inputIndex(plain, "width")), false);
-  assert.deepEqual(toastSeverities(), ["warn"]);
-  assert.equal(allowing.prototype.onConnectInput.call(plain, inputIndex(plain, "width")), false);
-  assert.deepEqual(toastSeverities(), ["warn", "warn"]);
+  assert.equal(vetoing.prototype.onConnectInput.call(plain, inputIndex(plain, 'width')), false);
+  assert.deepEqual(toastSeverities(), ['warn']);
+  assert.equal(allowing.prototype.onConnectInput.call(plain, inputIndex(plain, 'width')), false);
+  assert.deepEqual(toastSeverities(), ['warn', 'warn']);
   flip(settings, false);
-  assert.equal(allowing.prototype.onConnectInput.call(plain, inputIndex(plain, "width")), true);
+  assert.equal(allowing.prototype.onConnectInput.call(plain, inputIndex(plain, 'width')), true);
 });
 
 test("queueing a prompt points the handed-over widgets at the advertiser's outputs, or warns when it is not in the run", async () => {
@@ -186,28 +186,28 @@ test("queueing a prompt points the handed-over widgets at the advertiser's outpu
   const muted = addHybrid(graph, 4);
   muted.mode = 2;
   addHybrid(graph, 5);
-  const entry = (inputs) => ({ class_type: "hybrid", inputs });
+  const entry = (inputs) => ({ class_type: 'hybrid', inputs });
   // the advertiser is in the run: every active hybrid in the prompt gets one link per handed-over key,
   // to the advertiser's output of that name; the muted one and the one outside the prompt are untouched
   const output = {
     [settings.id]: entry({}),
-    [hybrid.id]: entry({ width: 1, height: 1, length: 1, clip: ["9", 0] }),
+    [hybrid.id]: entry({ width: 1, height: 1, length: 1, clip: ['9', 0] }),
     [advanced.id]: entry({ width: 1, target_width: 1 }),
     [muted.id]: entry({ width: 1 }),
   };
   const result = await api.queuePrompt(0, { output, workflow: {} });
-  assert.deepEqual(output[hybrid.id].inputs, { width: ["1", 0], height: ["1", 1], length: ["1", 2], clip: ["9", 0] });
+  assert.deepEqual(output[hybrid.id].inputs, { width: ['1', 0], height: ['1', 1], length: ['1', 2], clip: ['9', 0] });
   assert.deepEqual(output[advanced.id].inputs, {
-    width: ["1", 0],
-    height: ["1", 1],
-    length: ["1", 2],
-    target_width: ["1", 3],
-    target_height: ["1", 4],
+    width: ['1', 0],
+    height: ['1', 1],
+    length: ['1', 2],
+    target_width: ['1', 3],
+    target_height: ['1', 4],
   });
   assert.deepEqual(output[muted.id].inputs, { width: 1 });
   assert.deepEqual(toastSeverities(), []);
   // the call still reaches the frontend's queuePrompt with the same prompt, and its answer comes back
-  assert.equal(result, "queued");
+  assert.equal(result, 'queued');
   assert.equal(api.queued.length, 1);
   assert.equal(api.queued[0].prompt.output, output);
   // the advertiser is not in the run (muted or bypassed): nothing is injected, one warning
@@ -215,7 +215,7 @@ test("queueing a prompt points the handed-over widgets at the advertiser's outpu
   await api.queuePrompt(0, { output: without });
   assert.deepEqual(without[hybrid.id].inputs, { width: 1 });
   assert.deepEqual(without[advanced.id].inputs, { width: 1 });
-  assert.deepEqual(toastSeverities(), ["warn"]);
+  assert.deepEqual(toastSeverities(), ['warn']);
   // a call without a prompt passes straight through
   await api.queuePrompt(0, undefined);
   assert.equal(api.queued.length, 3);

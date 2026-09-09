@@ -11,16 +11,16 @@
 // holds no value of its own; the route then gets the value the run recorded in
 // the node's outputs.
 
-import { api } from "../../../../scripts/api.js";
-import { app } from "../../../../scripts/app.js";
-import { addButton } from "./widgets.js";
+import { api } from '../../../../scripts/api.js';
+import { app } from '../../../../scripts/app.js';
+import { addButton } from './widgets.js';
 
-const NODE_TYPES = ["ArisuPreviewSaveImage", "ArisuPreviewSaveImageUpscale"];
-const ROUTE = "/arisu/save_image";
-const RECORDED_WIDGETS = ["path", "upscale_model"];
+const NODE_TYPES = ['ArisuPreviewSaveImage', 'ArisuPreviewSaveImageUpscale'];
+const ROUTE = '/arisu/save_image';
+const RECORDED_WIDGETS = ['path', 'upscale_model'];
 
 function toast(severity, detail) {
-  app.extensionManager?.toast?.add?.({ severity, summary: "Preview & Save Image", detail, life: 8000 });
+  app.extensionManager?.toast?.add?.({ severity, summary: 'Preview & Save Image', detail, life: 8000 });
 }
 
 /** The node's last outputs: keyed by id in the root graph, by "<subgraph id>:<id>" inside a subgraph. */
@@ -47,7 +47,7 @@ function savedName(file) {
 async function save(node, button) {
   const outputs = outputsOf(node);
   if (!outputs?.images?.length) {
-    toast("warn", "Nothing to save yet: run the workflow first, then click save.");
+    toast('warn', 'Nothing to save yet: run the workflow first, then click save.');
     return;
   }
   const body = { images: outputs.images };
@@ -59,15 +59,15 @@ async function save(node, button) {
   node.setDirtyCanvas(true, true);
   try {
     const response = await api.fetchApi(ROUTE, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
     const data = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(data.error ?? response.statusText);
-    toast("success", `Saved ${data.saved.length} image(s): output/${data.saved.map(savedName).join(", output/")}`);
+    toast('success', `Saved ${data.saved.length} image(s): output/${data.saved.map(savedName).join(', output/')}`);
   } catch (error) {
-    toast("error", `Save failed: ${error.message}`);
+    toast('error', `Save failed: ${error.message}`);
   } finally {
     button.disabled = false;
     node.setDirtyCanvas(true, true);
@@ -75,14 +75,14 @@ async function save(node, button) {
 }
 
 app.registerExtension({
-  name: "Arisu.Common.PreviewSaveImage",
+  name: 'Arisu.Common.PreviewSaveImage',
   beforeRegisterNodeDef(nodeType, nodeData) {
     if (!NODE_TYPES.includes(nodeData.name)) return;
 
     const onNodeCreated = nodeType.prototype.onNodeCreated;
     nodeType.prototype.onNodeCreated = function () {
       onNodeCreated?.apply(this, arguments);
-      const button = addButton(this, "save", () => save(this, button));
+      const button = addButton(this, 'save', () => save(this, button));
     };
   },
 });

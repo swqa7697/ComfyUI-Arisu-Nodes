@@ -6,7 +6,7 @@
 // on disk they point above the repo. Loaded with `node --import`, this hook
 // short-circuits exactly those two specifiers to the fakes beside it and lets
 // every other import (./widgets.js, node:test) resolve as usual.
-import { registerHooks } from "node:module";
+import { registerHooks } from 'node:module';
 
 const FRONTEND_CORE = /^(\.\.\/){4}scripts\/(app|api)\.js$/;
 

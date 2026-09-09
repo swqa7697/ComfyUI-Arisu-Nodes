@@ -10,13 +10,13 @@ export const api = {
     this.calls.push({ route, init });
     const next = this.responses.shift();
     if (next === undefined) throw new Error(`fetchApi(${route}): no response queued`);
-    const response = typeof next === "function" ? next(route, init) : next;
+    const response = typeof next === 'function' ? next(route, init) : next;
     if (response instanceof Error) throw response;
     return response;
   },
   async queuePrompt(index, prompt, ...rest) {
     this.queued.push({ index, prompt, rest });
-    return "queued";
+    return 'queued';
   },
 };
 

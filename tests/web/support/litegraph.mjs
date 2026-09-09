@@ -2,12 +2,12 @@
 // its nodes, and their widgets, inputs, and outputs. The colour constants are what
 // widgets.js reads off the global when it draws a button row.
 globalThis.LiteGraph = {
-  WIDGET_BGCOLOR: "#222",
-  WIDGET_OUTLINE_COLOR: "#666",
-  WIDGET_TEXT_COLOR: "#ddd",
+  WIDGET_BGCOLOR: '#222',
+  WIDGET_OUTLINE_COLOR: '#666',
+  WIDGET_TEXT_COLOR: '#ddd',
 };
 
-export function makeGraph(id = "root") {
+export function makeGraph(id = 'root') {
   return { id, nodes: [] };
 }
 
@@ -27,7 +27,7 @@ export function makeNode({ id, type, graph = null, widgets = [], inputs = [], ou
     size: [300, 100],
     properties: {},
     widgets: widgets.map((widget) => ({ ...widget })),
-    inputs: inputs.map((input) => ({ type: "STRING", link: null, widget: { name: input.name }, ...input })),
+    inputs: inputs.map((input) => ({ type: 'STRING', link: null, widget: { name: input.name }, ...input })),
     outputs: outputs.map((name) => ({ name })),
     addWidget(widgetType, name, value, callback, options) {
       const widget = { type: widgetType, name, value, callback, options: options ?? {} };

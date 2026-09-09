@@ -3,7 +3,7 @@
   "files": { "includes": ["web/js/**", "tests/web/**"] },
   "formatter": { "indentStyle": "space", "indentWidth": 2, "lineWidth": 140 },
   "javascript": {
-    "formatter": { "quoteStyle": "double", "semicolons": "always" }
+    "formatter": { "quoteStyle": "single", "semicolons": "always" }
   },
   "linter": {
     "rules": {
