@@ -114,8 +114,9 @@ files get a counter suffix, so a second click never overwrites the first.
 
 Load one image from any path on the machine running ComfyUI. **Load Image** lists only the top level
 of `input/`, and the one way to use another file is an upload that copies it there. This node holds a
-path instead, and its **browse** button opens a directory browser with thumbnails and a name filter:
-start in `input/`, walk anywhere the ComfyUI process can read, click an image, and the node shows it.
+path instead, and its **browse** button opens a directory browser with a tree of your home directory
+and mounted disks, thumbnails, and an image-name filter: start in `input/`, walk anywhere the ComfyUI
+process can read, click an image, and the node shows it at its real size.
 The file is read in place at run time; nothing is uploaded or copied. Same file types and `image`
 output as **Load Image**; there is no `mask` output.
 

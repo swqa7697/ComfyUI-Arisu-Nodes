@@ -11,8 +11,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import string
 from io import BytesIO
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import comfy.model_management
 import comfy.utils
@@ -30,12 +31,15 @@ from .core import (
     NO_UPSCALE,
     SAVE_IMAGE_ROUTE,
     VIEW_ROUTE,
+    DirectoryListing,
     SaveRequest,
+    TreeRoot,
     browse_directory,
     parse_browse_request,
     parse_save_request,
     parse_view_request,
     preview_file_path,
+    tree_roots,
 )
 
 logger = logging.getLogger(__name__)
@@ -53,6 +57,9 @@ _OVERLAP = 32
 # The browse dialog's thumbnails and the node preview: WEBP, the format /view's own previews use.
 _THUMBNAIL_FORMAT = "WEBP"
 _THUMBNAIL_QUALITY = 80
+# Where the mounted disks come from, per platform: Linux's mount table, macOS's volumes directory.
+_LINUX_MOUNTS = "/proc/self/mounts"
+_MACOS_VOLUMES = "/Volumes"
 
 
 def register_routes(routes: web.RouteTableDef) -> None:
@@ -88,20 +95,75 @@ async def _save_image(request: web.Request) -> web.Response:
 async def _browse(request: web.Request) -> web.Response:
     """List a directory for the browse dialog; see ``core.browse_directory``.
 
-    Without ``path`` the listing is ComfyUI's input directory. Directory
-    listing is blocking I/O, so it runs on a worker thread.
+    Without ``path`` the listing is ComfyUI's input directory. The response
+    also carries the tree roots, the input and output places, and the
+    ancestor chain (unless ``tree=0``). Directory listing is blocking I/O, so
+    it runs on a worker thread.
     """
-    path = parse_browse_request(request.query, folder_paths.get_input_directory())
+    req = parse_browse_request(request.query, folder_paths.get_input_directory())
     try:
-        listing = await asyncio.to_thread(browse_directory, path)
+        roots, listing = await asyncio.to_thread(_browse_tree, req.path, req.with_tree)
     except (FileNotFoundError, NotADirectoryError):
-        return web.json_response({"error": f"no such directory: {path}"}, status=404)
+        return web.json_response({"error": f"no such directory: {req.path}"}, status=404)
     except PermissionError:
-        return web.json_response({"error": f"permission denied: {path}"}, status=403)
+        return web.json_response({"error": f"permission denied: {req.path}"}, status=403)
     except Exception as error:
         logger.exception("Arisu browse failed")
         return web.json_response({"error": str(error)}, status=500)
-    return web.json_response({"path": listing.path, "parent": listing.parent, "dirs": list(listing.dirs), "files": list(listing.files)})
+    return web.json_response(
+        {
+            "path": listing.path,
+            "parent": listing.parent,
+            "dirs": list(listing.dirs),
+            "files": list(listing.files),
+            "ancestors": [{"path": level.path, "dirs": list(level.dirs)} for level in listing.ancestors],
+            "roots": [{"label": root.label, "path": root.path} for root in roots],
+            "places": {"input": folder_paths.get_input_directory(), "output": folder_paths.get_output_directory()},
+        }
+    )
+
+
+def _browse_tree(path: str, with_tree: bool) -> Tuple[Tuple[TreeRoot, ...], DirectoryListing]:
+    """The tree roots and the listing of ``path``, both from blocking I/O."""
+    home = os.path.expanduser("~")
+    roots = tree_roots(home, _mounts_text(), _volumes(), _drives())
+    return roots, browse_directory(path, [root.path for root in roots], home, with_tree)
+
+
+def _mounts_text() -> Optional[str]:
+    """The mount table on Linux, ``None`` where there is none."""
+    try:
+        with open(_LINUX_MOUNTS, encoding="utf-8", errors="replace") as mounts:
+            return mounts.read()
+    except OSError:
+        return None
+
+
+def _volumes() -> List[str]:
+    """The mounted volumes on macOS other than the boot volume, which is ``/`` itself."""
+    try:
+        names = os.listdir(_MACOS_VOLUMES)
+    except OSError:
+        return []
+    volumes: List[str] = []
+    for name in names:
+        volume = os.path.join(_MACOS_VOLUMES, name)
+        try:
+            if not name.startswith(".") and not os.path.samefile(volume, "/"):
+                volumes.append(volume)
+        except OSError:
+            continue
+    return volumes
+
+
+def _drives() -> List[str]:
+    """The drive roots on Windows, none elsewhere."""
+    if os.name != "nt":
+        return []
+    listdrives = getattr(os, "listdrives", None)  # Python 3.12+
+    if listdrives is not None:
+        return list(listdrives())
+    return [f"{letter}:\\" for letter in string.ascii_uppercase if os.path.exists(f"{letter}:\\")]
 
 
 async def _view(request: web.Request) -> web.StreamResponse:

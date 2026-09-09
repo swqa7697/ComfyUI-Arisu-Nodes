@@ -6,6 +6,7 @@ Run via ``scripts/test-comfyui.sh``.
 from __future__ import annotations
 
 import asyncio
+import os
 from io import BytesIO
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
@@ -124,13 +125,23 @@ def test_browse_and_view_routes_list_and_serve_host_images(tmp_path: Path, monke
     (tmp_path / "input" / ".hidden.png").write_bytes(b"")
     (tmp_path / "input" / "notes.txt").write_text("x")
 
-    # no path: the input directory, with its subdirectories and image files only
+    monkeypatch.setattr(folder_paths, "output_directory", str(tmp_path / "output"))
+    # no path: the input directory, with its subdirectories and image files only, the tree roots (home first),
+    # the input and output places, and the ancestor chain down to the input directory's parent
     status, body, _ = get(routes.BROWSE_ROUTE)
     assert status == 200, body
-    assert body == {"path": str(tmp_path / "input"), "parent": str(tmp_path), "dirs": ["pics"], "files": []}
-    # a file path lists the directory holding it; a missing directory is a 404
-    status, body, _ = get(routes.BROWSE_ROUTE, path=str(pics / "wide.png"))
-    assert status == 200 and body["path"] == str(pics) and body["files"] == ["wide.png"]
+    assert {key: body[key] for key in ("path", "parent", "dirs", "files")} == {
+        "path": str(tmp_path / "input"),
+        "parent": str(tmp_path),
+        "dirs": ["pics"],
+        "files": [],
+    }
+    assert body["roots"][0] == {"label": "Home", "path": os.path.expanduser("~")}
+    assert body["places"] == {"input": str(tmp_path / "input"), "output": str(tmp_path / "output")}
+    assert body["ancestors"][-1]["path"] == str(tmp_path) and "input" in body["ancestors"][-1]["dirs"]
+    # a file path lists the directory holding it, and tree=0 skips the chain; a missing directory is a 404
+    status, body, _ = get(routes.BROWSE_ROUTE, path=str(pics / "wide.png"), tree="0")
+    assert status == 200 and body["path"] == str(pics) and body["files"] == ["wide.png"] and body["ancestors"] == []
     status, body, _ = get(routes.BROWSE_ROUTE, path=str(tmp_path / "nope"))
     assert status == 404 and "error" in body
 

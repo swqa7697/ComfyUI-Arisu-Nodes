@@ -17,9 +17,13 @@ browser with thumbnails, remembers the picked path, and shows the image on the n
 | `path`    | STRING | The image file. Three forms: an absolute path (`/data/refs/a.png`), a `~` path (`~/Pictures/a.png`), or a path relative to ComfyUI's input directory (`sub/a.png`). The browse button fills it in; typing works too. |
 | `browse`  | button | Open the directory browser. It starts where `path` points, or in the input directory.                                                                                                                                       |
 
-The browser has a path field (type a directory and press Enter), an **up** button, an **input dir**
-button, and a filter box that narrows folders and files by any part of their name. Click a folder
-to enter it and an image to pick it.
+The browser's left pane is a directory tree like a system file explorer's: its roots are your home
+directory and the mounted disks (USB drives, network shares), with **input dir** and **output dir**
+shortcuts above it. The tree opens expanded down to the current directory; click a folder to enter it,
+its chevron to expand it in place, and **collapse** to fold everything but the path you are in. The
+filesystem root and other users' homes are not listed, but a path typed into the path field (press
+Enter) opens anywhere and the tree grows a branch for it. The filter box narrows the images of the
+current directory by any part of their name; folders are never filtered. Click an image to pick it.
 
 ## Outputs
 
@@ -44,10 +48,14 @@ Load Image (Browse) ─▶ (first_frame) MiniMax H3 Hybrid to Video
 - A missing file or a non-image type is reported when the prompt is validated, before anything runs.
   When `path` is fed by a link, the linked value is used and the browse button only previews.
 - The browser and the preview are served by two routes the pack registers on ComfyUI's server,
-  `/arisu/browse` (folder and image names of a directory) and `/arisu/view` (an image file or a
-  thumbnail of it). They can reach any directory the ComfyUI process can read, which is the same
-  trust ComfyUI already extends to whoever can reach its server; hidden entries are skipped and
-  only image-typed files are served.
+  `/arisu/browse` (folder and image names of a directory, with the tree roots and the chain to it)
+  and `/arisu/view` (an image file or a thumbnail of it). They can reach any directory the ComfyUI
+  process can read, which is the same trust ComfyUI already extends to whoever can reach its server;
+  hidden entries are skipped and only image-typed files are served. Mounted disks come from the
+  mount table (Linux), `/Volumes` (macOS) or the drive letters (Windows); nothing touches a mount
+  until you open it.
+- The size shown under the node's preview is the file's own: the preview loads the file itself and
+  falls back to a thumbnail only for a format the browser cannot decode, such as TIFF.
 - The browse button and the on-node preview are added by the pack's frontend script in the classic
   node canvas. In the Vue node renderer ("Nodes 2.0") the button and the browser work but the node
   shows no preview. If the button is missing, check the browser console for a failed load of

@@ -1,8 +1,9 @@
 // Fake of the browser DOM surface load_image.js touches: `document.createElement`,
 // `document.body`, and `Image`. Elements are plain objects with a children list, so
 // whatever a script assigns on one (className, textContent, handlers) is what a test
-// reads back. `Image` fires `onerror` for a URL containing "broken" and `onload`
-// otherwise, on a microtask, the way a real load completes after `src` is set.
+// reads back. `Image` fires `onerror` for a URL containing "broken", and for a
+// ".tif" file served whole (no `max=`: a format the browser cannot decode itself),
+// and `onload` otherwise, on a microtask, the way a real load completes after `src` is set.
 export class FakeElement {
   constructor(tagName) {
     this.tagName = tagName.toUpperCase();
@@ -42,7 +43,8 @@ class FakeImage extends FakeElement {
   }
   set src(url) {
     this.url = url;
-    queueMicrotask(() => (url.includes('broken') ? this.onerror : this.onload)?.());
+    const undecodable = url.includes('.tif') && !url.includes('max=');
+    queueMicrotask(() => (url.includes('broken') || undecodable ? this.onerror : this.onload)?.());
   }
   get src() {
     return this.url;

@@ -10,6 +10,7 @@ import mimetypes
 import os
 import os.path
 import posixpath
+import re
 import string
 from dataclasses import dataclass
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
@@ -33,6 +34,19 @@ VIEW_ROUTE = "/arisu/view"
 IMAGE_CONTENT_TYPE = "image"
 MIN_THUMBNAIL = 16
 MAX_THUMBNAIL = 4096
+# The dialog's tree: the label of the home root, and what ``/proc/self/mounts``
+# entries are left out of the mounted-disk roots: kernel and desktop pseudo
+# filesystems (autofs placeholders too, since listing one triggers the mount),
+# and the mount prefixes nobody keeps images under, with the desktop's
+# removable-media directory carved back out. ``/home`` stays out because the
+# user's own home is already a root and other users are hidden.
+HOME_LABEL = "Home"
+PSEUDO_FILESYSTEMS = frozenset(
+    {"proc", "sysfs", "devtmpfs", "devpts", "tmpfs", "cgroup", "cgroup2", "squashfs", "overlay", "autofs", "nsfs", "fuse.portal"}
+)
+EXCLUDED_MOUNT_PREFIXES = ("/boot", "/dev", "/efi", "/home", "/proc", "/run", "/snap", "/sys", "/tmp", "/usr", "/var")
+USER_MEDIA_PREFIX = "/run/media"
+_MOUNT_ESCAPE = re.compile(r"\\([0-7]{3})")
 
 
 @dataclass(frozen=True)
@@ -54,13 +68,43 @@ class SaveRequest:
 
 
 @dataclass(frozen=True)
+class TreeRoot:
+    """One top-level entry of the browse dialog's tree: its label and the directory it opens."""
+
+    label: str
+    path: str
+
+
+@dataclass(frozen=True)
+class TreeLevel:
+    """One ancestor of a listed directory: its path and the subdirectory names the tree shows under it."""
+
+    path: str
+    dirs: Tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class DirectoryListing:
-    """One directory as the browse route reports it: its subdirectories and image files, by name."""
+    """One directory as the browse route reports it: its subdirectories and image files, by name.
+
+    ``ancestors`` is the chain from the tree root containing the directory (or
+    the filesystem root when none does) down to its parent, each with the
+    subdirectories the tree shows there; empty when the directory is a root.
+    """
 
     path: str
     parent: Optional[str]
     dirs: Tuple[str, ...]
     files: Tuple[str, ...]
+    ancestors: Tuple[TreeLevel, ...] = ()
+
+
+@dataclass(frozen=True)
+class BrowseRequest:
+    """A browse request: the directory to list and whether the tree's ancestor chain is wanted."""
+
+    path: str
+    with_tree: bool
 
 
 @dataclass(frozen=True)
@@ -249,16 +293,161 @@ def resolve_image_path(value: Any, input_dir: str) -> str:
     return os.path.abspath(path)
 
 
-def browse_directory(path: str) -> DirectoryListing:
+def is_filesystem_root(path: str) -> bool:
+    """Whether ``path`` is ``/`` or a drive root, the one directory that is its own parent."""
+    return os.path.dirname(path) == path
+
+
+def _under(path: str, prefix: str) -> bool:
+    """Whether ``path`` is ``prefix`` or inside it, by whole components (``/run`` never covers ``/runtime``)."""
+    return path == prefix or path.startswith(prefix.rstrip("/") + "/")
+
+
+def _unescape_mount(field: str) -> str:
+    """Decode the octal escapes ``/proc/self/mounts`` uses for space, tab, newline and backslash."""
+    return _MOUNT_ESCAPE.sub(lambda match: chr(int(match.group(1), 8)), field)
+
+
+def mount_points(mounts_text: str, home: str) -> Tuple[str, ...]:
+    """The mount points worth a tree root, from the content of ``/proc/self/mounts``.
+
+    Kept: every mount whose type is not a pseudo filesystem and whose point is
+    not the filesystem root, not ``home`` or one of its ancestors, and not under
+    ``EXCLUDED_MOUNT_PREFIXES`` (``USER_MEDIA_PREFIX`` excepted). Nothing here
+    touches the mount points themselves, so an unreachable share cannot block.
+
+    Args:
+        mounts_text: The file's content, one ``device point type options ...`` line per mount.
+        home: The current user's home directory.
+
+    Returns:
+        The kept mount points, deduplicated and sorted case-insensitively.
+    """
+    home = os.path.abspath(home)
+    kept = set()
+    for line in mounts_text.splitlines():
+        fields = line.split()
+        if len(fields) < 3 or fields[2] in PSEUDO_FILESYSTEMS:
+            continue
+        point = _unescape_mount(fields[1])
+        if is_filesystem_root(point) or _under(home, point):
+            continue
+        if any(_under(point, prefix) for prefix in EXCLUDED_MOUNT_PREFIXES) and not _under(point, USER_MEDIA_PREFIX):
+            continue
+        kept.add(point)
+    return tuple(sorted(kept, key=str.casefold))
+
+
+def tree_roots(home: str, mounts_text: Optional[str], volumes: Sequence[str], drives: Sequence[str]) -> Tuple[TreeRoot, ...]:
+    """Assemble the dialog's tree roots: the home directory first, then the mounted disks.
+
+    Args:
+        home: The current user's home directory.
+        mounts_text: The content of ``/proc/self/mounts`` on Linux, ``None`` elsewhere.
+        volumes: The mounted volumes on macOS (the entries of ``/Volumes`` other than the boot volume).
+        drives: The drive roots on Windows (``C:\\`` and so on).
+
+    Returns:
+        The roots; a mount or volume is labelled by its last path component, a drive by itself.
+    """
+    home = os.path.abspath(home)
+    roots = [TreeRoot(HOME_LABEL, home)]
+    disks = list(mount_points(mounts_text, home)) if mounts_text is not None else []
+    disks.extend(sorted(volumes, key=str.casefold))
+    roots.extend(TreeRoot(os.path.basename(disk) or disk, disk) for disk in disks)
+    roots.extend(TreeRoot(drive, drive) for drive in drives)
+    return tuple(roots)
+
+
+def is_restricted(path: str, roots: Sequence[str], home: str) -> bool:
+    """Whether the tree hides the subdirectories of ``path``.
+
+    Two directories are restricted: a filesystem root that is not itself a
+    tree root (``/``; Windows drives are roots), and the parent of the home
+    directory (``/home``, ``/Users``, ``C:\\Users``), which holds other users.
+
+    Args:
+        path: An absolute directory.
+        roots: The paths of the tree roots.
+        home: The current user's home directory.
+    """
+    return (is_filesystem_root(path) and path not in roots) or path == os.path.dirname(os.path.abspath(home))
+
+
+def containing_root(path: str, roots: Sequence[str]) -> Optional[str]:
+    """The deepest tree root holding ``path``, or ``None`` when no root does.
+
+    Args:
+        path: An absolute directory.
+        roots: The paths of the tree roots.
+    """
+    best: Optional[str] = None
+    for root in roots:
+        try:
+            inside = os.path.commonpath((root, path)) == os.path.normpath(root)
+        except ValueError:  # different drives on Windows
+            continue
+        if inside and (best is None or len(root) > len(best)):
+            best = root
+    return best
+
+
+def _scan(path: str) -> Tuple[List[str], List[str]]:
+    """The subdirectory and image file names of ``path``, unsorted; hidden (``.``) entries are skipped."""
+    dirs: List[str] = []
+    files: List[str] = []
+    with os.scandir(path) as entries:
+        for entry in entries:
+            if entry.name.startswith("."):
+                continue
+            if entry.is_dir():
+                dirs.append(entry.name)
+            elif entry.is_file() and is_image_file(entry.name):
+                files.append(entry.name)
+    return dirs, files
+
+
+def _tree_level(path: str, child: str, restricted: bool) -> TreeLevel:
+    """The level for ``path`` with ``child``, the next directory down the chain, always present."""
+    dirs: List[str] = []
+    if not restricted:
+        try:
+            dirs, _ = _scan(path)
+        except PermissionError:
+            dirs = []
+    if child not in dirs:
+        dirs.append(child)
+    return TreeLevel(path, tuple(sorted(dirs, key=str.casefold)))
+
+
+def _ancestors(path: str, roots: Sequence[str], home: str) -> Tuple[TreeLevel, ...]:
+    """The levels from the root containing ``path`` (or the filesystem root) down to its parent."""
+    top = containing_root(path, roots)
+    levels: List[TreeLevel] = []
+    current = path
+    while current != top and not is_filesystem_root(current):
+        parent = os.path.dirname(current)
+        levels.append(_tree_level(parent, os.path.basename(current), is_restricted(parent, roots, home)))
+        current = parent
+    return tuple(reversed(levels))
+
+
+def browse_directory(path: str, roots: Sequence[str], home: str, with_tree: bool = True) -> DirectoryListing:
     """List the subdirectories and image files of ``path`` for the browse dialog.
 
     A file path lists the directory holding it, so the dialog opens where the
     widget's current value lives. Hidden entries (names starting with ``.``)
-    are skipped, and only files passing ``is_image_file`` are reported; both
-    lists are sorted case-insensitively.
+    are skipped, only files passing ``is_image_file`` are reported, and both
+    lists are sorted case-insensitively. A restricted directory (see
+    ``is_restricted``) reports no subdirectories. With ``with_tree`` the
+    ancestor chain is scanned too; every level keeps the directory on the
+    chain even when it is hidden, restricted, or unreadable.
 
     Args:
         path: A directory, or a file inside the directory to list.
+        roots: The paths of the tree roots.
+        home: The current user's home directory.
+        with_tree: Whether to scan the ancestor chain; a request from the tree itself already has it.
 
     Returns:
         The listing; ``parent`` is ``None`` at a filesystem root.
@@ -271,37 +460,34 @@ def browse_directory(path: str) -> DirectoryListing:
     path = os.path.abspath(path)
     if os.path.isfile(path):
         path = os.path.dirname(path)
-    dirs: List[str] = []
-    files: List[str] = []
-    with os.scandir(path) as entries:
-        for entry in entries:
-            if entry.name.startswith("."):
-                continue
-            if entry.is_dir():
-                dirs.append(entry.name)
-            elif entry.is_file() and is_image_file(entry.name):
-                files.append(entry.name)
+    dirs, files = _scan(path)
+    if is_restricted(path, roots, home):
+        dirs = []
     parent = os.path.dirname(path)
     return DirectoryListing(
         path=path,
         parent=None if parent == path else parent,
         dirs=tuple(sorted(dirs, key=str.casefold)),
         files=tuple(sorted(files, key=str.casefold)),
+        ancestors=_ancestors(path, roots, home) if with_tree else (),
     )
 
 
-def parse_browse_request(query: Mapping[str, str], input_dir: str) -> str:
+def parse_browse_request(query: Mapping[str, str], input_dir: str) -> BrowseRequest:
     """The directory a browse request asks for; the input directory when ``path`` is missing or blank.
 
     Args:
-        query: The request's query parameters.
+        query: The request's query parameters, ``path`` and optionally ``tree`` (``0`` skips the ancestor chain).
         input_dir: ComfyUI's input directory, the dialog's starting point.
 
     Returns:
-        The absolute path to list, ``~`` expanded.
+        The request, its path absolute and ``~`` expanded.
     """
     path = query.get("path", "").strip()
-    return os.path.abspath(os.path.expanduser(path)) if path else os.path.abspath(input_dir)
+    return BrowseRequest(
+        path=os.path.abspath(os.path.expanduser(path)) if path else os.path.abspath(input_dir),
+        with_tree=query.get("tree") != "0",
+    )
 
 
 def parse_view_request(query: Mapping[str, str]) -> ViewRequest:

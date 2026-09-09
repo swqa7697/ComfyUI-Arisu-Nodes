@@ -8,17 +8,22 @@ import pytest
 
 from src.arisu_nodes.common.core import (
     NO_UPSCALE,
+    BrowseRequest,
     DirectoryListing,
     PreviewRef,
     SaveRequest,
+    TreeLevel,
+    TreeRoot,
     ViewRequest,
     browse_directory,
     join_path,
+    mount_points,
     parse_browse_request,
     parse_save_request,
     parse_view_request,
     preview_file_path,
     resolve_image_path,
+    tree_roots,
 )
 
 
@@ -100,10 +105,10 @@ def test_image_path_helpers_resolve_and_refuse(tmp_path: Path, monkeypatch: pyte
         with pytest.raises(ValueError):
             resolve_image_path(value, input_dir)
 
-    # a browse request defaults to the input directory; a view request wants an absolute image path
-    assert parse_browse_request({}, input_dir) == input_dir
-    assert parse_browse_request({"path": "  "}, input_dir) == input_dir
-    assert parse_browse_request({"path": "~/pics"}, input_dir) == str(tmp_path / "pics")
+    # a browse request defaults to the input directory and wants the tree chain unless tree=0; a view request wants an absolute image path
+    assert parse_browse_request({}, input_dir) == BrowseRequest(input_dir, True)
+    assert parse_browse_request({"path": "  ", "tree": "0"}, input_dir) == BrowseRequest(input_dir, False)
+    assert parse_browse_request({"path": "~/pics"}, input_dir).path == str(tmp_path / "pics")
     assert parse_view_request({"path": "/x/a.png"}) == ViewRequest("/x/a.png", None)
     clamped = [("8", 16), ("256", 256), ("99999", 4096)]
     for raw, expected in clamped:
@@ -121,16 +126,56 @@ def test_image_path_helpers_resolve_and_refuse(tmp_path: Path, monkeypatch: pyte
             continue
         pytest.fail(f"case={case!r} was accepted")
 
-    # a listing: subdirectories and image files only, hidden entries skipped, sorted case-insensitively
+    # a listing: subdirectories and image files only, hidden entries skipped, sorted case-insensitively; the home
+    # directory is the tree root here, so the chain to pics/ is the one level under it
+    home = str(tmp_path)
+    roots = (home,)
     root = tmp_path / "pics"
     for folder in ["Zoo", "art", ".hidden"]:
         (root / folder).mkdir(parents=True)
     for name in ["b.PNG", "a.jpg", ".secret.png", "notes.txt", "clip.mp4"]:
         (root / name).write_bytes(b"")
-    listing = browse_directory(str(root))
-    assert listing == DirectoryListing(str(root), str(tmp_path), ("art", "Zoo"), ("a.jpg", "b.PNG"))
-    # a file path lists the directory holding it, so the dialog opens where the current value lives
-    assert browse_directory(str(root / "a.jpg")) == listing
-    assert browse_directory("/").parent is None
+    listing = browse_directory(str(root), roots, home)
+    assert listing == DirectoryListing(str(root), home, ("art", "Zoo"), ("a.jpg", "b.PNG"), (TreeLevel(home, ("pics",)),))
+    # a file path lists the directory holding it, so the dialog opens where the current value lives; tree=0 skips the chain
+    assert browse_directory(str(root / "a.jpg"), roots, home) == listing
+    assert browse_directory(str(root), roots, home, with_tree=False).ancestors == ()
+    # every level keeps the directory on the chain, even a hidden one; a root itself has no chain
+    (root / ".hidden" / "deep").mkdir()
+    assert browse_directory(str(root / ".hidden" / "deep"), roots, home).ancestors == (
+        TreeLevel(home, ("pics",)),
+        TreeLevel(str(root), (".hidden", "art", "Zoo")),
+        TreeLevel(str(root / ".hidden"), ("deep",)),
+    )
+    assert browse_directory(home, roots, home).ancestors == ()
+    # restricted directories, the filesystem root and the parent of home, list no folders and show only the chain child
+    assert browse_directory(str(tmp_path.parent), roots, home).dirs == ()
+    outside = browse_directory(str(root), (str(tmp_path / "elsewhere"),), home)
+    assert outside.ancestors[0].path == "/" and outside.ancestors[0].dirs == (tmp_path.parts[1],)
+    assert outside.ancestors[-1] == TreeLevel(home, ("pics",))
+    assert browse_directory("/", roots, home).parent is None
     with pytest.raises(FileNotFoundError):
-        browse_directory(str(root / "nope"))
+        browse_directory(str(root / "nope"), roots, home)
+
+    # tree roots: home first, then the mounted disks from the mount table, minus pseudo filesystems, the root and
+    # system mounts, /home and the home directory itself, and autofs placeholders; octal escapes are decoded
+    mounts = """\
+/dev/nvme0n1p2 / ext4 rw 0 0
+/dev/nvme0n1p1 /boot/efi vfat rw 0 0
+/dev/loop3 /snap/core/1 squashfs ro 0 0
+portal /run/user/1000/doc fuse.portal rw 0 0
+/dev/sdb1 /media/ray/My\\040USB vfat rw 0 0
+//nas/share /mnt/nas cifs rw 0 0
+//nas/comfy /mnt/.comfyui cifs rw 0 0
+auto.nas /mnt/auto autofs rw 0 0
+/dev/sda1 /home ext4 rw 0 0
+/dev/sda2 /home/ray ext4 rw 0 0
+/dev/sda3 /runtime/data ext4 rw 0 0
+"""
+    assert mount_points(mounts, "/home/ray") == ("/media/ray/My USB", "/mnt/.comfyui", "/mnt/nas", "/runtime/data")
+    assert tree_roots("/home/ray", mounts, [], [])[:3] == (
+        TreeRoot("Home", "/home/ray"),
+        TreeRoot("My USB", "/media/ray/My USB"),
+        TreeRoot(".comfyui", "/mnt/.comfyui"),
+    )
+    assert tree_roots("/Users/ray", None, ["/Volumes/USB"], []) == (TreeRoot("Home", "/Users/ray"), TreeRoot("USB", "/Volumes/USB"))
