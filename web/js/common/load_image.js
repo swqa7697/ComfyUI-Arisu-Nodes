@@ -44,7 +44,7 @@ import { api } from '../../../../scripts/api.js';
 import { app } from '../../../../scripts/app.js';
 import { cropImage } from './cropper.js';
 import { el } from './dom.js';
-import { addButton } from './widgets.js';
+import { addButton, hideWidget, setWidget } from './widgets.js';
 
 const NODE_TYPE = 'ArisuLoadImage';
 const PATH_WIDGET = 'path';
@@ -155,20 +155,7 @@ function formatCrop(rect, img) {
 /** Keep the crop widget out of sight: the crop dialog is its editor, and the preview shows its effect. */
 function hideCrop(node) {
   const widget = cropWidget(node);
-  if (!widget) return;
-  widget.hidden = true;
-  const socket = node.inputs?.findIndex((input) => input.widget?.name === CROP_WIDGET) ?? -1;
-  if (socket !== -1) node.removeInput(socket);
-  node.setSize(node.computeSize());
-}
-
-/** Write `value` into `widget` the way a user edit does: the value, its callback, the node's hook, a repaint. */
-function setWidget(node, widget, value) {
-  const previous = widget.value;
-  widget.value = value;
-  widget.callback?.(value);
-  node.onWidgetChanged?.(widget.name, value, previous, widget);
-  node.setDirtyCanvas(true, true);
+  if (widget) hideWidget(node, widget);
 }
 
 function isLinked(node, name) {

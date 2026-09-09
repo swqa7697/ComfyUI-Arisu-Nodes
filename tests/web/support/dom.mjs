@@ -1,4 +1,4 @@
-// Fake of the browser DOM surface load_image.js and cropper.js touch: `document.createElement`,
+// Fake of the browser DOM surface load_image.js, cropper.js and settings_dialog.js touch: `document.createElement`,
 // `document.body`, and `Image`. Elements are plain objects with a children list, so
 // whatever a script assigns on one (className, textContent, handlers) is what a test
 // reads back; layout is a stub a test overrides (`getBoundingClientRect`) and pointer

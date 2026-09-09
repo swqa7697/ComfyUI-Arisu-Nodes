@@ -122,6 +122,22 @@ the crop is kept with the workflow, shown in the preview, and never resized or p
 The file is read in place at run time; nothing is uploaded or copied. Same file types and `image`
 output as **Load Image**; there is no `mask` output.
 
+### Resize Image
+
+`ArisuResizeImage` · [reference](web/docs/ArisuResizeImage/en.md)
+
+Every resize in one node, with only `width` and `height` on it. **Upscale Image** stretches or
+centre-crops and nothing else, so filling a canvas means hand-computed offsets for **Pad Image for
+Outpainting**, an off-centre crop means another node in front, and landing on the pixel grid a model
+wants means doing the arithmetic yourself. This node stretches, fits, pads (with a colour, the edge
+colours, the edge pixels, or a blurred copy), crops at a chosen anchor, or spends a pixel budget at
+the image's aspect ratio, and snaps the result to a grid.
+
+The resampling method, the mode, the pad colour, the crop position and the grid sit behind a
+**settings…** button that opens them in a dialog, so the node stays two fields tall, and the result
+is shown on the node after a run, so no **Preview Image** has to hang off it. The outputs are the
+`image` and a `mask` marking the padding. It always runs on the CPU.
+
 ### All nodes
 
 | Node | Category | What it does |
@@ -136,6 +152,7 @@ output as **Load Image**; there is no `mask` output.
 | [Preview & Save Image](web/docs/ArisuPreviewSaveImage/en.md) | Common | Preview and pass through; save to the output directory on a button click, without a run. |
 | [Preview & Save Image (Upscale)](web/docs/ArisuPreviewSaveImageUpscale/en.md) | Common | The same, upscaling the images with the selected model as they are saved. |
 | [Load Image (Browse)](web/docs/ArisuLoadImage/en.md) | Common | Load one image from any host path, picked in a directory browser with thumbnails and cropped in a dialog if you like; nothing is uploaded. |
+| [Resize Image](web/docs/ArisuResizeImage/en.md) | Common | Stretch, fit, pad or crop an image batch to a size on a pixel grid, with the options in a dialog and the result previewed on the node. |
 
 Categories are `Arisu Nodes/MiniMax H3` and `Arisu Nodes/Common`. Every node's inputs, outputs, and
 edge cases are documented on its reference page, which ComfyUI also serves in-app.

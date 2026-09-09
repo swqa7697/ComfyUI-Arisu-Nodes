@@ -6,6 +6,7 @@ the project's own environment, without torch or ComfyUI on the path.
 
 from __future__ import annotations
 
+import math
 import mimetypes
 import os
 import os.path
@@ -50,6 +51,19 @@ PSEUDO_FILESYSTEMS = frozenset(
 EXCLUDED_MOUNT_PREFIXES = ("/boot", "/dev", "/efi", "/home", "/proc", "/run", "/snap", "/sys", "/tmp", "/usr", "/var")
 USER_MEDIA_PREFIX = "/run/media"
 _MOUNT_ESCAPE = re.compile(r"\\([0-7]{3})")
+# Resize Image: the option lists its settings dialog shows (the resampling methods ComfyUI's own upscalers offer),
+# the size bounds, the ``[1, 64, 64]`` zeros ComfyUI's loaders emit for "no mask", and the pad colour forms.
+UPSCALE_METHODS = ("nearest-exact", "bilinear", "area", "bicubic", "lanczos")
+KEEP_PROPORTION_MODES = ("stretch", "resize", "pad", "pad_edge", "pad_edge_pixel", "crop", "pillarbox_blur", "total_pixels")
+PAD_MODES = ("pad", "pad_edge", "pad_edge_pixel", "pillarbox_blur")
+CROP_POSITIONS = ("center", "top", "bottom", "left", "right")
+MAX_RESOLUTION = 16384
+MAX_DIVISIBLE_BY = 512
+PLACEHOLDER_MASK_SIZE = 64
+DEFAULT_PAD_COLOR = "0, 0, 0"
+PAD_COLOR_FORMAT_ERROR = "pad_color must be r, g, b (0-255, or 0.0-1.0 with a decimal point), #rrggbb, one grey value, or a colour name"
+_HEX_COLOR = re.compile(r"#([0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$")
+_COLOR_NAME = re.compile(r"[A-Za-z]+$")
 
 
 @dataclass(frozen=True)
@@ -127,6 +141,21 @@ class ViewRequest:
     path: str
     max_size: Optional[int]
     crop: Optional[CropBox] = None
+
+
+@dataclass(frozen=True)
+class ResizePlan:
+    """How **Resize Image** runs once: the source box it keeps, the size it scales to, and the canvas it lands on.
+
+    ``crop`` is ``left, top, width, height`` in source pixels, ``None`` for the
+    whole image; ``scaled`` and ``canvas`` are ``(width, height)``, equal unless a
+    pad mode leaves room; ``offset`` is where the scaled image sits on the canvas.
+    """
+
+    crop: Optional[Tuple[int, int, int, int]]
+    scaled: Tuple[int, int]
+    canvas: Tuple[int, int]
+    offset: Tuple[int, int]
 
 
 def join_path(segments: Sequence[str]) -> str:
@@ -591,3 +620,158 @@ def parse_view_request(query: Mapping[str, str]) -> ViewRequest:
     except ValueError:
         raise ValueError("max must be an integer") from None
     return ViewRequest(path, min(MAX_THUMBNAIL, max(MIN_THUMBNAIL, size)), crop)
+
+
+def _snap(size: int, divisible_by: int) -> int:
+    """``size`` rounded down to a multiple of ``divisible_by``, never below one multiple; ``0`` and ``1`` leave it alone."""
+    if divisible_by <= 1:
+        return size
+    return max(divisible_by, size - size % divisible_by)
+
+
+def _fit(source: Tuple[int, int], box: Tuple[int, int]) -> Tuple[int, int]:
+    """The largest size of ``source``'s aspect that fits inside ``box``, rounded, at least one pixel each way."""
+    ratio = min(box[0] / source[0], box[1] / source[1])
+    return max(1, round(source[0] * ratio)), max(1, round(source[1] * ratio))
+
+
+def _anchor(space: int, extent: int, position: str, start: str, end: str) -> int:
+    """Where an ``extent`` sits inside ``space`` along one axis: at ``start``, at ``end``, or centred for any other position."""
+    if position == start:
+        return 0
+    if position == end:
+        return space - extent
+    return (space - extent) // 2
+
+
+def _target(source: Tuple[int, int], width: int, height: int, keep_proportion: str) -> Tuple[int, int]:
+    """The requested size with zeros resolved: from the source in ``stretch`` and ``crop``, by aspect ratio otherwise."""
+    source_width, source_height = source
+    if keep_proportion in ("stretch", "crop") or (width == 0 and height == 0):
+        return width or source_width, height or source_height
+    if width == 0:
+        return max(1, round(source_width * height / source_height)), height
+    if height == 0:
+        return width, max(1, round(source_height * width / source_width))
+    return width, height
+
+
+def _cover_crop(source: Tuple[int, int], canvas: Tuple[int, int], position: str) -> Optional[Tuple[int, int, int, int]]:
+    """The largest source box with the canvas's aspect, anchored at ``position``; ``None`` when that is the whole image."""
+    source_width, source_height = source
+    if source_width / source_height > canvas[0] / canvas[1]:
+        crop_width, crop_height = round(source_height * canvas[0] / canvas[1]), source_height
+    else:
+        crop_width, crop_height = source_width, round(source_width * canvas[1] / canvas[0])
+    crop_width, crop_height = min(source_width, max(1, crop_width)), min(source_height, max(1, crop_height))
+    if (crop_width, crop_height) == source:
+        return None
+    left = _anchor(source_width, crop_width, position, "left", "right")
+    top = _anchor(source_height, crop_height, position, "top", "bottom")
+    return left, top, crop_width, crop_height
+
+
+def resize_plan(
+    source: Tuple[int, int], width: int, height: int, keep_proportion: str, crop_position: str, divisible_by: int
+) -> ResizePlan:
+    """Work out the geometry of one **Resize Image** run, without touching pixels.
+
+    A zero ``width`` or ``height`` means "from the source": the source dimension
+    in ``stretch`` and ``crop``, the one keeping the aspect ratio otherwise, and
+    both zero the source size. ``divisible_by`` above 1 rounds the output size
+    down to its multiples (never below one multiple); in the pad modes the
+    canvas is snapped first and the image fitted inside it, so the output is
+    always exactly the canvas. ``crop_position`` anchors the kept region in
+    ``crop`` and the image on the canvas in the pad modes (``top`` puts the
+    padding at the bottom); the other axis is centred.
+
+    Args:
+        source: The image's ``(width, height)``.
+        width: The requested width, ``0`` for "from the source".
+        height: The requested height, likewise.
+        keep_proportion: One of ``KEEP_PROPORTION_MODES``.
+        crop_position: One of ``CROP_POSITIONS``.
+        divisible_by: The pixel grid; ``0`` and ``1`` mean none.
+
+    Returns:
+        The plan: what to cut, how large to scale, the canvas, and where the image sits on it.
+
+    Raises:
+        ValueError: For an unknown mode or position, or ``total_pixels`` with a zero dimension.
+    """
+    if keep_proportion not in KEEP_PROPORTION_MODES:
+        raise ValueError(f"unknown keep_proportion {keep_proportion!r}")
+    if crop_position not in CROP_POSITIONS:
+        raise ValueError(f"unknown crop_position {crop_position!r}")
+    if keep_proportion == "total_pixels":
+        if width < 1 or height < 1:
+            raise ValueError("total_pixels needs both width and height: their product is the pixel budget")
+        aspect = source[0] / source[1]
+        budget = width * height
+        scaled = (
+            _snap(max(1, int(math.sqrt(budget * aspect))), divisible_by),
+            _snap(max(1, int(math.sqrt(budget / aspect))), divisible_by),
+        )
+        return ResizePlan(None, scaled, scaled, (0, 0))
+    target = _target(source, width, height, keep_proportion)
+    if keep_proportion == "resize":
+        fitted = _fit(source, target)
+        scaled = (_snap(fitted[0], divisible_by), _snap(fitted[1], divisible_by))
+        return ResizePlan(None, scaled, scaled, (0, 0))
+    canvas = (_snap(target[0], divisible_by), _snap(target[1], divisible_by))
+    if keep_proportion == "stretch":
+        return ResizePlan(None, canvas, canvas, (0, 0))
+    if keep_proportion == "crop":
+        return ResizePlan(_cover_crop(source, canvas, crop_position), canvas, canvas, (0, 0))
+    scaled = _fit(source, canvas)
+    offset = (_anchor(canvas[0], scaled[0], crop_position, "left", "right"), _anchor(canvas[1], scaled[1], crop_position, "top", "bottom"))
+    return ResizePlan(None, scaled, canvas, offset)
+
+
+def parse_pad_color(value: Any) -> Optional[Tuple[float, float, float]]:
+    """Turn the ``pad_color`` widget of **Resize Image** into RGB in ``[0, 1]``, or ``None`` for a colour name.
+
+    Accepted: ``r, g, b`` in 0-255, or in 0.0-1.0 when any part carries a
+    decimal point (so ``1, 1, 1`` is near-black and ``1.0, 1.0, 1.0`` white);
+    ``#rgb``, ``#rrggbb`` or ``#rrggbbaa`` (alpha ignored); one grey value in
+    either range. Out-of-range channels are clamped. A word (``white``) is a
+    colour name, which Pillow resolves on the ComfyUI side.
+
+    Args:
+        value: The widget value.
+
+    Returns:
+        The colour, or ``None`` when ``value`` is a colour name.
+
+    Raises:
+        TypeError: If the value is not a string.
+        ValueError: If it is blank or in none of the forms above.
+    """
+    if not isinstance(value, str):
+        raise TypeError(PAD_COLOR_FORMAT_ERROR)
+    text = value.strip()
+    if not text:
+        raise ValueError(PAD_COLOR_FORMAT_ERROR)
+    hexadecimal = _HEX_COLOR.match(text)
+    if hexadecimal:
+        digits = hexadecimal.group(1)
+        if len(digits) == 3:
+            digits = "".join(digit * 2 for digit in digits)
+        red, green, blue = (int(digits[index : index + 2], 16) / 255.0 for index in (0, 2, 4))
+        return red, green, blue
+    if _COLOR_NAME.match(text):
+        return None
+    parts = [part.strip() for part in text.split(",")]
+    if len(parts) not in (1, 3):
+        raise ValueError(PAD_COLOR_FORMAT_ERROR)
+    try:
+        numbers = [float(part) for part in parts]
+    except ValueError:
+        raise ValueError(PAD_COLOR_FORMAT_ERROR) from None
+    if not all(math.isfinite(number) for number in numbers):
+        raise ValueError(PAD_COLOR_FORMAT_ERROR)
+    scale = 1.0 if any("." in part for part in parts) else 255.0
+    channels = [min(1.0, max(0.0, number / scale)) for number in numbers]
+    if len(channels) == 1:
+        channels *= 3
+    return channels[0], channels[1], channels[2]

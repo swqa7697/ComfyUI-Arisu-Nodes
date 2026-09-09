@@ -33,6 +33,7 @@ EXPECTED_NODE_IDS = [
     "ArisuPreviewSaveImage",
     "ArisuPreviewSaveImageUpscale",
     "ArisuLoadImage",
+    "ArisuResizeImage",
 ]
 
 

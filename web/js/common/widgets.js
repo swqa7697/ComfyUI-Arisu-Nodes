@@ -13,6 +13,33 @@ export function addButton(node, label, onClick) {
   return widget;
 }
 
+/** Write `value` into `widget` the way a user edit does: the value, its callback, the node's hook, a repaint. */
+export function setWidget(node, widget, value) {
+  const previous = widget.value;
+  widget.value = value;
+  widget.callback?.(value);
+  node.onWidgetChanged?.(widget.name, value, previous, widget);
+  node.setDirtyCanvas(true, true);
+}
+
+/**
+ * Keep `widget` out of sight and take away its socket; the node shrinks to fit.
+ *
+ * The classic canvas skips a widget flagged `hidden`, the Vue renderer ("Nodes 2.0")
+ * reads `options.hidden`, so both are set. The socket goes because the frontend
+ * keeps one for every widget input and would still accept a link into it, feeding
+ * the run a value nobody can see (see path_builder.js). Neither flag is saved: a
+ * loaded workflow needs hiding again in `onConfigure`.
+ */
+export function hideWidget(node, widget) {
+  widget.hidden = true;
+  widget.options ??= {};
+  widget.options.hidden = true;
+  const socket = node.inputs?.findIndex((input) => input.widget?.name === widget.name) ?? -1;
+  if (socket !== -1) node.removeInput(socket);
+  node.setSize(node.computeSize());
+}
+
 function cellWidth(width, count) {
   return (width - 2 * MARGIN - GAP * (count - 1)) / count;
 }
