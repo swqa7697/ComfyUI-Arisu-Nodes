@@ -10,6 +10,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Add the `ArisuLoadImage` node (category `Arisu Nodes/Common`), **Load Image (Browse)**: load one image from any path on the host, absolute, `~`, or relative to the input directory, with a `browse` button that opens a directory browser (a tree of the home directory and the mounted disks, input and output shortcuts, thumbnails, an image-name filter) served by two new routes, `/arisu/browse` and `/arisu/view`; the file is read in place, nothing is uploaded or copied, the picked image is shown on the node at its own resolution, the accepted file types match Load Image, and the one output is the `image` batch.
+- Add a `crop…` button to **Load Image (Browse)** that opens a crop dialog on the picked image: draw, move and resize a box with the mouse, freeform or at an aspect ratio; the crop is saved with the workflow (a hidden `crop` input), previewed on the node, cut from every frame at run time, and never resized or padded; `/arisu/view` accepts a `crop` parameter.
+
+### Changed
+
+- Calm the browse dialog: tree rows no longer animate, the image cards rise only on entering a directory, and the tree keeps its scroll position when a folder is expanded.
 
 ## [1.0.2] - 2026-09-08
 

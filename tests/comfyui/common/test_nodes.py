@@ -74,10 +74,25 @@ def test_load_image_decodes_like_the_stock_loader(tmp_path: Path, monkeypatch: p
     # every frame of an animation is one image of the batch
     (image,) = ArisuLoadImage.execute(path=str(tmp_path / "anim.gif")).args
     assert image.shape == (2, 2, 2, 3)
+    # a crop, left,top,width,height in pixels, is cut from every frame after decoding, never resized: the whole image
+    # is no crop, a box past the edge is cut to the image, and one outside it is an error
+    (image,) = ArisuLoadImage.execute(path="sub/a.png", crop="1,1,3,2").args
+    assert image.shape == (1, 2, 3, 3)
+    (image,) = ArisuLoadImage.execute(path="sub/a.png", crop="0,0,6,4").args
+    assert image.shape == (1, 4, 6, 3)
+    (image,) = ArisuLoadImage.execute(path="sub/a.png", crop="4,2,10,10").args
+    assert image.shape == (1, 2, 2, 3)
+    (image,) = ArisuLoadImage.execute(path=str(tmp_path / "anim.gif"), crop="0,0,1,1").args
+    assert image.shape == (2, 1, 1, 3)
+    with pytest.raises(ValueError):
+        ArisuLoadImage.execute(path="sub/a.png", crop="6,0,1,1")
 
-    # validation before the run: a linked input passes; blank, missing and non-image paths are refused by name
+    # validation before the run: a linked input passes; blank, missing and non-image paths are refused by name,
+    # and so is a malformed crop
     assert ArisuLoadImage.validate_inputs() is True
-    assert ArisuLoadImage.validate_inputs(path="sub/a.png") is True
+    assert ArisuLoadImage.validate_inputs(path="sub/a.png", crop="") is True
+    for bad_crop in ["1,2,3", "0,0,0,5"]:
+        assert isinstance(ArisuLoadImage.validate_inputs(path="sub/a.png", crop=bad_crop), str), f"case={bad_crop!r}"
     (tmp_path / "notes.txt").write_text("x")
     for bad in ["", "sub/missing.png", str(tmp_path / "notes.txt")]:
         assert isinstance(ArisuLoadImage.validate_inputs(path=bad), str), f"case={bad!r}"

@@ -9,6 +9,7 @@ import pytest
 from src.arisu_nodes.common.core import (
     NO_UPSCALE,
     BrowseRequest,
+    CropBox,
     DirectoryListing,
     PreviewRef,
     SaveRequest,
@@ -16,9 +17,11 @@ from src.arisu_nodes.common.core import (
     TreeRoot,
     ViewRequest,
     browse_directory,
+    crop_box,
     join_path,
     mount_points,
     parse_browse_request,
+    parse_crop,
     parse_save_request,
     parse_view_request,
     preview_file_path,
@@ -113,11 +116,27 @@ def test_image_path_helpers_resolve_and_refuse(tmp_path: Path, monkeypatch: pyte
     clamped = [("8", 16), ("256", 256), ("99999", 4096)]
     for raw, expected in clamped:
         assert parse_view_request({"path": "/x/a.png", "max": raw}).max_size == expected, f"case={raw!r}"
+    # the crop: four pixel integers, blank for the whole image; its box is cut to the image, the whole image is no box,
+    # and one outside the image is refused
+    crops = [("", None), ("  ", None), (None, None), ("1,2,3,4", CropBox(1, 2, 3, 4)), (" 1, 2 ,3,4 ", CropBox(1, 2, 3, 4))]
+    for value, expected in crops:
+        assert parse_crop(value) == expected, f"case={value!r}"
+    for value in ["1,2,3", "1,2,3,4,5", "-1,0,3,4", "0,0,0,4", "0,0,4,0", "a,b,c,d", 7]:
+        with pytest.raises((TypeError, ValueError)):
+            parse_crop(value)
+    assert crop_box(CropBox(1, 2, 3, 4), (10, 10)) == (1, 2, 4, 6)
+    assert crop_box(CropBox(4, 2, 10, 10), (6, 4)) == (4, 2, 6, 4)
+    assert crop_box(CropBox(0, 0, 6, 4), (6, 4)) is None
+    assert crop_box(CropBox(0, 0, 9, 9), (6, 4)) is None
+    with pytest.raises(ValueError):
+        crop_box(CropBox(6, 0, 1, 1), (6, 4))
+    assert parse_view_request({"path": "/x/a.png", "crop": "1,2,3,4"}) == ViewRequest("/x/a.png", None, CropBox(1, 2, 3, 4))
     bad = [
         ("relative", {"path": "a.png"}),
         ("missing", {}),
         ("not an image", {"path": "/x/notes.txt"}),
         ("bad max", {"path": "/x/a.png", "max": "big"}),
+        ("bad crop", {"path": "/x/a.png", "crop": "1,2"}),
     ]
     for case, query in bad:
         try:

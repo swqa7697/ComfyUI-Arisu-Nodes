@@ -34,6 +34,9 @@ VIEW_ROUTE = "/arisu/view"
 IMAGE_CONTENT_TYPE = "image"
 MIN_THUMBNAIL = 16
 MAX_THUMBNAIL = 4096
+# The crop widget: ``left,top,width,height`` in pixels, blank for the whole image.
+CROP_SEPARATOR = ","
+CROP_FORMAT_ERROR = "crop must be left,top,width,height in pixels"
 # The dialog's tree: the label of the home root, and what ``/proc/self/mounts``
 # entries are left out of the mounted-disk roots: kernel and desktop pseudo
 # filesystems (autofs placeholders too, since listing one triggers the mount),
@@ -108,11 +111,22 @@ class BrowseRequest:
 
 
 @dataclass(frozen=True)
+class CropBox:
+    """A crop of **Load Image (Browse)**, in pixels of the upright (EXIF-transposed) image."""
+
+    left: int
+    top: int
+    width: int
+    height: int
+
+
+@dataclass(frozen=True)
 class ViewRequest:
-    """A validated view request: the image file to serve and the thumbnail bound, if any."""
+    """A validated view request: the image file to serve, the thumbnail bound and the crop, if any."""
 
     path: str
     max_size: Optional[int]
+    crop: Optional[CropBox] = None
 
 
 def join_path(segments: Sequence[str]) -> str:
@@ -291,6 +305,65 @@ def resolve_image_path(value: Any, input_dir: str) -> str:
     if not os.path.isabs(path):
         path = os.path.join(input_dir, path)
     return os.path.abspath(path)
+
+
+def parse_crop(value: Any) -> Optional[CropBox]:
+    """Turn the ``crop`` widget of **Load Image (Browse)** into a box, or ``None`` for the whole image.
+
+    The format is ``left,top,width,height`` in pixels of the upright image;
+    blank means no crop. Whether the box fits the image is not checked here,
+    see ``crop_box``.
+
+    Args:
+        value: The widget value, or a ``crop`` query parameter.
+
+    Returns:
+        The box, or ``None`` when the value is ``None`` or blank.
+
+    Raises:
+        TypeError: If the value is not a string.
+        ValueError: If it is not four integers, or the box has no area or a negative origin.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise TypeError(CROP_FORMAT_ERROR)
+    if not value.strip():
+        return None
+    fields = value.split(CROP_SEPARATOR)
+    if len(fields) != 4:
+        raise ValueError(CROP_FORMAT_ERROR)
+    try:
+        left, top, width, height = (int(field.strip()) for field in fields)
+    except ValueError:
+        raise ValueError(CROP_FORMAT_ERROR) from None
+    if left < 0 or top < 0 or width < 1 or height < 1:
+        raise ValueError(CROP_FORMAT_ERROR)
+    return CropBox(left, top, width, height)
+
+
+def crop_box(crop: CropBox, size: Tuple[int, int]) -> Optional[Tuple[int, int, int, int]]:
+    """The Pillow box ``(left, upper, right, lower)`` of ``crop`` on an image of ``size``.
+
+    A box reaching past the image is cut to it, so a crop chosen on one file
+    still applies to a smaller replacement. A box covering the whole image is
+    no crop at all.
+
+    Args:
+        crop: The parsed crop.
+        size: The image's ``(width, height)`` after the EXIF transpose.
+
+    Returns:
+        The box to crop to, or ``None`` when it would cover the whole image.
+
+    Raises:
+        ValueError: If the box lies wholly outside the image.
+    """
+    width, height = size
+    if crop.left >= width or crop.top >= height:
+        raise ValueError(f"crop {crop.left},{crop.top},{crop.width},{crop.height} lies outside the {width}x{height} image")
+    box = (crop.left, crop.top, min(width, crop.left + crop.width), min(height, crop.top + crop.height))
+    return None if box == (0, 0, width, height) else box
 
 
 def is_filesystem_root(path: str) -> bool:
@@ -491,27 +564,30 @@ def parse_browse_request(query: Mapping[str, str], input_dir: str) -> BrowseRequ
 
 
 def parse_view_request(query: Mapping[str, str]) -> ViewRequest:
-    """Validate a view request: an absolute image path and an optional thumbnail bound.
+    """Validate a view request: an absolute image path, an optional thumbnail bound and an optional crop.
 
     Args:
-        query: The request's query parameters, ``path`` and optionally ``max``.
+        query: The request's query parameters, ``path`` and optionally ``max`` and ``crop``.
 
     Returns:
-        The request; ``max_size`` is clamped to ``[MIN_THUMBNAIL, MAX_THUMBNAIL]`` or ``None`` when absent.
+        The request; ``max_size`` is clamped to ``[MIN_THUMBNAIL, MAX_THUMBNAIL]`` or ``None`` when absent,
+        ``crop`` is parsed by ``parse_crop``.
 
     Raises:
-        ValueError: If ``path`` is missing, relative, or not an image type, or ``max`` is not an integer.
+        ValueError: If ``path`` is missing, relative, or not an image type, ``max`` is not an integer,
+            or ``crop`` is malformed.
     """
     path = query.get("path", "").strip()
     if not path or not os.path.isabs(path):
         raise ValueError("path must be an absolute file path")
     if not is_image_file(path):
         raise ValueError(f"not an image file type: {os.path.basename(path)}")
+    crop = parse_crop(query.get("crop"))
     raw = query.get("max")
     if raw is None:
-        return ViewRequest(path, None)
+        return ViewRequest(path, None, crop)
     try:
         size = int(raw)
     except ValueError:
         raise ValueError("max must be an integer") from None
-    return ViewRequest(path, min(MAX_THUMBNAIL, max(MIN_THUMBNAIL, size)))
+    return ViewRequest(path, min(MAX_THUMBNAIL, max(MIN_THUMBNAIL, size)), crop)

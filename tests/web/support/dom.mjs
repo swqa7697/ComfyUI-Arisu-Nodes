@@ -1,9 +1,11 @@
-// Fake of the browser DOM surface load_image.js touches: `document.createElement`,
+// Fake of the browser DOM surface load_image.js and cropper.js touch: `document.createElement`,
 // `document.body`, and `Image`. Elements are plain objects with a children list, so
 // whatever a script assigns on one (className, textContent, handlers) is what a test
-// reads back. `Image` fires `onerror` for a URL containing "broken", and for a
+// reads back; layout is a stub a test overrides (`getBoundingClientRect`) and pointer
+// capture a no-op. `Image` fires `onerror` for a URL containing "broken", and for a
 // ".tif" file served whole (no `max=`: a format the browser cannot decode itself),
-// and `onload` otherwise, on a microtask, the way a real load completes after `src` is set.
+// and `onload` otherwise, on a microtask, the way a real load completes after `src` is
+// set; a loaded image is 800 × 600 pixels.
 export class FakeElement {
   constructor(tagName) {
     this.tagName = tagName.toUpperCase();
@@ -27,6 +29,14 @@ export class FakeElement {
     if (this.parent) this.parent.children = this.parent.children.filter((child) => child !== this);
     this.parent = null;
   }
+  setAttribute(name, value) {
+    this[name] = value;
+  }
+  getBoundingClientRect() {
+    return { left: 0, top: 0, width: this.naturalWidth ?? 0, height: this.naturalHeight ?? 0 };
+  }
+  setPointerCapture() {}
+  releasePointerCapture() {}
   showModal() {
     this.open = true;
   }
@@ -44,7 +54,12 @@ class FakeImage extends FakeElement {
   set src(url) {
     this.url = url;
     const undecodable = url.includes('.tif') && !url.includes('max=');
-    queueMicrotask(() => (url.includes('broken') || undecodable ? this.onerror : this.onload)?.());
+    queueMicrotask(() => {
+      if (url.includes('broken') || undecodable) return this.onerror?.();
+      this.naturalWidth = 800;
+      this.naturalHeight = 600;
+      return this.onload?.();
+    });
   }
   get src() {
     return this.url;

@@ -31,10 +31,12 @@ from .core import (
     NO_UPSCALE,
     SAVE_IMAGE_ROUTE,
     VIEW_ROUTE,
+    CropBox,
     DirectoryListing,
     SaveRequest,
     TreeRoot,
     browse_directory,
+    crop_box,
     parse_browse_request,
     parse_save_request,
     parse_view_request,
@@ -167,10 +169,10 @@ def _drives() -> List[str]:
 
 
 async def _view(request: web.Request) -> web.StreamResponse:
-    """Serve an image file from the host, or a thumbnail of it when ``max`` is given.
+    """Serve an image file from the host, or a rendering of it when ``max`` or ``crop`` is given.
 
     Only files whose name passes ComfyUI's image filter are served; see
-    ``core.parse_view_request``. Decoding for a thumbnail runs on a worker thread.
+    ``core.parse_view_request``. Decoding for a rendering runs on a worker thread.
     """
     try:
         req = parse_view_request(request.query)
@@ -178,28 +180,40 @@ async def _view(request: web.Request) -> web.StreamResponse:
         return web.json_response({"error": str(error)}, status=400)
     if not os.path.isfile(req.path):
         return web.json_response({"error": f"no image file at {req.path}"}, status=404)
-    if req.max_size is None:
+    if req.max_size is None and req.crop is None:
         return web.FileResponse(req.path)
     try:
-        body = await asyncio.to_thread(thumbnail, req.path, req.max_size)
+        body = await asyncio.to_thread(render, req.path, req.max_size, req.crop)
     except (OSError, ValueError) as error:  # what Pillow raises for a listed type it cannot decode, SVG for one
         return web.json_response({"error": f"cannot render {os.path.basename(req.path)}: {error}"}, status=415)
     return web.Response(body=body, content_type="image/webp")
 
 
-def thumbnail(path: str, max_size: int) -> bytes:
-    """``path`` downscaled to fit in ``max_size`` pixels, as WEBP; the first frame of an animation.
+def render(path: str, max_size: Optional[int], crop: Optional[CropBox]) -> bytes:
+    """The first frame of ``path``, cropped to ``crop`` and downscaled to fit in ``max_size`` pixels, as WEBP.
+
+    The crop applies after the EXIF transpose, as ``nodes._load_image`` applies
+    it, so the node preview shows the pixels a run produces. WEBP refuses a
+    side above 16383 pixels; the frontend then falls back to a bounded render.
 
     Args:
         path: An image file.
-        max_size: The bound on both sides; a smaller image is not enlarged.
+        max_size: The bound on both sides, or ``None`` to keep the size; a smaller image is not enlarged.
+        crop: The box to keep, or ``None`` for the whole image.
 
     Returns:
-        The encoded thumbnail.
+        The encoded image.
+
+    Raises:
+        ValueError: If the crop lies wholly outside the image.
     """
     with node_helpers.pillow(Image.open, path) as image:
         frame = node_helpers.pillow(ImageOps.exif_transpose, image)
-        frame.thumbnail((max_size, max_size))
+        box = crop_box(crop, frame.size) if crop else None
+        if box is not None:
+            frame = frame.crop(box)
+        if max_size is not None:
+            frame.thumbnail((max_size, max_size))
         buffer = BytesIO()
         frame.save(buffer, format=_THUMBNAIL_FORMAT, quality=_THUMBNAIL_QUALITY)
     return buffer.getvalue()

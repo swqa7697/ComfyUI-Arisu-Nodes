@@ -152,11 +152,23 @@ def test_browse_and_view_routes_list_and_serve_host_images(tmp_path: Path, monke
     assert status == 200 and content_type == "image/webp"
     with Image.open(BytesIO(body)) as thumb:
         assert thumb.size == (16, 8)
-    # refused: relative paths, non-image types, missing files
+    # a crop in pixels of the upright image, alone or under a bound; the whole image still renders
+    for params, expected in [
+        ({"crop": "10,5,20,10"}, (20, 10)),
+        ({"crop": "10,5,20,10", "max": "16"}, (16, 8)),
+        ({"crop": "0,0,40,20"}, (40, 20)),
+    ]:
+        status, body, content_type = get(routes.VIEW_ROUTE, path=str(pics / "wide.png"), **params)
+        assert status == 200 and content_type == "image/webp", f"case={params!r}"
+        with Image.open(BytesIO(body)) as cropped:
+            assert cropped.size == expected, f"case={params!r}"
+    # refused: relative paths, non-image types, missing files, a malformed crop; a crop outside the image cannot render
     refused = [
         (400, {"path": "pics/wide.png"}),
         (400, {"path": str(tmp_path / "input" / "notes.txt")}),
         (404, {"path": str(pics / "missing.png")}),
+        (400, {"path": str(pics / "wide.png"), "crop": "x"}),
+        (415, {"path": str(pics / "wide.png"), "crop": "40,0,1,1"}),
     ]
     for expected, params in refused:
         status, body, _ = get(routes.VIEW_ROUTE, **params)

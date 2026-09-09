@@ -116,7 +116,9 @@ Load one image from any path on the machine running ComfyUI. **Load Image** list
 of `input/`, and the one way to use another file is an upload that copies it there. This node holds a
 path instead, and its **browse** button opens a directory browser with a tree of your home directory
 and mounted disks, thumbnails, and an image-name filter: start in `input/`, walk anywhere the ComfyUI
-process can read, click an image, and the node shows it at its real size.
+process can read, click an image, and the node shows it at its real size. The **crop…** button opens
+a crop dialog on it: drag a box, move it, resize it by its handles, freeform or at an aspect ratio;
+the crop is kept with the workflow, shown in the preview, and never resized or padded.
 The file is read in place at run time; nothing is uploaded or copied. Same file types and `image`
 output as **Load Image**; there is no `mask` output.
 
@@ -133,7 +135,7 @@ output as **Load Image**; there is no `mask` output.
 | [Extract Last Images](web/docs/ArisuExtractLastImages/en.md) | Common | Keep the last N images of a batch, for example a decoded clip's ending frame. |
 | [Preview & Save Image](web/docs/ArisuPreviewSaveImage/en.md) | Common | Preview and pass through; save to the output directory on a button click, without a run. |
 | [Preview & Save Image (Upscale)](web/docs/ArisuPreviewSaveImageUpscale/en.md) | Common | The same, upscaling the images with the selected model as they are saved. |
-| [Load Image (Browse)](web/docs/ArisuLoadImage/en.md) | Common | Load one image from any host path, picked in a directory browser with thumbnails; nothing is uploaded. |
+| [Load Image (Browse)](web/docs/ArisuLoadImage/en.md) | Common | Load one image from any host path, picked in a directory browser with thumbnails and cropped in a dialog if you like; nothing is uploaded. |
 
 Categories are `Arisu Nodes/MiniMax H3` and `Arisu Nodes/Common`. Every node's inputs, outputs, and
 edge cases are documented on its reference page, which ComfyUI also serves in-app.

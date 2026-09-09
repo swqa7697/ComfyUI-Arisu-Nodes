@@ -20,23 +20,35 @@
 // the canvas and the frontend's own layers, traps focus, and closes on Escape,
 // on the close button, or on a backdrop click. Every element is built through
 // `el()`, so the dialog touches a small DOM surface. Motion and state live in
-// the stylesheet: the dialog and its rows animate on keyframes, and the
-// loading and picked states are ARIA attributes the CSS reads, so the script
-// only assigns properties.
+// the stylesheet: the dialog pops in, the image cards rise once when a
+// directory is entered (never on a tree click or a filter keystroke, and the
+// tree rows never animate), and the loading and picked states are ARIA
+// attributes the CSS reads, so the script only assigns properties.
+//
+// A second button, `crop…`, opens the crop dialog of cropper.js on the picked
+// file. The result lives in the node's `crop` input, `left,top,width,height`
+// in pixels of the upright image, which this script hides: the dialog is its
+// editor and the preview shows its effect. A blank crop is the whole image, so
+// applying the whole image or pressing reset stores nothing, and picking
+// another file drops the crop of the previous one. Nothing is uploaded: the
+// run crops in memory and the preview asks /arisu/view for the cropped pixels.
 //
 // The preview goes through `node.imgs`, which the classic node canvas draws
 // below the widgets. The frontend captions it with the loaded image's own
-// size, so the preview loads the file itself and falls back to a thumbnail
-// only for a format the browser cannot decode. The Vue node renderer ("Nodes
-// 2.0") reads previews from its own store instead, so there the node shows
-// none; the dialog still works.
+// size, so the preview loads the file itself (cropped by the route when a crop
+// is set) and falls back to a thumbnail only for a format the browser cannot
+// decode. The Vue node renderer ("Nodes 2.0") reads previews from its own
+// store instead, so there the node shows none; the dialogs still work.
 
 import { api } from '../../../../scripts/api.js';
 import { app } from '../../../../scripts/app.js';
+import { cropImage } from './cropper.js';
+import { el } from './dom.js';
 import { addButton } from './widgets.js';
 
 const NODE_TYPE = 'ArisuLoadImage';
 const PATH_WIDGET = 'path';
+const CROP_WIDGET = 'crop';
 const BROWSE_ROUTE = '/arisu/browse';
 const VIEW_ROUTE = '/arisu/view';
 const THUMBNAIL_MAX = 256;
@@ -59,6 +71,7 @@ const STYLE = `
 .arisu-browser :where(button) { padding: 6px 12px; cursor: pointer; }
 .arisu-browser :where(input) { padding: 6px 10px; }
 .arisu-browser button:active { transform: scale(0.97); }
+.arisu-browser-tree button:active { transform: none; }
 .arisu-browser button:disabled { opacity: 0.4; cursor: default; pointer-events: none; }
 .arisu-browser :focus-visible { outline: 2px solid var(--p-primary-color, #6ea8fe); outline-offset: 2px; }
 .arisu-browser input:focus-visible { outline: none; border-color: var(--p-primary-color, #6ea8fe); }
@@ -76,8 +89,7 @@ const STYLE = `
 .arisu-browser-tree-head { display: flex; justify-content: space-between; align-items: center; padding: 4px 6px;
   font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--descrip-text, #999); }
 .arisu-browser-tree-head button { padding: 2px 8px; font-size: 11px; text-transform: none; letter-spacing: 0; }
-.arisu-browser-tree-node { display: flex; align-items: center; flex-shrink: 0; padding-left: calc(var(--depth, 0) * 14px);
-  animation: arisu-rise 200ms ease-out backwards; }
+.arisu-browser-tree-node { display: flex; align-items: center; flex-shrink: 0; padding-left: calc(var(--depth, 0) * 14px); }
 .arisu-browser-tree-toggle { width: 22px; height: 26px; padding: 0; flex-shrink: 0; background: none; border-color: transparent;
   color: var(--descrip-text, #999); }
 .arisu-browser-tree-toggle::before { content: '\\25B8'; display: inline-block; transition: transform 150ms ease; }
@@ -100,12 +112,12 @@ const STYLE = `
 .arisu-browser-file img.arisu-loaded { opacity: 1; }
 .arisu-browser-file span { font-size: 12px; color: var(--descrip-text, #999); overflow: hidden; text-overflow: ellipsis;
   white-space: nowrap; transition: color 150ms ease; }
-.arisu-browser-file { animation: arisu-rise 200ms ease-out backwards; animation-delay: min(calc(var(--i, 0) * 15ms), 240ms); }
+.arisu-fresh .arisu-browser-file { animation: arisu-rise 160ms ease-out backwards; animation-delay: min(calc(var(--i, 0) * 10ms), 120ms); }
 .arisu-browser-empty { grid-column: 1 / -1; padding: 32px 12px; text-align: center; color: var(--descrip-text, #999);
   animation: arisu-fade 200ms ease-out; }
 @keyframes arisu-pop { from { opacity: 0; transform: translateY(12px) scale(0.97); } }
 @keyframes arisu-fade { from { opacity: 0; } }
-@keyframes arisu-rise { from { opacity: 0; transform: translateY(8px); } }
+@keyframes arisu-rise { from { opacity: 0; transform: translateY(4px); } }
 @media (prefers-reduced-motion: reduce) {
   .arisu-browser, .arisu-browser::backdrop, .arisu-browser * { animation: none !important; transition: none !important; }
 }
@@ -118,16 +130,45 @@ function toast(severity, detail) {
   app.extensionManager?.toast?.add?.({ severity, summary: 'Load Image (Browse)', detail, life: 8000 });
 }
 
-/** A DOM element with `props` assigned and `children` appended; every element of the dialog is built here. */
-function el(tag, props = {}, children = []) {
-  const element = document.createElement(tag);
-  Object.assign(element, props);
-  element.append(...children);
-  return element;
-}
-
 function pathWidget(node) {
   return node.widgets?.find((widget) => widget.name === PATH_WIDGET);
+}
+
+function cropWidget(node) {
+  return node.widgets?.find((widget) => widget.name === CROP_WIDGET);
+}
+
+/** The `{ x, y, w, h }` box the crop widget holds, or `null` when it is blank or malformed. */
+function parseCrop(text) {
+  const fields = (text ?? '').split(',').map((field) => Number(field.trim()));
+  if (fields.length !== 4 || !fields.every(Number.isInteger)) return null;
+  const [x, y, w, h] = fields;
+  return { x, y, w, h };
+}
+
+/** The widget text for `rect`: blank when it covers `img` whole, since a full crop is no crop. */
+function formatCrop(rect, img) {
+  const whole = rect.x === 0 && rect.y === 0 && rect.w === img.naturalWidth && rect.h === img.naturalHeight;
+  return whole ? '' : [rect.x, rect.y, rect.w, rect.h].join(',');
+}
+
+/** Keep the crop widget out of sight: the crop dialog is its editor, and the preview shows its effect. */
+function hideCrop(node) {
+  const widget = cropWidget(node);
+  if (!widget) return;
+  widget.hidden = true;
+  const socket = node.inputs?.findIndex((input) => input.widget?.name === CROP_WIDGET) ?? -1;
+  if (socket !== -1) node.removeInput(socket);
+  node.setSize(node.computeSize());
+}
+
+/** Write `value` into `widget` the way a user edit does: the value, its callback, the node's hook, a repaint. */
+function setWidget(node, widget, value) {
+  const previous = widget.value;
+  widget.value = value;
+  widget.callback?.(value);
+  node.onWidgetChanged?.(widget.name, value, previous, widget);
+  node.setDirtyCanvas(true, true);
 }
 
 function isLinked(node, name) {
@@ -149,12 +190,13 @@ function notMaskEditor(option) {
 }
 
 /**
- * The view route's URL for `path`: the file itself, or a thumbnail bounded to `max` pixels when given;
- * `bust` defeats the browser cache for a file that may have changed.
+ * The view route's URL for `path`: the file itself, or a rendering bounded to `max` pixels and cut to `crop`
+ * (the widget text) when given; `bust` defeats the browser cache for a file that may have changed.
  */
-function viewUrl(path, max, bust = false) {
+function viewUrl(path, max, bust = false, crop = '') {
   const params = new URLSearchParams({ path });
   if (max != null) params.set('max', String(max));
+  if (crop) params.set('crop', crop);
   if (bust) params.set('t', String(Date.now()));
   return api.apiURL(`${VIEW_ROUTE}?${params}`);
 }
@@ -169,12 +211,15 @@ function loadImage(url) {
   });
 }
 
-/** Show `path` on the node once it has loaded; a failed load leaves no stale image behind. */
-async function showPreview(node, path) {
+/** Show the widgets' file, cropped as they say, on the node once it has loaded; a failed load leaves no stale image behind. */
+async function showPreview(node) {
+  const path = pathWidget(node)?.value?.trim();
+  if (!path) return;
+  const crop = cropWidget(node)?.value?.trim() ?? '';
   const token = {};
   previewTokens.set(node, token);
   // the file itself, so the frontend's caption shows its real size; a format the browser cannot decode gets a thumbnail
-  const img = (await loadImage(viewUrl(path, undefined, true))) ?? (await loadImage(viewUrl(path, PREVIEW_MAX, true)));
+  const img = (await loadImage(viewUrl(path, undefined, true, crop))) ?? (await loadImage(viewUrl(path, PREVIEW_MAX, true, crop)));
   if (previewTokens.get(node) !== token) return;
   if (img) {
     node.imgs = [img];
@@ -187,17 +232,35 @@ async function showPreview(node, path) {
   node.setDirtyCanvas(true, true);
 }
 
-/** Write the picked file into the path widget the way a user edit would, then preview it. */
+/** Write the picked file into the path widget the way a user edit would, then preview it; another file drops the old crop. */
 function pick(node, path) {
   const widget = pathWidget(node);
   if (!widget) return undefined;
-  const previous = widget.value;
-  widget.value = path;
-  widget.callback?.(path);
-  node.onWidgetChanged?.(PATH_WIDGET, path, previous, widget);
-  node.setDirtyCanvas(true, true);
+  const crop = cropWidget(node);
+  if (crop && widget.value !== path) crop.value = '';
+  setWidget(node, widget, path);
   if (isLinked(node, PATH_WIDGET)) toast('warn', 'path is fed by a link, so a run uses the linked value, not the picked file.');
-  return showPreview(node, path);
+  return showPreview(node);
+}
+
+/** Open the crop dialog on the picked file and keep its result in the hidden crop widget. */
+async function openCropper(node) {
+  const path = pathWidget(node)?.value?.trim();
+  const crop = cropWidget(node);
+  if (!path || !crop) {
+    toast('warn', 'Pick an image first.');
+    return;
+  }
+  // the file itself: the crop is in its pixels, and a thumbnail would not tell how many there are
+  const img = await loadImage(viewUrl(path, undefined, true));
+  if (!img) {
+    toast('warn', `Cannot crop ${path}: the browser cannot decode this file.`);
+    return;
+  }
+  const rect = await cropImage(img, parseCrop(crop.value));
+  if (!rect) return;
+  setWidget(node, crop, formatCrop(rect, img));
+  await showPreview(node);
 }
 
 async function openBrowser(node) {
@@ -207,6 +270,8 @@ async function openBrowser(node) {
   const roots = new Map();
   /** Every directory the tree has seen, by path: `{ dirs, expanded }`, `dirs` null until listed. */
   const tree = new Map();
+  /** The directory the tree last scrolled to, so expanding a folder leaves the list where it is. */
+  let scrolledTo = null;
 
   const pathField = el('input', {
     className: 'arisu-browser-path',
@@ -215,7 +280,7 @@ async function openBrowser(node) {
     onkeydown: (event) => (event.key === 'Enter' ? navigate(pathField.value) : undefined),
   });
   const upButton = el('button', { textContent: '↑ up', title: 'parent directory', onclick: () => navigate(listing.parent) });
-  const filterField = el('input', { type: 'search', placeholder: 'filter images', oninput: () => renderGrid() });
+  const filterField = el('input', { type: 'search', placeholder: 'filter images', oninput: () => renderGrid(false) });
   const outputPlace = el('button', {
     textContent: 'output dir',
     title: "ComfyUI's output directory",
@@ -327,8 +392,9 @@ async function openBrowser(node) {
     const rows = [];
     for (const [path, root] of roots) rows.push(...treeRows(path, root.label, root.kind, 0));
     treeList.replaceChildren(...rows);
-    const current = rows.find((row) => row.children[1].ariaCurrent === 'true');
-    current?.scrollIntoView?.({ block: 'nearest' });
+    if (listing.path === scrolledTo) return;
+    scrolledTo = listing.path;
+    rows.find((row) => row.children[1].ariaCurrent === 'true')?.scrollIntoView?.({ block: 'nearest' });
   }
 
   /** A thumbnail card; the card holding `current`, the path already in the widget, is outlined. */
@@ -357,16 +423,20 @@ async function openBrowser(node) {
     return el('button', props, [thumbnail, el('span', { textContent: name })]);
   }
 
-  /** The image cards of the current directory, narrowed by the filter box; folders are never filtered. */
-  function renderGrid() {
+  /**
+   * The image cards of the current directory, narrowed by the filter box; folders are never filtered.
+   * `fresh` marks a directory just entered, the one time the cards rise into place.
+   */
+  function renderGrid(fresh) {
     const current = pathWidget(node)?.value?.trim();
     const files = listing.files.filter(matches).map((name, index) => fileCard(name, index, current));
+    grid.className = fresh ? 'arisu-browser-grid arisu-fresh' : 'arisu-browser-grid';
     grid.replaceChildren(...(files.length ? files : [empty('No images here')]));
   }
 
   function render() {
     upButton.disabled = listing.parent == null;
-    renderGrid();
+    renderGrid(true);
     renderTree();
   }
 
@@ -425,14 +495,16 @@ app.registerExtension({
     nodeType.prototype.onNodeCreated = function () {
       onNodeCreated?.apply(this, arguments);
       addButton(this, 'browse', () => openBrowser(this));
+      addButton(this, 'crop…', () => openCropper(this));
+      hideCrop(this);
     };
 
-    // configure() has restored the widget values by the time it calls this: show the saved file again
+    // configure() has restored the widget values, and the saved sockets, by the time it calls this: show the saved file again
     const onConfigure = nodeType.prototype.onConfigure;
     nodeType.prototype.onConfigure = function () {
       onConfigure?.apply(this, arguments);
-      const path = pathWidget(this)?.value?.trim();
-      return path ? showPreview(this, path) : undefined;
+      hideCrop(this);
+      return showPreview(this);
     };
 
     // The frontend installs getExtraMenuOptions on every node class before extensions see it, and

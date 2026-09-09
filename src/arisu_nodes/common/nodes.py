@@ -16,7 +16,7 @@ import torch
 from comfy_api.latest import io, ui
 from PIL import Image, ImageOps, ImageSequence
 
-from .core import MAX_PATH_SEGMENTS, NO_UPSCALE, is_image_file, join_path, resolve_image_path, tail_start
+from .core import MAX_PATH_SEGMENTS, NO_UPSCALE, CropBox, crop_box, is_image_file, join_path, parse_crop, resolve_image_path, tail_start
 
 UPSCALE_MODELS_FOLDER = "upscale_models"
 _PATH_TOOLTIP = (
@@ -27,6 +27,10 @@ _PATH_TOOLTIP = (
 _LOAD_PATH_TOOLTIP = (
     "The image file: an absolute path, a ~ path, or a path relative to ComfyUI's input directory ('sub/a.png'). "
     "The browse button fills it in. Nothing is uploaded or copied."
+)
+_LOAD_CROP_TOOLTIP = (
+    "An optional crop as left,top,width,height in pixels of the upright image; blank loads the whole image. "
+    "The crop button fills it in and the frontend hides it. A box reaching past the image is cut to it."
 )
 
 
@@ -304,40 +308,51 @@ class ArisuPreviewSaveImageUpscale(io.ComfyNode):
         return _preview_output(images, cls, path=path, upscale_model=upscale_model)
 
 
-def _load_image(path: str) -> torch.Tensor:
-    """Decode an image file the way **Load Image** decodes its pixels.
+def _load_image(path: str, crop: Optional[CropBox]) -> torch.Tensor:
+    """Decode an image file the way **Load Image** decodes its pixels, then crop it.
 
     Every frame of an animated file becomes one image of the batch; frames of
     a different size than the first are skipped. An alpha channel is dropped.
+    The crop applies after the EXIF transpose, in the pixel space the node
+    preview shows, and identically to every frame; nothing is resized.
 
     Args:
         path: The absolute path of the file.
+        crop: The box to keep, or ``None`` for the whole image.
 
     Returns:
         The images as ``[B, H, W, 3]``, float32 in ``[0, 1]``.
+
+    Raises:
+        ValueError: If the crop lies wholly outside the image.
     """
     images: List[torch.Tensor] = []
     size: Optional[Tuple[int, int]] = None
+    box: Optional[Tuple[int, int, int, int]] = None
     with node_helpers.pillow(Image.open, path) as file:
         for raw in ImageSequence.Iterator(file):
             frame = node_helpers.pillow(ImageOps.exif_transpose, raw)
             rgb = frame.convert("RGB")
             if size is None:
                 size = rgb.size
+                box = crop_box(crop, size) if crop else None
             if rgb.size != size:
                 continue
+            if box is not None:
+                rgb = rgb.crop(box)
             images.append(torch.from_numpy(np.array(rgb).astype(np.float32) / 255.0)[None])
     return torch.cat(images)
 
 
 class ArisuLoadImage(io.ComfyNode):
-    """Load one image from any path on the host, picked through a browse dialog.
+    """Load one image from any path on the host, picked through a browse dialog, optionally cropped.
 
     **Load Image** lists the top level of the input directory and brings other
     files in by copying them there. This node takes a path instead: the pack's
     frontend script adds a ``browse`` button that opens a directory browser
     backed by the ``/arisu/browse`` and ``/arisu/view`` routes, and the picked
-    file is read in place at run time. Nothing is uploaded or copied.
+    file is read in place at run time. Nothing is uploaded or copied. A second
+    button opens a crop dialog whose result lands in the hidden ``crop`` input.
     """
 
     @classmethod
@@ -345,7 +360,7 @@ class ArisuLoadImage(io.ComfyNode):
         """Declare the node's id, category, inputs and outputs.
 
         Returns:
-            The schema with the path field and the IMAGE output.
+            The schema with the path and crop fields and the IMAGE output.
         """
         return io.Schema(
             node_id="ArisuLoadImage",
@@ -354,35 +369,48 @@ class ArisuLoadImage(io.ComfyNode):
             search_aliases=["load image path", "browse image", "image picker"],
             description=(
                 "Load one image from any path on this machine, picked with the browse button or typed: absolute, ~, or "
-                "relative to the input directory. Same file types and image output as Load Image; nothing is uploaded or copied."
+                "relative to the input directory, and optionally cropped in a dialog. Same file types and image output as "
+                "Load Image; nothing is uploaded or copied."
             ),
-            inputs=[io.String.Input("path", default="", tooltip=_LOAD_PATH_TOOLTIP)],
+            inputs=[
+                io.String.Input("path", default="", tooltip=_LOAD_PATH_TOOLTIP),
+                io.String.Input("crop", default="", tooltip=_LOAD_CROP_TOOLTIP),
+            ],
             outputs=[io.Image.Output("image", tooltip="The image, or every frame of an animated file as a batch.")],
         )
 
     @classmethod
-    def execute(cls, path: str) -> io.NodeOutput:
-        """Read and decode the file at ``path``.
+    def execute(cls, path: str, crop: str = "") -> io.NodeOutput:
+        """Read and decode the file at ``path``, cropped to ``crop`` when one is set.
 
         Args:
             path: The widget value; see ``core.resolve_image_path`` for the accepted forms.
+            crop: The hidden crop widget; see ``core.parse_crop`` for the format.
 
         Returns:
             The image batch.
         """
-        return io.NodeOutput(_load_image(resolve_image_path(path, folder_paths.get_input_directory())))
+        return io.NodeOutput(_load_image(resolve_image_path(path, folder_paths.get_input_directory()), parse_crop(crop)))
 
     @classmethod
-    def validate_inputs(cls, path: Optional[str] = None) -> Union[bool, str]:
-        """Check that ``path`` names an existing image file before the prompt runs.
+    def validate_inputs(cls, path: Optional[str] = None, crop: Optional[str] = None) -> Union[bool, str]:
+        """Check that ``path`` names an existing image file and ``crop`` is well formed before the prompt runs.
+
+        Whether the crop fits the image needs the decoded size, so that is
+        checked at run time.
 
         Args:
             path: The widget value; ``None`` when the input is fed by a link, which
                 the executor leaves out of validation.
+            crop: The crop widget value, ``None`` likewise.
 
         Returns:
             ``True`` when the file can be loaded, otherwise the error to show.
         """
+        try:
+            parse_crop(crop)
+        except (TypeError, ValueError) as error:
+            return str(error)
         if path is None:
             return True
         try:
@@ -396,14 +424,16 @@ class ArisuLoadImage(io.ComfyNode):
         return True
 
     @classmethod
-    def fingerprint_inputs(cls, path: Optional[str] = None) -> Optional[str]:
+    def fingerprint_inputs(cls, path: Optional[str] = None, crop: Optional[str] = None) -> Optional[str]:
         """Change the node's cache key when the file changes on disk.
 
         The path, size and modification time stand in for a content hash, so a
-        large file is not re-read on every queue.
+        large file is not re-read on every queue. The crop needs no part here:
+        the cache key already holds every input value.
 
         Args:
             path: The widget value; ``None`` when fed by a link.
+            crop: The crop widget value; unused.
 
         Returns:
             The fingerprint, or ``None`` when there is nothing to fingerprint.

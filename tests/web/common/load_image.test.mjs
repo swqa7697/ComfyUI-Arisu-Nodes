@@ -1,6 +1,6 @@
 // Load Image (Browse)'s browse button: the listings it fetches, the tree it builds from them, the
 // path it writes into the widget (the value core.resolve_image_path accepts on the other side), the
-// node preview, and how failures are reported.
+// node preview, and how failures are reported. The crop button has its own file.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
@@ -30,21 +30,24 @@ function listing(path, parent, dirs, files, ancestors = []) {
   return { path, parent, dirs, files, ancestors, roots: ROOTS, places: PLACES };
 }
 
-/** A node with its path widget at `value`, after LiteGraph created it, so it carries the browse button. */
+/** A node with its path widget at `value` and a blank crop, after LiteGraph created it, so it carries the buttons. */
 function makeLoadNode(value) {
   const node = makeNode({
     id: 3,
     type: 'ArisuLoadImage',
     graph: app.graph,
-    widgets: [{ name: 'path', value }],
-    inputs: [{ name: 'path' }],
+    widgets: [
+      { name: 'path', value },
+      { name: 'crop', value: '' },
+    ],
+    inputs: [{ name: 'path' }, { name: 'crop' }],
   });
   LoadImage.prototype.onNodeCreated.call(node);
   return node;
 }
 
 function browseButton(node) {
-  return node.widgets.find((widget) => widget.type === 'button');
+  return node.widgets.find((widget) => widget.name === 'browse');
 }
 
 function openDialog() {
@@ -84,8 +87,15 @@ test('browse lists a directory in a tree, entering a folder refetches, and picki
   const node = makeLoadNode('');
   const picked = [];
   node.widgets[0].callback = (value) => picked.push(value);
-  // the button is a canvas control, never written into the saved workflow
+  // the buttons are canvas controls, never written into the saved workflow; the crop widget is there for the run,
+  // but out of sight and without a socket: the crop dialog is its editor
   assert.equal(browseButton(node).serialize, false);
+  assert.equal(node.widgets.find((widget) => widget.name === 'crop…').serialize, false);
+  assert.equal(node.widgets[1].hidden, true);
+  assert.deepEqual(
+    node.inputs.map((input) => input.name),
+    ['path'],
+  );
   // opening asks for the input directory (an empty path) with its chain; the tree shows the roots and the chain
   // expanded down to the current directory, the grid a thumbnail per image
   api.responses.push(
@@ -155,14 +165,18 @@ test('browse lists a directory in a tree, entering a folder refetches, and picki
     ['/home/ray/Pictures', false],
     ['/mnt/nas', false],
   ]);
-  // picking: the widget gets the full path and its callback, the dialog goes away, the node previews the file itself
+  // picking: the widget gets the full path and its callback, the dialog goes away, the node previews the file itself;
+  // a crop belonged to the previous file and goes
+  node.widgets[1].value = '1,1,2,2';
   await byClass(dialog, 'arisu-browser-file')[0].onclick();
   assert.equal(node.widgets[0].value, `${PLACES.input}/clips/c.jpg`);
   assert.deepEqual(picked, [`${PLACES.input}/clips/c.jpg`]);
+  assert.equal(node.widgets[1].value, '');
   assert.equal(dialog.open, false);
   assert.equal(openDialog(), undefined);
   assert.equal(query(node.imgs[0].src).path, `${PLACES.input}/clips/c.jpg`);
   assert.equal(query(node.imgs[0].src).max, undefined);
+  assert.equal(query(node.imgs[0].src).crop, undefined);
   assert.equal(node.imageIndex, 0);
   assert.equal(node.previewMediaType, 'image');
   assert.deepEqual(toastSeverities(), []);
