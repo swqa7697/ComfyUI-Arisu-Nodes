@@ -5,10 +5,12 @@ from __future__ import annotations
 from pathlib import Path
 
 import folder_paths
+import numpy as np
 import pytest
 import torch
+from PIL import Image
 
-from src.arisu_nodes.common.nodes import ArisuExtractLastImages, ArisuPreviewSaveImage, ArisuPreviewSaveImageUpscale
+from src.arisu_nodes.common.nodes import ArisuExtractLastImages, ArisuLoadImage, ArisuPreviewSaveImage, ArisuPreviewSaveImageUpscale
 
 pytestmark = pytest.mark.comfyui
 
@@ -49,3 +51,39 @@ def test_preview_save_nodes_pass_through_and_only_write_the_preview(tmp_path: Pa
     assert out.ui["upscale_model"] == ["none"]
     assert len(out.ui["images"]) == 2
     assert not (tmp_path / "output").exists()
+
+
+def test_load_image_decodes_like_the_stock_loader(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(folder_paths, "input_directory", str(tmp_path / "input"))
+    (tmp_path / "input" / "sub").mkdir(parents=True)
+    rgba = np.zeros((4, 6, 4), dtype=np.uint8)
+    rgba[..., 0] = 255
+    rgba[..., 3] = 51
+    Image.fromarray(rgba, "RGBA").save(tmp_path / "input" / "sub" / "a.png")
+    Image.fromarray(np.full((3, 5, 3), 128, dtype=np.uint8)).save(tmp_path / "elsewhere.jpg")
+    frames = [Image.fromarray(np.full((2, 2, 3), value, dtype=np.uint8)) for value in (0, 255)]
+    frames[0].save(tmp_path / "anim.gif", save_all=True, append_images=frames[1:])
+
+    # a path relative to the input directory: RGB pixels, mask = 1 - alpha
+    image, mask = ArisuLoadImage.execute(path="sub/a.png").args
+    assert image.shape == (1, 4, 6, 3) and mask.shape == (1, 4, 6)
+    assert torch.allclose(image[0, 0, 0], torch.tensor([1.0, 0.0, 0.0]))
+    assert torch.allclose(mask, torch.full((1, 4, 6), 1 - 51 / 255), atol=1e-6)
+    # an absolute path outside the input directory; no alpha gives Load Image's 64x64 zero mask
+    image, mask = ArisuLoadImage.execute(path=str(tmp_path / "elsewhere.jpg")).args
+    assert image.shape == (1, 3, 5, 3) and torch.equal(mask, torch.zeros(1, 64, 64))
+    # every frame of an animation is one image of the batch
+    image, _ = ArisuLoadImage.execute(path=str(tmp_path / "anim.gif")).args
+    assert image.shape == (2, 2, 2, 3)
+
+    # validation before the run: a linked input passes; blank, missing and non-image paths are refused by name
+    assert ArisuLoadImage.validate_inputs() is True
+    assert ArisuLoadImage.validate_inputs(path="sub/a.png") is True
+    (tmp_path / "notes.txt").write_text("x")
+    for bad in ["", "sub/missing.png", str(tmp_path / "notes.txt")]:
+        assert isinstance(ArisuLoadImage.validate_inputs(path=bad), str), f"case={bad!r}"
+    # the cache key follows the file on disk
+    assert ArisuLoadImage.fingerprint_inputs() is None
+    before = ArisuLoadImage.fingerprint_inputs(path="sub/a.png")
+    Image.fromarray(rgba[:, :3], "RGBA").save(tmp_path / "input" / "sub" / "a.png")
+    assert ArisuLoadImage.fingerprint_inputs(path="sub/a.png") != before

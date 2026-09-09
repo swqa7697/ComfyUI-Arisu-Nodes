@@ -6,11 +6,13 @@ the project's own environment, without torch or ComfyUI on the path.
 
 from __future__ import annotations
 
+import mimetypes
+import os
 import os.path
 import posixpath
 import string
 from dataclasses import dataclass
-from typing import Any, Dict, List, Sequence, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 MAX_PATH_SEGMENTS = 16
 PATH_SEPARATOR = "/"
@@ -23,6 +25,14 @@ NO_UPSCALE = "none"
 SAVE_IMAGE_ROUTE = "/arisu/save_image"
 PREVIEW_FOLDER_TYPE = "temp"
 _PREVIEW_KEYS = ("filename", "subfolder", "type")
+
+# Load Image (Browse): the routes behind the browse dialog and the node preview,
+# the MIME major type ComfyUI's image loaders list, and the thumbnail bounds.
+BROWSE_ROUTE = "/arisu/browse"
+VIEW_ROUTE = "/arisu/view"
+IMAGE_CONTENT_TYPE = "image"
+MIN_THUMBNAIL = 16
+MAX_THUMBNAIL = 4096
 
 
 @dataclass(frozen=True)
@@ -41,6 +51,24 @@ class SaveRequest:
     previews: Tuple[PreviewRef, ...]
     path: str
     upscale_model: str
+
+
+@dataclass(frozen=True)
+class DirectoryListing:
+    """One directory as the browse route reports it: its subdirectories and image files, by name."""
+
+    path: str
+    parent: Optional[str]
+    dirs: Tuple[str, ...]
+    files: Tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class ViewRequest:
+    """A validated view request: the image file to serve and the thumbnail bound, if any."""
+
+    path: str
+    max_size: Optional[int]
 
 
 def join_path(segments: Sequence[str]) -> str:
@@ -176,3 +204,128 @@ def preview_file_path(base_dir: str, ref: PreviewRef) -> str:
     if os.path.commonpath((folder, base_dir)) != base_dir:
         raise ValueError(f"invalid preview subfolder {ref.subfolder!r}")
     return os.path.join(folder, os.path.basename(ref.filename))
+
+
+def is_image_file(name: str) -> bool:
+    """Whether ComfyUI's image loaders would list ``name``.
+
+    Mirrors ``folder_paths.filter_files_content_types(files, ["image"])`` for
+    one name: the guessed MIME type's major type is ``image``. There is no
+    fixed extension list; the interpreter's ``mimetypes`` table decides, as it
+    does for **Load Image**.
+
+    Args:
+        name: A file name or path; only the extension matters.
+
+    Returns:
+        ``True`` for an image type, ``False`` for anything else or no known type.
+    """
+    mime_type, _ = mimetypes.guess_type(name, strict=False)
+    return mime_type is not None and mime_type.split("/")[0] == IMAGE_CONTENT_TYPE
+
+
+def resolve_image_path(value: Any, input_dir: str) -> str:
+    """Turn the ``path`` widget of **Load Image (Browse)** into an absolute file path.
+
+    Three forms are accepted: an absolute path, a ``~`` path, and a path
+    relative to ComfyUI's input directory (``sub/a.png``). Whether the file
+    exists is not checked here.
+
+    Args:
+        value: The widget value.
+        input_dir: ComfyUI's input directory, the base for relative paths.
+
+    Returns:
+        The normalized absolute path.
+
+    Raises:
+        ValueError: If the value is not a string or is blank.
+    """
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("path must not be blank")
+    path = os.path.expanduser(value.strip())
+    if not os.path.isabs(path):
+        path = os.path.join(input_dir, path)
+    return os.path.abspath(path)
+
+
+def browse_directory(path: str) -> DirectoryListing:
+    """List the subdirectories and image files of ``path`` for the browse dialog.
+
+    A file path lists the directory holding it, so the dialog opens where the
+    widget's current value lives. Hidden entries (names starting with ``.``)
+    are skipped, and only files passing ``is_image_file`` are reported; both
+    lists are sorted case-insensitively.
+
+    Args:
+        path: A directory, or a file inside the directory to list.
+
+    Returns:
+        The listing; ``parent`` is ``None`` at a filesystem root.
+
+    Raises:
+        FileNotFoundError: If ``path`` does not exist.
+        NotADirectoryError: If ``path`` is neither a directory nor a file.
+        PermissionError: If the directory cannot be read.
+    """
+    path = os.path.abspath(path)
+    if os.path.isfile(path):
+        path = os.path.dirname(path)
+    dirs: List[str] = []
+    files: List[str] = []
+    with os.scandir(path) as entries:
+        for entry in entries:
+            if entry.name.startswith("."):
+                continue
+            if entry.is_dir():
+                dirs.append(entry.name)
+            elif entry.is_file() and is_image_file(entry.name):
+                files.append(entry.name)
+    parent = os.path.dirname(path)
+    return DirectoryListing(
+        path=path,
+        parent=None if parent == path else parent,
+        dirs=tuple(sorted(dirs, key=str.casefold)),
+        files=tuple(sorted(files, key=str.casefold)),
+    )
+
+
+def parse_browse_request(query: Mapping[str, str], input_dir: str) -> str:
+    """The directory a browse request asks for; the input directory when ``path`` is missing or blank.
+
+    Args:
+        query: The request's query parameters.
+        input_dir: ComfyUI's input directory, the dialog's starting point.
+
+    Returns:
+        The absolute path to list, ``~`` expanded.
+    """
+    path = query.get("path", "").strip()
+    return os.path.abspath(os.path.expanduser(path)) if path else os.path.abspath(input_dir)
+
+
+def parse_view_request(query: Mapping[str, str]) -> ViewRequest:
+    """Validate a view request: an absolute image path and an optional thumbnail bound.
+
+    Args:
+        query: The request's query parameters, ``path`` and optionally ``max``.
+
+    Returns:
+        The request; ``max_size`` is clamped to ``[MIN_THUMBNAIL, MAX_THUMBNAIL]`` or ``None`` when absent.
+
+    Raises:
+        ValueError: If ``path`` is missing, relative, or not an image type, or ``max`` is not an integer.
+    """
+    path = query.get("path", "").strip()
+    if not path or not os.path.isabs(path):
+        raise ValueError("path must be an absolute file path")
+    if not is_image_file(path):
+        raise ValueError(f"not an image file type: {os.path.basename(path)}")
+    raw = query.get("max")
+    if raw is None:
+        return ViewRequest(path, None)
+    try:
+        size = int(raw)
+    except ValueError:
+        raise ValueError("max must be an integer") from None
+    return ViewRequest(path, min(MAX_THUMBNAIL, max(MIN_THUMBNAIL, size)))

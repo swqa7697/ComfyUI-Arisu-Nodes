@@ -1,9 +1,9 @@
-"""The HTTP route behind the Preview & Save Image nodes' save button.
+"""The common family's HTTP routes: the save button, and the browse dialog and preview of Load Image (Browse).
 
 Importing this module requires ComfyUI's source tree (aiohttp, ``folder_paths``,
-``comfy``, ``comfy_extras``) and torch. The route is registered from the pack's
-``on_load`` in the root ``__init__.py``; request validation and path containment
-live in ``core.py``.
+``comfy``, ``comfy_extras``) and torch. The routes are registered from the pack's
+``on_load`` in the root ``__init__.py``; request validation, path containment and
+directory listing live in ``core.py``.
 """
 
 from __future__ import annotations
@@ -11,19 +11,32 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+from io import BytesIO
 from typing import Any, Callable, Dict, List, Optional
 
 import comfy.model_management
 import comfy.utils
 import folder_paths
+import node_helpers
 import numpy as np
 import torch
 from aiohttp import web
 from comfy_extras.nodes_upscale_model import UpscaleModelLoader
-from PIL import Image
+from PIL import Image, ImageOps
 from PIL.PngImagePlugin import PngInfo
 
-from .core import NO_UPSCALE, SAVE_IMAGE_ROUTE, SaveRequest, parse_save_request, preview_file_path
+from .core import (
+    BROWSE_ROUTE,
+    NO_UPSCALE,
+    SAVE_IMAGE_ROUTE,
+    VIEW_ROUTE,
+    SaveRequest,
+    browse_directory,
+    parse_browse_request,
+    parse_save_request,
+    parse_view_request,
+    preview_file_path,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +50,9 @@ _COMPRESS_LEVEL = 4
 _TILE = 512
 _MIN_TILE = 128
 _OVERLAP = 32
+# The browse dialog's thumbnails and the node preview: WEBP, the format /view's own previews use.
+_THUMBNAIL_FORMAT = "WEBP"
+_THUMBNAIL_QUALITY = 80
 
 
 def register_routes(routes: web.RouteTableDef) -> None:
@@ -46,6 +62,8 @@ def register_routes(routes: web.RouteTableDef) -> None:
         routes: ``PromptServer.instance.routes`` in ComfyUI, or a fresh table in tests.
     """
     routes.post(SAVE_IMAGE_ROUTE)(_save_image)
+    routes.get(BROWSE_ROUTE)(_browse)
+    routes.get(VIEW_ROUTE)(_view)
 
 
 async def _save_image(request: web.Request) -> web.Response:
@@ -65,6 +83,64 @@ async def _save_image(request: web.Request) -> web.Response:
         logger.exception("Arisu save_image failed")
         return web.json_response({"error": str(error)}, status=500)
     return web.json_response({"saved": saved})
+
+
+async def _browse(request: web.Request) -> web.Response:
+    """List a directory for the browse dialog; see ``core.browse_directory``.
+
+    Without ``path`` the listing is ComfyUI's input directory. Directory
+    listing is blocking I/O, so it runs on a worker thread.
+    """
+    path = parse_browse_request(request.query, folder_paths.get_input_directory())
+    try:
+        listing = await asyncio.to_thread(browse_directory, path)
+    except (FileNotFoundError, NotADirectoryError):
+        return web.json_response({"error": f"no such directory: {path}"}, status=404)
+    except PermissionError:
+        return web.json_response({"error": f"permission denied: {path}"}, status=403)
+    except Exception as error:
+        logger.exception("Arisu browse failed")
+        return web.json_response({"error": str(error)}, status=500)
+    return web.json_response({"path": listing.path, "parent": listing.parent, "dirs": list(listing.dirs), "files": list(listing.files)})
+
+
+async def _view(request: web.Request) -> web.StreamResponse:
+    """Serve an image file from the host, or a thumbnail of it when ``max`` is given.
+
+    Only files whose name passes ComfyUI's image filter are served; see
+    ``core.parse_view_request``. Decoding for a thumbnail runs on a worker thread.
+    """
+    try:
+        req = parse_view_request(request.query)
+    except ValueError as error:
+        return web.json_response({"error": str(error)}, status=400)
+    if not os.path.isfile(req.path):
+        return web.json_response({"error": f"no image file at {req.path}"}, status=404)
+    if req.max_size is None:
+        return web.FileResponse(req.path)
+    try:
+        body = await asyncio.to_thread(thumbnail, req.path, req.max_size)
+    except (OSError, ValueError) as error:  # what Pillow raises for a listed type it cannot decode, SVG for one
+        return web.json_response({"error": f"cannot render {os.path.basename(req.path)}: {error}"}, status=415)
+    return web.Response(body=body, content_type="image/webp")
+
+
+def thumbnail(path: str, max_size: int) -> bytes:
+    """``path`` downscaled to fit in ``max_size`` pixels, as WEBP; the first frame of an animation.
+
+    Args:
+        path: An image file.
+        max_size: The bound on both sides; a smaller image is not enlarged.
+
+    Returns:
+        The encoded thumbnail.
+    """
+    with node_helpers.pillow(Image.open, path) as image:
+        frame = node_helpers.pillow(ImageOps.exif_transpose, image)
+        frame.thumbnail((max_size, max_size))
+        buffer = BytesIO()
+        frame.save(buffer, format=_THUMBNAIL_FORMAT, quality=_THUMBNAIL_QUALITY)
+    return buffer.getvalue()
 
 
 def _save(req: SaveRequest) -> List[Dict[str, str]]:

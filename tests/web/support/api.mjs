@@ -6,6 +6,9 @@ export const api = {
   calls: [],
   responses: [],
   queued: [],
+  apiURL(route) {
+    return `/api${route}`;
+  },
   async fetchApi(route, init) {
     this.calls.push({ route, init });
     const next = this.responses.shift();

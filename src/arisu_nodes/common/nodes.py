@@ -6,13 +6,17 @@ Importing this module requires ComfyUI's source tree and virtual environment
 
 from __future__ import annotations
 
-from typing import List, Type
+import os
+from typing import List, Optional, Tuple, Type, Union
 
 import folder_paths
+import node_helpers
+import numpy as np
 import torch
 from comfy_api.latest import io, ui
+from PIL import Image, ImageOps, ImageSequence
 
-from .core import MAX_PATH_SEGMENTS, NO_UPSCALE, join_path, tail_start
+from .core import MAX_PATH_SEGMENTS, NO_UPSCALE, is_image_file, join_path, resolve_image_path, tail_start
 
 UPSCALE_MODELS_FOLDER = "upscale_models"
 _PATH_TOOLTIP = (
@@ -20,6 +24,12 @@ _PATH_TOOLTIP = (
     "filename_prefix rules. 'shots/a' saves output/shots/a_00001_.png; %year%, %width% and the like are expanded; "
     "absolute paths and '..' are refused."
 )
+_LOAD_PATH_TOOLTIP = (
+    "The image file: an absolute path, a ~ path, or a path relative to ComfyUI's input directory ('sub/a.png'). "
+    "The browse button fills it in. Nothing is uploaded or copied."
+)
+# Load Image's mask for an image without an alpha channel.
+_EMPTY_MASK_SIZE = 64
 
 
 def _segment_inputs() -> List[io.Input]:
@@ -296,4 +306,134 @@ class ArisuPreviewSaveImageUpscale(io.ComfyNode):
         return _preview_output(images, cls, path=path, upscale_model=upscale_model)
 
 
-NODES: List[Type[io.ComfyNode]] = [ArisuPathBuilder, ArisuExtractLastImages, ArisuPreviewSaveImage, ArisuPreviewSaveImageUpscale]
+def _load_image(path: str) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Decode an image file the way **Load Image** does.
+
+    Every frame of an animated file becomes one image of the batch; frames of
+    a different size than the first are skipped. The mask is the inverted
+    alpha channel, or a 64x64 zero mask when the image has none.
+
+    Args:
+        path: The absolute path of the file.
+
+    Returns:
+        The images as ``[B, H, W, 3]`` and the masks as ``[B, H, W]``, float32 in ``[0, 1]``.
+    """
+    images: List[torch.Tensor] = []
+    masks: List[torch.Tensor] = []
+    size: Optional[Tuple[int, int]] = None
+    with node_helpers.pillow(Image.open, path) as file:
+        for raw in ImageSequence.Iterator(file):
+            frame = node_helpers.pillow(ImageOps.exif_transpose, raw)
+            rgb = frame.convert("RGB")
+            if size is None:
+                size = rgb.size
+            if rgb.size != size:
+                continue
+            images.append(torch.from_numpy(np.array(rgb).astype(np.float32) / 255.0)[None])
+            if "A" in frame.getbands():
+                masks.append(1.0 - torch.from_numpy(np.array(frame.getchannel("A")).astype(np.float32) / 255.0)[None])
+            else:
+                masks.append(torch.zeros((1, _EMPTY_MASK_SIZE, _EMPTY_MASK_SIZE), dtype=torch.float32))
+    return torch.cat(images), torch.cat(masks)
+
+
+class ArisuLoadImage(io.ComfyNode):
+    """Load one image from any path on the host, picked through a browse dialog.
+
+    **Load Image** lists the top level of the input directory and brings other
+    files in by copying them there. This node takes a path instead: the pack's
+    frontend script adds a ``browse`` button that opens a directory browser
+    backed by the ``/arisu/browse`` and ``/arisu/view`` routes, and the picked
+    file is read in place at run time. Nothing is uploaded or copied.
+    """
+
+    @classmethod
+    def define_schema(cls) -> io.Schema:
+        """Declare the node's id, category, inputs and outputs.
+
+        Returns:
+            The schema with the path field and the IMAGE and MASK outputs of Load Image.
+        """
+        return io.Schema(
+            node_id="ArisuLoadImage",
+            display_name="Load Image (Browse)",
+            category="Arisu Nodes/Common",
+            search_aliases=["load image path", "browse image", "image picker"],
+            description=(
+                "Load one image from any path on this machine, picked with the browse button or typed: absolute, ~, or "
+                "relative to the input directory. Same file types and outputs as Load Image; nothing is uploaded or copied."
+            ),
+            inputs=[io.String.Input("path", default="", tooltip=_LOAD_PATH_TOOLTIP)],
+            outputs=[
+                io.Image.Output("image", tooltip="The image, or every frame of an animated file as a batch."),
+                io.Mask.Output("mask", tooltip="The inverted alpha channel, or a 64x64 zero mask when the image has none."),
+            ],
+        )
+
+    @classmethod
+    def execute(cls, path: str) -> io.NodeOutput:
+        """Read and decode the file at ``path``.
+
+        Args:
+            path: The widget value; see ``core.resolve_image_path`` for the accepted forms.
+
+        Returns:
+            The image batch and its masks.
+        """
+        image, mask = _load_image(resolve_image_path(path, folder_paths.get_input_directory()))
+        return io.NodeOutput(image, mask)
+
+    @classmethod
+    def validate_inputs(cls, path: Optional[str] = None) -> Union[bool, str]:
+        """Check that ``path`` names an existing image file before the prompt runs.
+
+        Args:
+            path: The widget value; ``None`` when the input is fed by a link, which
+                the executor leaves out of validation.
+
+        Returns:
+            ``True`` when the file can be loaded, otherwise the error to show.
+        """
+        if path is None:
+            return True
+        try:
+            resolved = resolve_image_path(path, folder_paths.get_input_directory())
+        except ValueError as error:
+            return str(error)
+        if not os.path.isfile(resolved):
+            return f"no image file at {resolved}"
+        if not is_image_file(resolved):
+            return f"not an image file type: {os.path.basename(resolved)}"
+        return True
+
+    @classmethod
+    def fingerprint_inputs(cls, path: Optional[str] = None) -> Optional[str]:
+        """Change the node's cache key when the file changes on disk.
+
+        The path, size and modification time stand in for a content hash, so a
+        large file is not re-read on every queue.
+
+        Args:
+            path: The widget value; ``None`` when fed by a link.
+
+        Returns:
+            The fingerprint, or ``None`` when there is nothing to fingerprint.
+        """
+        if path is None:
+            return None
+        try:
+            resolved = resolve_image_path(path, folder_paths.get_input_directory())
+            stat = os.stat(resolved)
+        except (OSError, ValueError):
+            return path
+        return f"{resolved}:{stat.st_mtime_ns}:{stat.st_size}"
+
+
+NODES: List[Type[io.ComfyNode]] = [
+    ArisuPathBuilder,
+    ArisuExtractLastImages,
+    ArisuPreviewSaveImage,
+    ArisuPreviewSaveImageUpscale,
+    ArisuLoadImage,
+]
