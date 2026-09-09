@@ -28,8 +28,6 @@ _LOAD_PATH_TOOLTIP = (
     "The image file: an absolute path, a ~ path, or a path relative to ComfyUI's input directory ('sub/a.png'). "
     "The browse button fills it in. Nothing is uploaded or copied."
 )
-# Load Image's mask for an image without an alpha channel.
-_EMPTY_MASK_SIZE = 64
 
 
 def _segment_inputs() -> List[io.Input]:
@@ -306,21 +304,19 @@ class ArisuPreviewSaveImageUpscale(io.ComfyNode):
         return _preview_output(images, cls, path=path, upscale_model=upscale_model)
 
 
-def _load_image(path: str) -> Tuple[torch.Tensor, torch.Tensor]:
-    """Decode an image file the way **Load Image** does.
+def _load_image(path: str) -> torch.Tensor:
+    """Decode an image file the way **Load Image** decodes its pixels.
 
     Every frame of an animated file becomes one image of the batch; frames of
-    a different size than the first are skipped. The mask is the inverted
-    alpha channel, or a 64x64 zero mask when the image has none.
+    a different size than the first are skipped. An alpha channel is dropped.
 
     Args:
         path: The absolute path of the file.
 
     Returns:
-        The images as ``[B, H, W, 3]`` and the masks as ``[B, H, W]``, float32 in ``[0, 1]``.
+        The images as ``[B, H, W, 3]``, float32 in ``[0, 1]``.
     """
     images: List[torch.Tensor] = []
-    masks: List[torch.Tensor] = []
     size: Optional[Tuple[int, int]] = None
     with node_helpers.pillow(Image.open, path) as file:
         for raw in ImageSequence.Iterator(file):
@@ -331,11 +327,7 @@ def _load_image(path: str) -> Tuple[torch.Tensor, torch.Tensor]:
             if rgb.size != size:
                 continue
             images.append(torch.from_numpy(np.array(rgb).astype(np.float32) / 255.0)[None])
-            if "A" in frame.getbands():
-                masks.append(1.0 - torch.from_numpy(np.array(frame.getchannel("A")).astype(np.float32) / 255.0)[None])
-            else:
-                masks.append(torch.zeros((1, _EMPTY_MASK_SIZE, _EMPTY_MASK_SIZE), dtype=torch.float32))
-    return torch.cat(images), torch.cat(masks)
+    return torch.cat(images)
 
 
 class ArisuLoadImage(io.ComfyNode):
@@ -353,7 +345,7 @@ class ArisuLoadImage(io.ComfyNode):
         """Declare the node's id, category, inputs and outputs.
 
         Returns:
-            The schema with the path field and the IMAGE and MASK outputs of Load Image.
+            The schema with the path field and the IMAGE output.
         """
         return io.Schema(
             node_id="ArisuLoadImage",
@@ -362,13 +354,10 @@ class ArisuLoadImage(io.ComfyNode):
             search_aliases=["load image path", "browse image", "image picker"],
             description=(
                 "Load one image from any path on this machine, picked with the browse button or typed: absolute, ~, or "
-                "relative to the input directory. Same file types and outputs as Load Image; nothing is uploaded or copied."
+                "relative to the input directory. Same file types and image output as Load Image; nothing is uploaded or copied."
             ),
             inputs=[io.String.Input("path", default="", tooltip=_LOAD_PATH_TOOLTIP)],
-            outputs=[
-                io.Image.Output("image", tooltip="The image, or every frame of an animated file as a batch."),
-                io.Mask.Output("mask", tooltip="The inverted alpha channel, or a 64x64 zero mask when the image has none."),
-            ],
+            outputs=[io.Image.Output("image", tooltip="The image, or every frame of an animated file as a batch.")],
         )
 
     @classmethod
@@ -379,10 +368,9 @@ class ArisuLoadImage(io.ComfyNode):
             path: The widget value; see ``core.resolve_image_path`` for the accepted forms.
 
         Returns:
-            The image batch and its masks.
+            The image batch.
         """
-        image, mask = _load_image(resolve_image_path(path, folder_paths.get_input_directory()))
-        return io.NodeOutput(image, mask)
+        return io.NodeOutput(_load_image(resolve_image_path(path, folder_paths.get_input_directory())))
 
     @classmethod
     def validate_inputs(cls, path: Optional[str] = None) -> Union[bool, str]:

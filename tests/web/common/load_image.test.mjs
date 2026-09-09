@@ -11,6 +11,12 @@ import { makeGraph, makeNode } from '../support/litegraph.mjs';
 import '../../../web/js/common/load_image.js';
 
 const LoadImage = { prototype: {} };
+// the frontend's own menu hook, installed on every node class before extensions run: it fills `options`
+// in place (null is a separator) and returns a second list LiteGraph prepends
+LoadImage.prototype.getExtraMenuOptions = (_canvas, options) => {
+  options.push({ content: 'Open Image' }, { content: 'Open in MaskEditor | Image Canvas' }, null, { content: 'Bypass' });
+  return [];
+};
 extensionNamed('Arisu.Common.LoadImage').beforeRegisterNodeDef(LoadImage, { name: 'ArisuLoadImage' });
 
 /** A node with its path widget at `value`, after LiteGraph created it, so it carries the browse button. */
@@ -94,6 +100,14 @@ test('browse lists a directory, entering a folder refetches, and picking a file 
   assert.equal(node.imageIndex, 0);
   assert.equal(node.previewMediaType, 'image');
   assert.deepEqual(toastSeverities(), []);
+  // the node previews now, so the frontend's menu hook would offer its mask editor, which cannot load a path: that entry goes
+  const options = [];
+  const extra = LoadImage.prototype.getExtraMenuOptions.call(node, {}, options);
+  assert.deepEqual(
+    options.map((option) => option?.content ?? null),
+    ['Open Image', null, 'Bypass'],
+  );
+  assert.deepEqual(extra, []);
   // a loaded workflow shows its saved file again; an empty path shows nothing
   const saved = makeLoadNode('/in/a.png');
   await LoadImage.prototype.onConfigure.call(saved);

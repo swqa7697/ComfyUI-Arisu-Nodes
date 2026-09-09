@@ -1,7 +1,7 @@
 # Load Image (Browse)
 
 Load one image from any path on the machine running ComfyUI, picked with the **browse** button or
-typed. Same file types and outputs as **Load Image**; nothing is uploaded or copied.
+typed. Same file types as **Load Image**, one `image` output; nothing is uploaded or copied.
 
 ## Why
 
@@ -26,7 +26,6 @@ to enter it and an image to pick it.
 | Output  | Type  | Description                                                                              |
 |---------|-------|------------------------------------------------------------------------------------------|
 | `image` | IMAGE | The image as `[1, H, W, 3]`; every frame of an animated file becomes one image of the batch. |
-| `mask`  | MASK  | The inverted alpha channel, or a 64x64 zero mask when the image has none, like **Load Image**. |
 
 ## Wiring
 
@@ -53,3 +52,7 @@ Load Image (Browse) ─▶ (first_frame) MiniMax H3 Hybrid to Video
   node canvas. In the Vue node renderer ("Nodes 2.0") the button and the browser work but the node
   shows no preview. If the button is missing, check the browser console for a failed load of
   `load_image.js`.
+- The node has no `mask` output and its right-click menu has no **Open in MaskEditor** entry, although
+  ComfyUI adds one to every node that shows an image: the editor reads and writes through `input/` and
+  an `image` widget, neither of which fits a path read in place. To paint or load a mask, use
+  **Load Image** on a copy under `input/`.

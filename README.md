@@ -116,8 +116,8 @@ Load one image from any path on the machine running ComfyUI. **Load Image** list
 of `input/`, and the one way to use another file is an upload that copies it there. This node holds a
 path instead, and its **browse** button opens a directory browser with thumbnails and a name filter:
 start in `input/`, walk anywhere the ComfyUI process can read, click an image, and the node shows it.
-The file is read in place at run time; nothing is uploaded or copied. Same file types and `image` /
-`mask` outputs as **Load Image**, so it drops in wherever that node was.
+The file is read in place at run time; nothing is uploaded or copied. Same file types and `image`
+output as **Load Image**; there is no `mask` output.
 
 ### All nodes
 

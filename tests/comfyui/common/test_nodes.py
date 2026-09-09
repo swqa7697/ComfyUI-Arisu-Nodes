@@ -64,16 +64,15 @@ def test_load_image_decodes_like_the_stock_loader(tmp_path: Path, monkeypatch: p
     frames = [Image.fromarray(np.full((2, 2, 3), value, dtype=np.uint8)) for value in (0, 255)]
     frames[0].save(tmp_path / "anim.gif", save_all=True, append_images=frames[1:])
 
-    # a path relative to the input directory: RGB pixels, mask = 1 - alpha
-    image, mask = ArisuLoadImage.execute(path="sub/a.png").args
-    assert image.shape == (1, 4, 6, 3) and mask.shape == (1, 4, 6)
+    # a path relative to the input directory: RGB pixels, the alpha channel dropped; the image is the one output
+    (image,) = ArisuLoadImage.execute(path="sub/a.png").args
+    assert image.shape == (1, 4, 6, 3)
     assert torch.allclose(image[0, 0, 0], torch.tensor([1.0, 0.0, 0.0]))
-    assert torch.allclose(mask, torch.full((1, 4, 6), 1 - 51 / 255), atol=1e-6)
-    # an absolute path outside the input directory; no alpha gives Load Image's 64x64 zero mask
-    image, mask = ArisuLoadImage.execute(path=str(tmp_path / "elsewhere.jpg")).args
-    assert image.shape == (1, 3, 5, 3) and torch.equal(mask, torch.zeros(1, 64, 64))
+    # an absolute path outside the input directory
+    (image,) = ArisuLoadImage.execute(path=str(tmp_path / "elsewhere.jpg")).args
+    assert image.shape == (1, 3, 5, 3)
     # every frame of an animation is one image of the batch
-    image, _ = ArisuLoadImage.execute(path=str(tmp_path / "anim.gif")).args
+    (image,) = ArisuLoadImage.execute(path=str(tmp_path / "anim.gif")).args
     assert image.shape == (2, 2, 2, 3)
 
     # validation before the run: a linked input passes; blank, missing and non-image paths are refused by name

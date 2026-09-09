@@ -10,7 +10,10 @@
 // The browser is a native <dialog>: it sits in the browser's top layer above
 // the canvas and the frontend's own layers, traps focus, and closes on Escape,
 // on the close button, or on a backdrop click. Every element is built through
-// `el()`, so the dialog touches a small DOM surface.
+// `el()`, so the dialog touches a small DOM surface. Motion and state live in
+// the stylesheet: the dialog and its rows animate on keyframes, and the
+// loading and picked states are ARIA attributes the CSS reads, so the script
+// only assigns properties.
 //
 // The preview goes through `node.imgs`, which the classic node canvas draws
 // below the widgets. The Vue node renderer ("Nodes 2.0") reads previews from
@@ -26,29 +29,58 @@ const BROWSE_ROUTE = '/arisu/browse';
 const VIEW_ROUTE = '/arisu/view';
 const THUMBNAIL_MAX = 256;
 const PREVIEW_MAX = 1024;
+/** The context-menu entry the frontend adds to every previewing node; see beforeRegisterNodeDef for why it goes. */
+const MASK_EDITOR_ENTRY = /mask ?editor/i;
 
 const STYLE = `
 .arisu-browser { width: min(1100px, 92vw); height: min(760px, 88vh); padding: 0; border: 1px solid var(--border-color, #444);
-  border-radius: 8px; background: var(--comfy-menu-bg, #202020); color: var(--fg-color, #ddd); font-family: inherit; font-size: 13px; }
-.arisu-browser[open] { display: flex; flex-direction: column; }
-.arisu-browser::backdrop { background: rgba(0, 0, 0, 0.6); }
-.arisu-browser button { background: var(--comfy-input-bg, #333); color: inherit; border: 1px solid var(--border-color, #444);
-  border-radius: 4px; padding: 4px 8px; cursor: pointer; font: inherit; }
-.arisu-browser button:disabled { opacity: 0.4; cursor: default; }
-.arisu-browser input { background: var(--comfy-input-bg, #333); color: inherit; border: 1px solid var(--border-color, #444);
-  border-radius: 4px; padding: 4px 6px; font: inherit; }
-.arisu-browser-bar { display: flex; gap: 6px; padding: 8px; border-bottom: 1px solid var(--border-color, #444); }
+  border-radius: 14px; background: var(--comfy-menu-bg, #202020); color: var(--fg-color, #ddd); font-family: inherit;
+  font-size: 13px; box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55); overflow: hidden; }
+.arisu-browser[open] { display: flex; flex-direction: column; animation: arisu-pop 220ms cubic-bezier(0.2, 0.8, 0.2, 1); }
+.arisu-browser[open]::backdrop { background: rgba(0, 0, 0, 0.55); backdrop-filter: blur(3px); animation: arisu-fade 220ms ease-out; }
+.arisu-browser :where(button, input) { font: inherit; color: inherit; border: 1px solid var(--border-color, #444); border-radius: 8px;
+  background: var(--comfy-input-bg, #333); transition: background-color 150ms ease, border-color 150ms ease, transform 150ms ease,
+  box-shadow 150ms ease; }
+.arisu-browser :where(button) { padding: 6px 12px; cursor: pointer; }
+.arisu-browser :where(input) { padding: 6px 10px; }
+.arisu-browser button:active { transform: scale(0.97); }
+.arisu-browser button:disabled { opacity: 0.4; cursor: default; pointer-events: none; }
+.arisu-browser :focus-visible { outline: 2px solid var(--p-primary-color, #6ea8fe); outline-offset: 2px; }
+.arisu-browser input:focus-visible { outline: none; border-color: var(--p-primary-color, #6ea8fe); }
+.arisu-browser-bar { display: flex; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--border-color, #444); }
+.arisu-browser-bar button:hover { border-color: var(--p-primary-color, #6ea8fe); }
 .arisu-browser-path { flex: 1; min-width: 0; }
-.arisu-browser-body { display: flex; flex: 1; min-height: 0; }
-.arisu-browser-dirs { width: 220px; overflow: auto; display: flex; flex-direction: column; gap: 2px; padding: 6px;
+.arisu-browser-body { display: flex; flex: 1; min-height: 0; transition: opacity 150ms ease; }
+.arisu-browser-body[aria-busy="true"] { opacity: 0.45; pointer-events: none; transition-delay: 200ms; }
+.arisu-browser-dirs, .arisu-browser-grid { overflow: auto; scrollbar-width: thin; scrollbar-color: var(--border-color, #444) transparent; }
+.arisu-browser-dirs { width: 240px; flex-shrink: 0; display: flex; flex-direction: column; gap: 2px; padding: 8px;
   border-right: 1px solid var(--border-color, #444); }
-.arisu-browser-dir { text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.arisu-browser-dir { flex-shrink: 0; padding: 6px 10px; text-align: left; background: none; border-color: transparent;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.arisu-browser-dir:hover { background: var(--comfy-input-bg, #333); }
 .arisu-browser-dir::before { content: '\\1F4C1  '; }
-.arisu-browser-grid { flex: 1; overflow: auto; display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px;
-  padding: 8px; align-content: start; }
-.arisu-browser-file { display: flex; flex-direction: column; gap: 4px; padding: 4px; }
-.arisu-browser-file img { width: 100%; aspect-ratio: 1; object-fit: contain; background: #111; border-radius: 4px; }
-.arisu-browser-file span { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.arisu-browser-grid { flex: 1; display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; padding: 12px;
+  align-content: start; }
+.arisu-browser-file { display: flex; flex-direction: column; gap: 6px; padding: 6px; border-color: transparent; }
+.arisu-browser-file:hover { transform: translateY(-2px); border-color: var(--p-primary-color, #6ea8fe);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.35); }
+.arisu-browser-file[aria-current="true"] { border-color: var(--p-primary-color, #6ea8fe); }
+.arisu-browser-file[aria-current="true"] span, .arisu-browser-file:hover span { color: inherit; }
+.arisu-browser-file img { width: 100%; aspect-ratio: 1; object-fit: contain; background: #111; border-radius: 6px; opacity: 0;
+  transition: opacity 250ms ease; }
+.arisu-browser-file img.arisu-loaded { opacity: 1; }
+.arisu-browser-file span { font-size: 12px; color: var(--descrip-text, #999); overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; transition: color 150ms ease; }
+.arisu-browser-dir, .arisu-browser-file { animation: arisu-rise 200ms ease-out backwards;
+  animation-delay: min(calc(var(--i, 0) * 15ms), 240ms); }
+.arisu-browser-empty { grid-column: 1 / -1; padding: 32px 12px; text-align: center; color: var(--descrip-text, #999);
+  animation: arisu-fade 200ms ease-out; }
+@keyframes arisu-pop { from { opacity: 0; transform: translateY(12px) scale(0.97); } }
+@keyframes arisu-fade { from { opacity: 0; } }
+@keyframes arisu-rise { from { opacity: 0; transform: translateY(8px); } }
+@media (prefers-reduced-motion: reduce) {
+  .arisu-browser, .arisu-browser::backdrop, .arisu-browser * { animation: none !important; transition: none !important; }
+}
 `;
 
 /** A pending preview per node, so a load that finishes after a newer pick cannot overwrite it. */
@@ -76,6 +108,11 @@ function isLinked(node, name) {
 
 function joinPath(dir, name) {
   return dir.endsWith('/') || dir.endsWith('\\') ? `${dir}${name}` : `${dir}/${name}`;
+}
+
+/** LiteGraph separates menu groups with `null` entries, hence the guard. */
+function notMaskEditor(option) {
+  return !MASK_EDITOR_ENTRY.test(option?.content ?? '');
 }
 
 /** The view route's URL for `path`, bounded to `max` pixels; `bust` defeats the browser cache for a file that may have changed. */
@@ -138,6 +175,7 @@ async function openBrowser(node) {
   const filterField = el('input', { type: 'search', placeholder: 'filter names', oninput: () => render() });
   const dirList = el('div', { className: 'arisu-browser-dirs' });
   const grid = el('div', { className: 'arisu-browser-grid' });
+  const panes = el('div', { className: 'arisu-browser-body' }, [dirList, grid]);
   const dialog = el(
     'dialog',
     {
@@ -154,7 +192,7 @@ async function openBrowser(node) {
         filterField,
         el('button', { textContent: '✕', title: 'close', onclick: () => dialog.close() }),
       ]),
-      el('div', { className: 'arisu-browser-body' }, [dirList, grid]),
+      panes,
     ],
   );
 
@@ -162,36 +200,60 @@ async function openBrowser(node) {
     return name.toLowerCase().includes(filterField.value.trim().toLowerCase());
   }
 
-  function dirRow(name) {
+  function empty(text) {
+    return el('div', { className: 'arisu-browser-empty', textContent: text });
+  }
+
+  /** `index` staggers the rise-in animation through the `--i` custom property the stylesheet reads. */
+  function dirRow(name, index) {
     return el('button', {
       className: 'arisu-browser-dir',
+      style: `--i: ${index}`,
       textContent: name,
       title: name,
       onclick: () => navigate(joinPath(listing.path, name)),
     });
   }
 
+  /** A thumbnail card; the card holding `current`, the path already in the widget, is outlined. */
+  function fileCard(name, index, current) {
+    const full = joinPath(listing.path, name);
+    const onclick = () => {
+      dialog.close();
+      return pick(node, full);
+    };
+    // onload is assigned before src: a cached thumbnail fires load as soon as src is set
+    const thumbnail = el('img', {
+      loading: 'lazy',
+      alt: name,
+      onload: (event) => {
+        event.target.className = 'arisu-loaded';
+      },
+      src: viewUrl(full, THUMBNAIL_MAX),
+    });
+    const props = {
+      className: 'arisu-browser-file',
+      style: `--i: ${index}`,
+      title: full,
+      ariaCurrent: full === current ? 'true' : null,
+      onclick,
+    };
+    return el('button', props, [thumbnail, el('span', { textContent: name })]);
+  }
+
   function render() {
     upButton.disabled = listing.parent == null;
-    dirList.replaceChildren(...listing.dirs.filter(matches).map(dirRow));
-    grid.replaceChildren(
-      ...listing.files.filter(matches).map((name) => {
-        const full = joinPath(listing.path, name);
-        const onclick = () => {
-          dialog.close();
-          return pick(node, full);
-        };
-        return el('button', { className: 'arisu-browser-file', title: full, onclick }, [
-          el('img', { src: viewUrl(full, THUMBNAIL_MAX), loading: 'lazy', alt: name }),
-          el('span', { textContent: name }),
-        ]);
-      }),
-    );
+    const current = pathWidget(node)?.value?.trim();
+    const dirs = listing.dirs.filter(matches).map(dirRow);
+    const files = listing.files.filter(matches).map((name, index) => fileCard(name, index, current));
+    dirList.replaceChildren(...(dirs.length ? dirs : [empty('No folders')]));
+    grid.replaceChildren(...(files.length ? files : [empty('No images here')]));
   }
 
   /** Fetch and show `path` (an empty path is the input directory); on failure the dialog stays for another try. */
   async function navigate(path) {
     if (path == null) return;
+    panes.ariaBusy = 'true';
     try {
       const response = await api.fetchApi(`${BROWSE_ROUTE}?${new URLSearchParams({ path })}`);
       const data = await response.json().catch(() => ({}));
@@ -201,6 +263,8 @@ async function openBrowser(node) {
       render();
     } catch (error) {
       toast('error', `Cannot open directory: ${error.message}`);
+    } finally {
+      panes.ariaBusy = 'false';
     }
   }
 
@@ -229,6 +293,19 @@ app.registerExtension({
       onConfigure?.apply(this, arguments);
       const path = pathWidget(this)?.value?.trim();
       return path ? showPreview(this, path) : undefined;
+    };
+
+    // The frontend installs getExtraMenuOptions on every node class before extensions see it, and
+    // once a node previews (`node.imgs`) it adds "Open in MaskEditor" ("| Image Canvas" in newer
+    // builds). The mask editor cannot work here: it loads the file by a `filename` query parameter
+    // and saves by uploading into input/ and writing a widget named `image`, while this node holds
+    // a `path` read in place. LiteGraph builds the menu from both the `options` array the hook
+    // mutates and the list it returns, so the entry is dropped from each.
+    const getExtraMenuOptions = nodeType.prototype.getExtraMenuOptions;
+    nodeType.prototype.getExtraMenuOptions = function (_canvas, options) {
+      const extra = getExtraMenuOptions?.apply(this, arguments);
+      options.splice(0, options.length, ...options.filter(notMaskEditor));
+      return Array.isArray(extra) ? extra.filter(notMaskEditor) : extra;
     };
   },
 });
