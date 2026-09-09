@@ -63,99 +63,24 @@ ComfyUI's console for an import error at startup.
 
 ## Nodes
 
-### MiniMax H3 Hybrid to Video
-
-`ArisuMiniMaxH3HybridToVideo` · [reference](web/docs/ArisuMiniMaxH3HybridToVideo/en.md)
-
-First/last keyframes **and** image, video, and audio references in one conditioning. ComfyUI's
-stock **MiniMax H3 Image to Video** and **MiniMax H3 Reference to Video** each build their own AV
-latent and set only their own conditioning key, so they cannot be chained — you pick one or the
-other. The H3 model already packs keyframes and references together, so this node sets both keys on
-one conditioning and returns one latent. Every keyframe and reference input is optional: connect
-what the shot needs and refer to it in the prompt with the usual `<Picture i>` / `<Video k>` /
-`<Audio j>` tags.
-
-It is a drop-in replacement for either stock node — delete it, drop this one in, reconnect. The
-**(Advanced)** variant adds `target_width` / `target_height` and a third `positive (upscaled)`
-output for two-sampler latent upscaling, where it re-encodes the original pixel keyframes at the
-upscaled size instead of handing the second sampler resampled first-pass latents.
-
-### MiniMax H3 Video Settings
-
-`ArisuMiniMaxH3VideoSettings` · [reference](web/docs/ArisuMiniMaxH3VideoSettings/en.md)
-
-One place for the canvas and the clip length, so the numbers stop being retyped into every node. An
-aspect ratio and a megapixel budget give `width` and `height` on H3's 32-pixel grid; a duration in
-seconds gives `length` on its 17k+5 frame grid. The **(Upscale)** variant adds `upscale_factor` and
-derives the target size for an upscale pass.
-
-Wire the outputs wherever you want them, or switch on `advertise`: every MiniMax H3 hybrid node in
-the root graph then takes the values without a link, and their size and length widgets grey out at
-once. Advertising is off by default and only one settings node per graph holds the slot; inside a
-subgraph, wire the outputs explicitly.
-
-### Preview & Save Image
-
-`ArisuPreviewSaveImage` · [reference](web/docs/ArisuPreviewSaveImage/en.md)
-
-Preview an image batch, pass it through unchanged, and save it only when you click **save**. A run
-writes nothing but the preview, the way **Preview Image** does; the button posts the preview to a
-route the pack registers on ComfyUI's server, which writes the images under the output directory at
-`path`. Nothing is queued, so keeping a good result costs no second run and the results you do not
-want never reach `output/`. The **(Upscale)** variant runs the selected upscale model inside that
-save, so the upscale happens once, on the images worth keeping.
-
-`path` follows **Save Image**'s `filename_prefix` rules and can be fed from **Path Builder**; saved
-files get a counter suffix, so a second click never overwrites the first.
-
-### Load Image (Browse)
-
-`ArisuLoadImage` · [reference](web/docs/ArisuLoadImage/en.md)
-
-Load one image from any path on the machine running ComfyUI. **Load Image** lists only the top level
-of `input/`, and the one way to use another file is an upload that copies it there. This node holds a
-path instead, and its **browse** button opens a directory browser with a tree of your home directory
-and mounted disks, thumbnails, and an image-name filter: start in `input/`, walk anywhere the ComfyUI
-process can read, click an image, and the node shows it at its real size; directories you use often
-can be saved as shortcuts, kept in your ComfyUI user settings. The **crop…** button opens a crop dialog
-on it: drag a box, move it, resize it by its handles, free or at a preset or custom aspect ratio; the
-crop is kept with the workflow, shown in the preview, and never resized or padded.
-The file is read in place at run time; nothing is uploaded or copied. Same file types and `image`
-output as **Load Image**; there is no `mask` output.
-
-### Resize Image
-
-`ArisuResizeImage` · [reference](web/docs/ArisuResizeImage/en.md)
-
-Every resize in one node, with only `width` and `height` on it. **Upscale Image** stretches or
-centre-crops and nothing else, so filling a canvas means hand-computed offsets for **Pad Image for
-Outpainting**, an off-centre crop means another node in front, and landing on the pixel grid a model
-wants means doing the arithmetic yourself. This node crops at a chosen anchor, pads with a colour,
-fits, or stretches, and snaps the result to a grid.
-
-The resampling method, the mode, the pad colour, the crop position and the grid sit behind a
-**settings…** button that opens them in a dialog, so the node stays two fields tall, and the result
-is shown on the node after a run, so no **Preview Image** has to hang off it. The outputs are the
-`image` and a `mask` marking the padding. It always runs on the CPU.
-
-### All nodes
+Every node the pack registers. Its reference page has the inputs, outputs, and edge cases;
+ComfyUI serves the same page in-app from a node's right-click **Help**.
 
 | Node | Category | What it does |
 |---|---|---|
-| [MiniMax H3 Hybrid to Video](web/docs/ArisuMiniMaxH3HybridToVideo/en.md) | MiniMax H3 | Keyframes and image/video/audio references in one conditioning, plus the AV latent. |
-| [MiniMax H3 Hybrid to Video (Advanced)](web/docs/ArisuMiniMaxH3HybridToVideoAdvanced/en.md) | MiniMax H3 | The same, plus a `positive (upscaled)` conditioning for two-sampler latent upscaling. |
-| [MiniMax H3 Context Latent Resize](web/docs/ArisuMiniMaxH3ContextLatentResize/en.md) *(experimental)* | MiniMax H3 | Resize a saved H3 AV latent so a motion-context clip chain can change resolution at a join. |
-| [MiniMax H3 Video Settings](web/docs/ArisuMiniMaxH3VideoSettings/en.md) | MiniMax H3 | Canvas from an aspect ratio and a megapixel budget, length from a duration in seconds. |
-| [MiniMax H3 Video Settings (Upscale)](web/docs/ArisuMiniMaxH3VideoSettingsUpscale/en.md) | MiniMax H3 | The same, plus the target size of a latent-upscale pass from an upscale factor. |
 | [Path Builder](web/docs/ArisuPathBuilder/en.md) | Common | Join separate text fields into one `/`-separated path for `filename_prefix` inputs. |
 | [Extract Last Images](web/docs/ArisuExtractLastImages/en.md) | Common | Keep the last N images of a batch, for example a decoded clip's ending frame. |
 | [Preview & Save Image](web/docs/ArisuPreviewSaveImage/en.md) | Common | Preview and pass through; save to the output directory on a button click, without a run. |
 | [Preview & Save Image (Upscale)](web/docs/ArisuPreviewSaveImageUpscale/en.md) | Common | The same, upscaling the images with the selected model as they are saved. |
 | [Load Image (Browse)](web/docs/ArisuLoadImage/en.md) | Common | Load one image from any host path, picked in a directory browser with thumbnails and cropped in a dialog if you like; nothing is uploaded. |
 | [Resize Image](web/docs/ArisuResizeImage/en.md) | Common | Crop, pad, fit or stretch an image batch to a size on a pixel grid, with the options in a dialog and the result previewed on the node. |
+| [MiniMax H3 Hybrid to Video](web/docs/ArisuMiniMaxH3HybridToVideo/en.md) | MiniMax H3 | Keyframes and image/video/audio references in one conditioning, plus the AV latent. |
+| [MiniMax H3 Hybrid to Video (Advanced)](web/docs/ArisuMiniMaxH3HybridToVideoAdvanced/en.md) | MiniMax H3 | The same, plus a `positive (upscaled)` conditioning for two-sampler latent upscaling. |
+| [MiniMax H3 Context Latent Resize](web/docs/ArisuMiniMaxH3ContextLatentResize/en.md) *(experimental)* | MiniMax H3 | Resize a saved H3 AV latent so a motion-context clip chain can change resolution at a join. |
+| [MiniMax H3 Video Settings](web/docs/ArisuMiniMaxH3VideoSettings/en.md) | MiniMax H3 | Canvas from an aspect ratio and a megapixel budget, length from a duration in seconds. |
+| [MiniMax H3 Video Settings (Upscale)](web/docs/ArisuMiniMaxH3VideoSettingsUpscale/en.md) | MiniMax H3 | The same, plus the target size of a latent-upscale pass from an upscale factor. |
 
-Categories are `Arisu Nodes/MiniMax H3` and `Arisu Nodes/Common`. Every node's inputs, outputs, and
-edge cases are documented on its reference page, which ComfyUI also serves in-app.
+Categories are `Arisu Nodes/Common` and `Arisu Nodes/MiniMax H3`.
 
 ---
 
@@ -206,19 +131,19 @@ guider `positive (upscaled)`.
 ComfyUI-Arisu-Nodes/
 ├── __init__.py                  # the module ComfyUI imports: ComfyExtension + comfy_entrypoint
 ├── src/arisu_nodes/
+│   ├── common/
+│   │   ├── core.py              # stdlib-only logic (path join, batch tail, request checks, directory listing)
+│   │   ├── nodes.py             # io.ComfyNode classes; needs comfy_api + torch
+│   │   └── routes.py            # HTTP routes behind the frontend buttons; registered from on_load
 │   ├── minimax_h3/
 │   │   ├── core.py              # stdlib-only logic (geometry, frame grids); no torch
 │   │   └── nodes.py             # io.ComfyNode classes; needs comfy_api + torch
-│   ├── common/
-│   │   ├── core.py              # stdlib-only logic (path join, batch tail, request checks, directory listing)
-│   │   ├── nodes.py             # Path Builder, Extract Last Images, Preview & Save Image, Load Image (Browse)
-│   │   └── routes.py            # the save button's and the browse dialog's HTTP routes; registered from on_load
 │   └── anima/                   # reserved
 ├── web/
 │   ├── docs/<node_id>/en.md     # in-app node help pages
-│   └── js/<family>/*.js         # frontend scripts (Path Builder, save and browse buttons, settings advertising)
+│   └── js/<family>/*.js         # frontend scripts: node widgets, buttons, and dialogs
 ├── tests/
-│   ├── unit/                    # ComfyUI-free lane; what the PR gate runs
+│   ├── unit/                    # ComfyUI-free lane; runs on the project venv alone
 │   ├── comfyui/                 # loads the pack like ComfyUI; needs its interpreter
 │   ├── web/                     # drives web/js on Node's built-in runner; fakes in web/support/
 │   └── support/                 # shared fakes for the ComfyUI lane
@@ -264,9 +189,10 @@ make build            # wheel + sdist into dist/
 
 The unit lane needs nothing but the project venv; the web lane needs only Node (no `package.json`,
 no `node_modules`); the ComfyUI lane runs on ComfyUI's own interpreter and **writes nothing** into
-that install, reading `COMFYUI_PATH` (default `~/apps/comfyui`). [CLAUDE.md](CLAUDE.md) has the rest: the `core.py` / `nodes.py` split every node
-follows, the rules that keep the test suite small, the steps for adding a node, and the release
-flow. Release history is in [CHANGELOG.md](CHANGELOG.md).
+that install, reading `COMFYUI_PATH` (default `~/apps/comfyui`). [CLAUDE.md](CLAUDE.md) has the
+rest: the `core.py` / `nodes.py` split every node follows, the rules that keep the test suite
+small, the steps for adding a node, and the release flow. Release history is in
+[CHANGELOG.md](CHANGELOG.md).
 
 For VS Code, copy [.vscode/settings.example.jsonc](.vscode/settings.example.jsonc) to
 `.vscode/settings.json` and replace `/PATH/TO/ComfyUI` so Pylance can resolve `comfy_api` and torch;
