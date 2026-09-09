@@ -108,6 +108,36 @@ save, so the upscale happens once, on the images worth keeping.
 `path` follows **Save Image**'s `filename_prefix` rules and can be fed from **Path Builder**; saved
 files get a counter suffix, so a second click never overwrites the first.
 
+### Load Image (Browse)
+
+`ArisuLoadImage` · [reference](web/docs/ArisuLoadImage/en.md)
+
+Load one image from any path on the machine running ComfyUI. **Load Image** lists only the top level
+of `input/`, and the one way to use another file is an upload that copies it there. This node holds a
+path instead, and its **browse** button opens a directory browser with a tree of your home directory
+and mounted disks, thumbnails, and an image-name filter: start in `input/`, walk anywhere the ComfyUI
+process can read, click an image, and the node shows it at its real size; directories you use often
+can be saved as shortcuts, kept in your ComfyUI user settings. The **crop…** button opens a crop dialog
+on it: drag a box, move it, resize it by its handles, free or at a preset or custom aspect ratio; the
+crop is kept with the workflow, shown in the preview, and never resized or padded.
+The file is read in place at run time; nothing is uploaded or copied. Same file types and `image`
+output as **Load Image**; there is no `mask` output.
+
+### Resize Image
+
+`ArisuResizeImage` · [reference](web/docs/ArisuResizeImage/en.md)
+
+Every resize in one node, with only `width` and `height` on it. **Upscale Image** stretches or
+centre-crops and nothing else, so filling a canvas means hand-computed offsets for **Pad Image for
+Outpainting**, an off-centre crop means another node in front, and landing on the pixel grid a model
+wants means doing the arithmetic yourself. This node crops at a chosen anchor, pads with a colour,
+fits, or stretches, and snaps the result to a grid.
+
+The resampling method, the mode, the pad colour, the crop position and the grid sit behind a
+**settings…** button that opens them in a dialog, so the node stays two fields tall, and the result
+is shown on the node after a run, so no **Preview Image** has to hang off it. The outputs are the
+`image` and a `mask` marking the padding. It always runs on the CPU.
+
 ### All nodes
 
 | Node | Category | What it does |
@@ -121,6 +151,8 @@ files get a counter suffix, so a second click never overwrites the first.
 | [Extract Last Images](web/docs/ArisuExtractLastImages/en.md) | Common | Keep the last N images of a batch, for example a decoded clip's ending frame. |
 | [Preview & Save Image](web/docs/ArisuPreviewSaveImage/en.md) | Common | Preview and pass through; save to the output directory on a button click, without a run. |
 | [Preview & Save Image (Upscale)](web/docs/ArisuPreviewSaveImageUpscale/en.md) | Common | The same, upscaling the images with the selected model as they are saved. |
+| [Load Image (Browse)](web/docs/ArisuLoadImage/en.md) | Common | Load one image from any host path, picked in a directory browser with thumbnails and cropped in a dialog if you like; nothing is uploaded. |
+| [Resize Image](web/docs/ArisuResizeImage/en.md) | Common | Crop, pad, fit or stretch an image batch to a size on a pixel grid, with the options in a dialog and the result previewed on the node. |
 
 Categories are `Arisu Nodes/MiniMax H3` and `Arisu Nodes/Common`. Every node's inputs, outputs, and
 edge cases are documented on its reference page, which ComfyUI also serves in-app.
@@ -152,7 +184,8 @@ A MiniMax H3 workflow with the pack in it:
 2. Replace the stock conditioning node with **MiniMax H3 Hybrid to Video**. Feed it `clip` and
    `vae` from your H3 loaders, plus `audio_vae` if any audio reference is connected.
 3. Connect keyframes (`first_frame` / `last_frame`) and references (`ref_image_*`, `ref_video_*`,
-   `ref_audio_*`) in any combination — every one is optional.
+   `ref_audio_*`) in any combination — every one is optional. **Load Image (Browse)** feeds them
+   from any folder on the machine, without copying files into `input/`.
 4. Send `positive` to the sampler's positive input and `latent` to its latent input.
 5. End on **Preview & Save Image** instead of **Save Image**, and click **save** on the results
    worth keeping. **Path Builder** feeds its `path`; **Extract Last Images** grabs the ending frame
@@ -177,13 +210,13 @@ ComfyUI-Arisu-Nodes/
 │   │   ├── core.py              # stdlib-only logic (geometry, frame grids); no torch
 │   │   └── nodes.py             # io.ComfyNode classes; needs comfy_api + torch
 │   ├── common/
-│   │   ├── core.py              # stdlib-only logic (path join, batch tail, save-request checks)
-│   │   ├── nodes.py             # Path Builder, Extract Last Images, Preview & Save Image
-│   │   └── routes.py            # the save button's HTTP route; registered from on_load
+│   │   ├── core.py              # stdlib-only logic (path join, batch tail, request checks, directory listing)
+│   │   ├── nodes.py             # Path Builder, Extract Last Images, Preview & Save Image, Load Image (Browse)
+│   │   └── routes.py            # the save button's and the browse dialog's HTTP routes; registered from on_load
 │   └── anima/                   # reserved
 ├── web/
 │   ├── docs/<node_id>/en.md     # in-app node help pages
-│   └── js/<family>/*.js         # frontend scripts (Path Builder and save buttons, settings advertising)
+│   └── js/<family>/*.js         # frontend scripts (Path Builder, save and browse buttons, settings advertising)
 ├── tests/
 │   ├── unit/                    # ComfyUI-free lane; what the PR gate runs
 │   ├── comfyui/                 # loads the pack like ComfyUI; needs its interpreter

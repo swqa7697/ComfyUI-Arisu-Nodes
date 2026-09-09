@@ -1,4 +1,4 @@
-"""Round-trip tests for the save-button route, on temp and output directories under ``tmp_path``.
+"""Round-trip tests for the common family's routes, on temp, output and input directories under ``tmp_path``.
 
 Run via ``scripts/test-comfyui.sh``.
 """
@@ -6,6 +6,8 @@ Run via ``scripts/test-comfyui.sh``.
 from __future__ import annotations
 
 import asyncio
+import os
+from io import BytesIO
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
@@ -32,19 +34,35 @@ def dirs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return tmp_path
 
 
-def post(payload: Dict[str, Any]) -> Tuple[int, Dict[str, Any]]:
-    """POST ``payload`` to the save route through a real aiohttp server."""
+def call(method: str, route: str, **kwargs: Any) -> Tuple[int, Any, str]:
+    """Send one request to the pack's routes through a real aiohttp server.
 
-    async def run() -> Tuple[int, Dict[str, Any]]:
+    Returns:
+        The status, the body (decoded JSON, or the raw bytes of a file response), and the content type.
+    """
+
+    async def run() -> Tuple[int, Any, str]:
         app = web.Application()
         table = web.RouteTableDef()
         routes.register_routes(table)
         app.add_routes(table)
         async with TestClient(TestServer(app)) as client:
-            response = await client.post(routes.SAVE_IMAGE_ROUTE, json=payload)
-            return response.status, await response.json()
+            response = await client.request(method, route, **kwargs)
+            body = await response.json() if response.content_type == "application/json" else await response.read()
+            return response.status, body, response.content_type
 
     return asyncio.run(run())
+
+
+def post(payload: Dict[str, Any]) -> Tuple[int, Dict[str, Any]]:
+    """POST ``payload`` to the save route."""
+    status, body, _ = call("POST", routes.SAVE_IMAGE_ROUTE, json=payload)
+    return status, body
+
+
+def get(route: str, **params: str) -> Tuple[int, Any, str]:
+    """GET ``route`` with ``params`` as the query string."""
+    return call("GET", route, params=params)
 
 
 def pixels(path: Path) -> np.ndarray:
@@ -97,3 +115,61 @@ def test_save_route_refuses_bad_requests(dirs: Path):
         status, body = post(payload)
         assert status == expected and "error" in body, f"case={payload!r} body={body!r}"
     assert not (dirs / "output").exists()
+
+
+def test_browse_and_view_routes_list_and_serve_host_images(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(folder_paths, "input_directory", str(tmp_path / "input"))
+    pics = tmp_path / "input" / "pics"
+    pics.mkdir(parents=True)
+    Image.fromarray(np.full((20, 40, 3), 90, dtype=np.uint8)).save(pics / "wide.png")
+    (tmp_path / "input" / ".hidden.png").write_bytes(b"")
+    (tmp_path / "input" / "notes.txt").write_text("x")
+
+    monkeypatch.setattr(folder_paths, "output_directory", str(tmp_path / "output"))
+    # no path: the input directory, with its subdirectories and image files only, the tree roots (home first),
+    # the input and output places, and the ancestor chain down to the input directory's parent
+    status, body, _ = get(routes.BROWSE_ROUTE)
+    assert status == 200, body
+    assert {key: body[key] for key in ("path", "parent", "dirs", "files")} == {
+        "path": str(tmp_path / "input"),
+        "parent": str(tmp_path),
+        "dirs": ["pics"],
+        "files": [],
+    }
+    assert body["roots"][0] == {"label": "Home", "path": os.path.expanduser("~")}
+    assert body["places"] == {"input": str(tmp_path / "input"), "output": str(tmp_path / "output")}
+    assert body["ancestors"][-1]["path"] == str(tmp_path) and "input" in body["ancestors"][-1]["dirs"]
+    # a file path lists the directory holding it, and tree=0 skips the chain; a missing directory is a 404
+    status, body, _ = get(routes.BROWSE_ROUTE, path=str(pics / "wide.png"), tree="0")
+    assert status == 200 and body["path"] == str(pics) and body["files"] == ["wide.png"] and body["ancestors"] == []
+    status, body, _ = get(routes.BROWSE_ROUTE, path=str(tmp_path / "nope"))
+    assert status == 404 and "error" in body
+
+    # the file itself, then a thumbnail bounded on its longer side
+    status, body, content_type = get(routes.VIEW_ROUTE, path=str(pics / "wide.png"))
+    assert status == 200 and content_type == "image/png" and body == (pics / "wide.png").read_bytes()
+    status, body, content_type = get(routes.VIEW_ROUTE, path=str(pics / "wide.png"), max="16")
+    assert status == 200 and content_type == "image/webp"
+    with Image.open(BytesIO(body)) as thumb:
+        assert thumb.size == (16, 8)
+    # a crop in pixels of the upright image, alone or under a bound; the whole image still renders
+    for params, expected in [
+        ({"crop": "10,5,20,10"}, (20, 10)),
+        ({"crop": "10,5,20,10", "max": "16"}, (16, 8)),
+        ({"crop": "0,0,40,20"}, (40, 20)),
+    ]:
+        status, body, content_type = get(routes.VIEW_ROUTE, path=str(pics / "wide.png"), **params)
+        assert status == 200 and content_type == "image/webp", f"case={params!r}"
+        with Image.open(BytesIO(body)) as cropped:
+            assert cropped.size == expected, f"case={params!r}"
+    # refused: relative paths, non-image types, missing files, a malformed crop; a crop outside the image cannot render
+    refused = [
+        (400, {"path": "pics/wide.png"}),
+        (400, {"path": str(tmp_path / "input" / "notes.txt")}),
+        (404, {"path": str(pics / "missing.png")}),
+        (400, {"path": str(pics / "wide.png"), "crop": "x"}),
+        (415, {"path": str(pics / "wide.png"), "crop": "40,0,1,1"}),
+    ]
+    for expected, params in refused:
+        status, body, _ = get(routes.VIEW_ROUTE, **params)
+        assert status == expected and "error" in body, f"case={params!r} body={body!r}"

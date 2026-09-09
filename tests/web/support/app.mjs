@@ -1,6 +1,8 @@
 // Fake of the frontend's `app` (scripts/app.js re-exports window.comfyAPI.app.app):
-// the surface the pack's scripts touch, a toast sink, and a per-test reset.
+// the surface the pack's scripts touch, a toast sink, a settings store holding whatever
+// a script sets (a test seeds `settings` directly), and a per-test reset.
 export const toasts = [];
+export const settings = {};
 
 export const app = {
   extensions: [],
@@ -12,6 +14,14 @@ export const app = {
     toast: {
       add(message) {
         toasts.push(message);
+      },
+    },
+    setting: {
+      get(id) {
+        return settings[id];
+      },
+      async set(id, value) {
+        settings[id] = value;
       },
     },
   },
@@ -34,6 +44,7 @@ export function resetApp(graph) {
   app.nodeOutputs = {};
   app.configuringGraph = false;
   toasts.length = 0;
+  for (const id of Object.keys(settings)) delete settings[id];
 }
 
 /** The severities shown so far: the one part of a toast a test asserts, never the wording. */
