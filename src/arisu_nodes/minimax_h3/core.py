@@ -10,7 +10,7 @@ multiple, and the reference sizing rules.
 from __future__ import annotations
 
 import math
-from typing import List, Optional, Sequence, Tuple, TypeVar
+from typing import List, Sequence, Tuple, TypeVar
 
 T = TypeVar("T")
 
@@ -31,7 +31,6 @@ CLIP_FRAME_STEP = 17
 
 REF_IMAGE_SIZE_MODES = ("match", "max")
 FRAME_TAG_MODES = ("after_refs", "before_refs", "none")
-CROP_MODES = ("disabled", "center")
 # The labels of ComfyUI's core Resolution Selector node, so workflows read the same.
 ASPECT_RATIOS: Tuple[Tuple[str, int, int], ...] = (
     ("1:1 (Square)", 1, 1),
@@ -320,48 +319,6 @@ def video_frame_count(latent_t: int) -> int:
     if latent_t < 2 or (latent_t - 2) % 5 != 0:
         raise ValueError(f"an H3 video latent has 5k+2 frames along its temporal axis, got {latent_t}")
     return ((latent_t - 2) // 5) * CLIP_FRAME_STEP + MIN_CLIP_FRAMES
-
-
-def validate_context_streams(video_shape: Sequence[int], audio_shape: Sequence[int]):
-    """Check that a video/audio latent pair has the MiniMax H3 AV layout.
-
-    Args:
-        video_shape: Shape of the video stream, expected ``[B, 24, T, H/16, W/16]``
-            with ``T`` on the 5k+2 grid.
-        audio_shape: Shape of the audio stream, expected ``[B, 32, 2, T40]``.
-
-    Raises:
-        ValueError: If either stream has the wrong rank or channel count, or the
-            video length is off the grid.
-    """
-    if len(video_shape) != 5 or video_shape[1] != VIDEO_LATENT_CHANNELS:
-        raise ValueError(f"expected an H3 video latent [B, {VIDEO_LATENT_CHANNELS}, T, H, W], got shape {tuple(video_shape)}")
-    video_frame_count(video_shape[2])
-    if len(audio_shape) != 4 or audio_shape[1] != AUDIO_LATENT_CHANNELS or audio_shape[2] != AUDIO_CHANNELS:
-        raise ValueError(f"expected an H3 audio latent [B, {AUDIO_LATENT_CHANNELS}, {AUDIO_CHANNELS}, T], got shape {tuple(audio_shape)}")
-
-
-def resize_target(video_shape: Sequence[int], width: int, height: int) -> Optional[Tuple[int, int]]:
-    """Latent size a video stream must be resized to, or ``None`` when it already fits.
-
-    Args:
-        video_shape: Shape of the video stream, ``[B, C, T, H/16, W/16]``.
-        width: Target width in pixels, a multiple of 16.
-        height: Target height in pixels, a multiple of 16.
-
-    Returns:
-        ``(latent_height, latent_width)`` when the stream has to be resized,
-        ``None`` when its spatial size already matches ``width`` x ``height``.
-
-    Raises:
-        ValueError: If ``width`` or ``height`` is not a multiple of 16.
-    """
-    if width % SPATIAL_DOWNSCALE or height % SPATIAL_DOWNSCALE:
-        raise ValueError(f"width and height must be multiples of {SPATIAL_DOWNSCALE}, got {width}x{height}")
-    target = latent_size(width, height)
-    if (video_shape[3], video_shape[4]) == target:
-        return None
-    return target
 
 
 def canvas_from_megapixels(aspect_ratio: str, megapixels: float) -> Tuple[int, int]:

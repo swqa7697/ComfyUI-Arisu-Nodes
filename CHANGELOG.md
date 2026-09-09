@@ -17,6 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Calm the browse dialog: tree rows no longer animate, the image cards rise only on entering a directory, and the tree keeps its scroll position when a folder is expanded.
 
+### Removed
+
+- Remove the experimental `ArisuMiniMaxH3ContextLatentResize` node, **MiniMax H3 Context Latent Resize**, along with its help page.
+
 ## [1.0.2] - 2026-09-08
 
 ### Changed

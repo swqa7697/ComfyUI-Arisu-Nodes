@@ -20,7 +20,6 @@ from src.arisu_nodes.minimax_h3.core import (
     ref_video_canvas,
     scaled_canvas,
     temporal_shape,
-    validate_context_streams,
     video_frame_count,
     video_latent_t,
 )
@@ -76,19 +75,6 @@ def test_align_clip_frames_crops_to_the_target_and_down_to_the_grid():
     cases = [((200, 124), 124), ((30, 124), 22), ((5, 124), 5)]
     for (n_frames, frame_count), expected in cases:
         assert align_clip_frames(n_frames, frame_count) == expected, f"case={(n_frames, frame_count)!r}"
-
-
-def test_validate_context_streams_rejects_off_layout_pairs():
-    cases = [
-        ((1, 16, 37, 48, 84), (1, 32, 2, 207), "video latent"),
-        ((24, 37, 48, 84), (1, 32, 2, 207), "video latent"),
-        ((1, 24, 8, 48, 84), (1, 32, 2, 207), "5k\\+2"),
-        ((1, 24, 37, 48, 84), (1, 32, 207), "audio latent"),
-        ((1, 24, 37, 48, 84), (1, 32, 1, 207), "audio latent"),
-    ]
-    for video_shape, audio_shape, match in cases:
-        with pytest.raises(ValueError, match=match):
-            validate_context_streams(video_shape, audio_shape)
 
 
 def test_settings_maths_snap_to_the_canvas_and_frame_grids():
