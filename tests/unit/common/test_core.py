@@ -15,12 +15,10 @@ from src.arisu_nodes.common.core import (
     ResizePlan,
     SaveRequest,
     TreeLevel,
-    TreeRoot,
     ViewRequest,
     browse_directory,
     crop_box,
     join_path,
-    mount_points,
     parse_browse_request,
     parse_crop,
     parse_pad_color,
@@ -29,7 +27,6 @@ from src.arisu_nodes.common.core import (
     preview_file_path,
     resize_plan,
     resolve_image_path,
-    tree_roots,
 )
 
 
@@ -51,8 +48,7 @@ def test_parse_save_request_validates_the_button_payload():
     assert parse_save_request({"images": [image], "path": " shots/a "}) == SaveRequest(
         previews=(PreviewRef("a.png", "", "temp"),), path="shots/a", upscale_model=NO_UPSCALE
     )
-    # "a/../b" stays inside the output directory; only an escaping ".." is refused
-    assert parse_save_request({"images": [image], "path": "a/../b", "upscale_model": "4x.pth"}).upscale_model == "4x.pth"
+    assert parse_save_request({"images": [image], "path": "b", "upscale_model": "4x.pth"}).upscale_model == "4x.pth"
 
     bad = [
         ("not an object", []),
@@ -63,6 +59,8 @@ def test_parse_save_request_validates_the_button_payload():
         ("blank path", {"images": [image], "path": "  "}),
         ("absolute path", {"images": [image], "path": "/etc/passwd"}),
         ("escaping path", {"images": [image], "path": "a/../../b"}),
+        ("normalized traversal", {"images": [image], "path": "a/../b"}),
+        ("oversized batch", {"images": [image] * 257, "path": "a"}),
         ("blank model", {"images": [image], "path": "a", "upscale_model": ""}),
     ]
     for case, payload in bad:
@@ -76,11 +74,12 @@ def test_parse_save_request_validates_the_button_payload():
 def test_preview_file_path_stays_inside_the_base_directory(tmp_path: Path):
     base = str(tmp_path)
     assert preview_file_path(base, PreviewRef("a.png", "sub", "temp")) == str(tmp_path / "sub" / "a.png")
-    # only the basename of the filename counts, like ComfyUI's /view
-    assert preview_file_path(base, PreviewRef("dir/a.png", "", "temp")) == str(tmp_path / "a.png")
+    # A filename must already be a basename; never silently rewrite hostile references.
 
     escaping = [
         PreviewRef("../a.png", "", "temp"),
+        PreviewRef("dir/a.png", "", "temp"),
+        PreviewRef("dir\\a.png", "", "temp"),
         PreviewRef("/a.png", "", "temp"),
         PreviewRef("", "", "temp"),
         PreviewRef("a.png", "..", "temp"),
@@ -94,113 +93,72 @@ def test_preview_file_path_stays_inside_the_base_directory(tmp_path: Path):
         pytest.fail(f"case={ref!r} was accepted")
 
 
-def test_image_path_helpers_resolve_and_refuse(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setenv("HOME", str(tmp_path))
-    input_dir = str(tmp_path / "input")
-    # the three forms of the path widget: relative to the input directory, ~, absolute
-    resolved = [
-        ("sub/a.png", str(tmp_path / "input" / "sub" / "a.png")),
-        ("  sub/a.png  ", str(tmp_path / "input" / "sub" / "a.png")),
-        ("~/b.jpg", str(tmp_path / "b.jpg")),
-        ("/abs/c.webp", "/abs/c.webp"),
-        ("/abs/../c.webp", "/c.webp"),
-    ]
-    for value, expected in resolved:
-        assert resolve_image_path(value, input_dir) == expected, f"case={value!r}"
-    for value in ["", "   ", None, 3]:
-        with pytest.raises(ValueError):
+def test_image_path_helpers_resolve_and_refuse(tmp_path: Path):
+    base = tmp_path / "input"
+    root = base / "pics"
+    root.mkdir(parents=True)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret.png").write_bytes(b"sentinel")
+    (root / "escape").symlink_to(outside, target_is_directory=True)
+    (root / "secret.png").symlink_to(outside / "secret.png")
+    (root / "ok.jpg").write_bytes(b"")
+    (root / ".hidden.png").write_bytes(b"")
+    (root / "notes.txt").write_text("x")
+    (root / "payload.svg").write_text("<svg/>")
+    (root / "art").mkdir()
+    (base / "inside").symlink_to(root, target_is_directory=True)
+    input_dir = str(base)
+    assert resolve_image_path("pics\\ok.jpg", input_dir) == str(root / "ok.jpg")
+    assert resolve_image_path("inside/ok.jpg", input_dir) == str(root / "ok.jpg")
+    for value in [
+        "",
+        "   ",
+        None,
+        3,
+        "../outside/secret.png",
+        "pics/../pics/ok.jpg",
+        str(root / "ok.jpg"),
+        "~/ok.png",
+        "C:foo.png",
+        "C:\\foo.png",
+        "\\\\server\\share\\a.png",
+        "a.png:secret",
+        "x\x00.png",
+        "pics/escape/secret.png",
+        "pics/secret.png",
+        "NUL.png",
+        "dir./a.png",
+    ]:
+        with pytest.raises((TypeError, ValueError)):
             resolve_image_path(value, input_dir)
-
-    # a browse request defaults to the input directory and wants the tree chain unless tree=0; a view request wants an absolute image path
     assert parse_browse_request({}, input_dir) == BrowseRequest(input_dir, True)
-    assert parse_browse_request({"path": "  ", "tree": "0"}, input_dir) == BrowseRequest(input_dir, False)
-    assert parse_browse_request({"path": "~/pics"}, input_dir).path == str(tmp_path / "pics")
-    assert parse_view_request({"path": "/x/a.png"}) == ViewRequest("/x/a.png", None)
-    clamped = [("8", 16), ("256", 256), ("99999", 4096)]
-    for raw, expected in clamped:
-        assert parse_view_request({"path": "/x/a.png", "max": raw}).max_size == expected, f"case={raw!r}"
-    # the crop: four pixel integers, blank for the whole image; its box is cut to the image, the whole image is no box,
-    # and one outside the image is refused
-    crops = [("", None), ("  ", None), (None, None), ("1,2,3,4", CropBox(1, 2, 3, 4)), (" 1, 2 ,3,4 ", CropBox(1, 2, 3, 4))]
-    for value, expected in crops:
+    assert parse_browse_request({"path": "", "tree": "0"}, input_dir) == BrowseRequest(input_dir, False)
+    assert parse_view_request({"path": "pics/ok.jpg"}, input_dir) == ViewRequest(str(root / "ok.jpg"), None)
+    for raw, expected in [("8", 16), ("256", 256), ("99999", 4096)]:
+        assert parse_view_request({"path": "pics/ok.jpg", "max": raw}, input_dir).max_size == expected, f"case={raw!r}"
+    for query in [{}, {"path": "../secret.png"}, {"path": "pics/ok.jpg", "max": "big"}, {"path": "pics/ok.jpg", "crop": "1,2"}]:
+        with pytest.raises(ValueError):
+            parse_view_request(query, input_dir)
+    for value, expected in [("", None), (None, None), ("1,2,3,4", CropBox(1, 2, 3, 4))]:
         assert parse_crop(value) == expected, f"case={value!r}"
     for value in ["1,2,3", "1,2,3,4,5", "-1,0,3,4", "0,0,0,4", "0,0,4,0", "a,b,c,d", 7]:
         with pytest.raises((TypeError, ValueError)):
             parse_crop(value)
     assert crop_box(CropBox(1, 2, 3, 4), (10, 10)) == (1, 2, 4, 6)
     assert crop_box(CropBox(4, 2, 10, 10), (6, 4)) == (4, 2, 6, 4)
-    assert crop_box(CropBox(0, 0, 6, 4), (6, 4)) is None
     assert crop_box(CropBox(0, 0, 9, 9), (6, 4)) is None
     with pytest.raises(ValueError):
         crop_box(CropBox(6, 0, 1, 1), (6, 4))
-    assert parse_view_request({"path": "/x/a.png", "crop": "1,2,3,4"}) == ViewRequest("/x/a.png", None, CropBox(1, 2, 3, 4))
-    bad = [
-        ("relative", {"path": "a.png"}),
-        ("missing", {}),
-        ("not an image", {"path": "/x/notes.txt"}),
-        ("bad max", {"path": "/x/a.png", "max": "big"}),
-        ("bad crop", {"path": "/x/a.png", "crop": "1,2"}),
-    ]
-    for case, query in bad:
-        try:
-            parse_view_request(query)
-        except ValueError:
-            continue
-        pytest.fail(f"case={case!r} was accepted")
-
-    # a listing: subdirectories and image files only, hidden entries skipped, sorted case-insensitively; the home
-    # directory is the tree root here, so the chain to pics/ is the one level under it
-    home = str(tmp_path)
-    roots = (home,)
-    root = tmp_path / "pics"
-    for folder in ["Zoo", "art", ".hidden"]:
-        (root / folder).mkdir(parents=True)
-    for name in ["b.PNG", "a.jpg", ".secret.png", "notes.txt", "clip.mp4"]:
-        (root / name).write_bytes(b"")
-    listing = browse_directory(str(root), roots, home)
-    assert listing == DirectoryListing(str(root), home, ("art", "Zoo"), ("a.jpg", "b.PNG"), (TreeLevel(home, ("pics",)),))
-    # a file path lists the directory holding it, so the dialog opens where the current value lives; tree=0 skips the chain
-    assert browse_directory(str(root / "a.jpg"), roots, home) == listing
-    assert browse_directory(str(root), roots, home, with_tree=False).ancestors == ()
-    # every level keeps the directory on the chain, even a hidden one; a root itself has no chain
-    (root / ".hidden" / "deep").mkdir()
-    assert browse_directory(str(root / ".hidden" / "deep"), roots, home).ancestors == (
-        TreeLevel(home, ("pics",)),
-        TreeLevel(str(root), (".hidden", "art", "Zoo")),
-        TreeLevel(str(root / ".hidden"), ("deep",)),
-    )
-    assert browse_directory(home, roots, home).ancestors == ()
-    # restricted directories, the filesystem root and the parent of home, list no folders and show only the chain child
-    assert browse_directory(str(tmp_path.parent), roots, home).dirs == ()
-    outside = browse_directory(str(root), (str(tmp_path / "elsewhere"),), home)
-    assert outside.ancestors[0].path == "/" and outside.ancestors[0].dirs == (tmp_path.parts[1],)
-    assert outside.ancestors[-1] == TreeLevel(home, ("pics",))
-    assert browse_directory("/", roots, home).parent is None
+    listing = browse_directory(str(root), input_dir)
+    assert listing == DirectoryListing("pics", "", ("art",), ("ok.jpg",), (TreeLevel("", ("inside", "pics")),))
+    assert browse_directory(str(root / "ok.jpg"), input_dir) == listing
+    assert browse_directory(str(root), input_dir, with_tree=False).ancestors == ()
+    assert browse_directory(input_dir, input_dir).parent is None
+    with pytest.raises(ValueError):
+        browse_directory(str(outside), input_dir)
     with pytest.raises(FileNotFoundError):
-        browse_directory(str(root / "nope"), roots, home)
-
-    # tree roots: home first, then the mounted disks from the mount table, minus pseudo filesystems, the root and
-    # system mounts, /home and the home directory itself, and autofs placeholders; octal escapes are decoded
-    mounts = """\
-/dev/nvme0n1p2 / ext4 rw 0 0
-/dev/nvme0n1p1 /boot/efi vfat rw 0 0
-/dev/loop3 /snap/core/1 squashfs ro 0 0
-portal /run/user/1000/doc fuse.portal rw 0 0
-/dev/sdb1 /media/ray/My\\040USB vfat rw 0 0
-//nas/share /mnt/nas cifs rw 0 0
-//nas/comfy /mnt/.comfyui cifs rw 0 0
-auto.nas /mnt/auto autofs rw 0 0
-/dev/sda1 /home ext4 rw 0 0
-/dev/sda2 /home/ray ext4 rw 0 0
-/dev/sda3 /runtime/data ext4 rw 0 0
-"""
-    assert mount_points(mounts, "/home/ray") == ("/media/ray/My USB", "/mnt/.comfyui", "/mnt/nas", "/runtime/data")
-    assert tree_roots("/home/ray", mounts, [], [])[:3] == (
-        TreeRoot("Home", "/home/ray"),
-        TreeRoot("My USB", "/media/ray/My USB"),
-        TreeRoot(".comfyui", "/mnt/.comfyui"),
-    )
-    assert tree_roots("/Users/ray", None, ["/Volumes/USB"], []) == (TreeRoot("Home", "/Users/ray"), TreeRoot("USB", "/Volumes/USB"))
+        browse_directory(str(root / "nope"), input_dir)
 
 
 def test_resize_plan_covers_every_mode():

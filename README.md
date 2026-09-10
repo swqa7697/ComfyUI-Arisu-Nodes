@@ -59,6 +59,39 @@ Restart ComfyUI. There is no requirements step — nothing to install into Comfy
 After the restart the nodes appear under **Add Node → Arisu Nodes**. If they do not, check
 ComfyUI's console for an import error at startup.
 
+### External image directories
+
+**Load Image (Browse)** reads from the built-in `input` and `output` roots. To keep images on
+another disk or network share, the machine owner can create `arisu_paths.json` beside this pack's
+installed `__init__.py`:
+
+```json
+{
+  "roots": {
+    "photos": "/data/photos",
+    "references": "/mnt/library/references"
+  }
+}
+```
+
+Use existing absolute directories (on Windows, for example `"D:/Photos"`). Root IDs begin with a
+lowercase letter and contain at most 64 lowercase letters, digits, underscores or hyphens;
+`input` and `output` are reserved. Filesystem roots such as `/` or `C:/` are refused.
+Restart ComfyUI after editing the file, then select a root in the node or browse dialog.
+The `path` value is relative to that root, for example `portraits/a.png` under `photos`.
+The file is local configuration: keep a backup across reinstalls and do not commit or distribute it.
+A missing configuration enables only built-in roots; invalid configuration disables all external
+roots and records the reason in the server log until corrected and ComfyUI restarted.
+
+Configuring a directory permits clients of this ComfyUI server to browse it and load its images.
+Choose image-library directories you intend to share. Workflows and browser settings cannot add
+roots. Absolute paths, `~`, `..` components, and symlinks leaving the selected root are refused.
+Older workflows using absolute paths must reselect their images with **Browse**; old absolute
+bookmarks are not imported. Existing relative input paths continue to work.
+
+Previews are decoded raster images; SVG is unsupported. Save buttons accept at most 256 previews
+per click, with a 1 MiB request limit. One save runs at a time; retry a busy request after it finishes.
+
 ---
 
 ## Nodes
@@ -72,7 +105,7 @@ ComfyUI serves the same page in-app from a node's right-click **Help**.
 | [Extract Last Images](web/docs/ArisuExtractLastImages/en.md) | Common | Keep the last N images of a batch, for example a decoded clip's ending frame. |
 | [Preview & Save Image](web/docs/ArisuPreviewSaveImage/en.md) | Common | Preview and pass through; save to the output directory on a button click, without a run. |
 | [Preview & Save Image (Upscale)](web/docs/ArisuPreviewSaveImageUpscale/en.md) | Common | The same, upscaling the images with the selected model as they are saved. |
-| [Load Image (Browse)](web/docs/ArisuLoadImage/en.md) | Common | Load one image from any host path, picked in a directory browser with thumbnails and cropped in a dialog if you like; nothing is uploaded. |
+| [Load Image (Browse)](web/docs/ArisuLoadImage/en.md) | Common | Browse images in configured directories, including external disks or shares, and optionally crop them; nothing is uploaded. |
 | [Resize Image](web/docs/ArisuResizeImage/en.md) | Common | Crop, pad, fit or stretch an image batch to a size on a pixel grid, with the options in a dialog and the result previewed on the node. |
 | [MiniMax H3 Hybrid to Video](web/docs/ArisuMiniMaxH3HybridToVideo/en.md) | MiniMax H3 | Keyframes and image/video/audio references in one conditioning, plus the AV latent. |
 | [MiniMax H3 Hybrid to Video (Advanced)](web/docs/ArisuMiniMaxH3HybridToVideoAdvanced/en.md) | MiniMax H3 | The same, plus a `positive (upscaled)` conditioning for two-sampler latent upscaling. |

@@ -120,3 +120,6 @@ node.zip
 .venv/
 .ruff_cache/
 .tmp/
+
+# Administrator-only image roots; never share machine paths
+/arisu_paths.json

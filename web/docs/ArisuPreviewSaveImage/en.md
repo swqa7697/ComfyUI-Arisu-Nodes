@@ -33,6 +33,12 @@ Path Builder ─▶ (path)
 
 ## Notes
 
+- A click accepts at most 256 previews and a 1 MiB JSON request. Only one save runs at a time;
+  a busy request returns 429 and can be retried after the current save finishes, even if its browser disconnected.
+- Preview reads stay under ComfyUI's temp directory and writes stay under its output directory,
+  including symlink targets. Absolute paths and every `..` component are refused. Existing files
+  and symlinks are never overwritten; the counter advances to an unused filename.
+
 - The button saves what the preview shows, so run first. After a page reload or a ComfyUI restart
   the preview has to be produced again; the button says so instead of saving.
 - `path` is read when you click, so it can change between saves without a re-run. When `path` is

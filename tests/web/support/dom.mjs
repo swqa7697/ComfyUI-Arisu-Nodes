@@ -53,9 +53,8 @@ class FakeImage extends FakeElement {
   }
   set src(url) {
     this.url = url;
-    const undecodable = url.includes('.tif') && !url.includes('max=');
     queueMicrotask(() => {
-      if (url.includes('broken') || undecodable) return this.onerror?.();
+      if (url.includes('broken')) return this.onerror?.();
       this.naturalWidth = 800;
       this.naturalHeight = 600;
       return this.onload?.();

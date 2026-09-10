@@ -38,6 +38,7 @@ from .core import (
     resolve_image_path,
     tail_start,
 )
+from .paths import image_roots, select_root
 
 UPSCALE_MODELS_FOLDER = "upscale_models"
 _PATH_TOOLTIP = (
@@ -46,7 +47,7 @@ _PATH_TOOLTIP = (
     "absolute paths and '..' are refused."
 )
 _LOAD_PATH_TOOLTIP = (
-    "The image file: an absolute path, a ~ path, or a path relative to ComfyUI's input directory ('sub/a.png'). "
+    "The image file relative to the selected configured root ('sub/a.png'). Absolute paths require reselection. "
     "The browse button fills it in. Nothing is uploaded or copied."
 )
 _LOAD_CROP_TOOLTIP = (
@@ -339,6 +340,29 @@ class ArisuPreviewSaveImageUpscale(io.ComfyNode):
         return _preview_output(images, cls, path=path, upscale_model=upscale_model)
 
 
+def _image_path(path: str, root: str) -> str:
+    """Resolve the selected root and refuse non-image or non-regular files."""
+    base = select_root(image_roots(folder_paths.get_input_directory(), folder_paths.get_output_directory()), root)
+    resolved = resolve_image_path(path, base)
+    if not os.path.isfile(resolved):
+        raise FileNotFoundError("image file not found in the selected root")
+    if not is_image_file(resolved):
+        raise ValueError("unsupported image type")
+    return resolved
+
+
+def open_raster_image(path: str) -> Image.Image:
+    """Open supported raster formats without invoking document/vector decoders.
+
+    Pillow sniffs file contents independently of extensions. Limit the plugins
+    it may select so a renamed EPS/WMF cannot start an external interpreter.
+    Filter against installed plugins for compatibility with older Pillow builds.
+    """
+    Image.init()
+    formats = ("BMP", "DDS", "GIF", "ICO", "JPEG", "JPEG2000", "MPO", "PCX", "PNG", "PPM", "TGA", "TIFF", "WEBP", "AVIF", "QOI")
+    return Image.open(path, formats=[name for name in formats if name in Image.OPEN])
+
+
 def _load_image(path: str, crop: Optional[CropBox]) -> torch.Tensor:
     """Decode an image file the way **Load Image** decodes its pixels, then crop it.
 
@@ -360,7 +384,7 @@ def _load_image(path: str, crop: Optional[CropBox]) -> torch.Tensor:
     images: List[torch.Tensor] = []
     size: Optional[Tuple[int, int]] = None
     box: Optional[Tuple[int, int, int, int]] = None
-    with node_helpers.pillow(Image.open, path) as file:
+    with node_helpers.pillow(open_raster_image, path) as file:
         for raw in ImageSequence.Iterator(file):
             frame = node_helpers.pillow(ImageOps.exif_transpose, raw)
             rgb = frame.convert("RGB")
@@ -376,7 +400,7 @@ def _load_image(path: str, crop: Optional[CropBox]) -> torch.Tensor:
 
 
 class ArisuLoadImage(io.ComfyNode):
-    """Load one image from any path on the host, picked through a browse dialog, optionally cropped.
+    """Load an image beneath a configured root, picked through a browse dialog, optionally cropped.
 
     **Load Image** lists the top level of the input directory and brings other
     files in by copying them there. This node takes a path instead: the pack's
@@ -399,32 +423,40 @@ class ArisuLoadImage(io.ComfyNode):
             category="Arisu Nodes/Common",
             search_aliases=["load image path", "browse image", "image picker"],
             description=(
-                "Load one image from any path on this machine, picked with the browse button or typed: absolute, ~, or "
-                "relative to the input directory, and optionally cropped in a dialog. Same file types and image output as "
+                "Load one image beneath a server-configured directory, picked with Browse or typed as a relative path, "
+                "and optionally cropped in a dialog. Same image output as "
                 "Load Image; nothing is uploaded or copied."
             ),
             inputs=[
                 io.String.Input("path", default="", tooltip=_LOAD_PATH_TOOLTIP),
                 io.String.Input("crop", default="", tooltip=_LOAD_CROP_TOOLTIP),
+                io.Combo.Input(
+                    "root",
+                    options=list(image_roots(folder_paths.get_input_directory(), folder_paths.get_output_directory())),
+                    default="input",
+                    optional=True,
+                    tooltip="The server-configured image directory. External roots are set in arisu_paths.json.",
+                ),
             ],
             outputs=[io.Image.Output("image", tooltip="The image, or every frame of an animated file as a batch.")],
         )
 
     @classmethod
-    def execute(cls, path: str, crop: str = "") -> io.NodeOutput:
+    def execute(cls, path: str, crop: str = "", root: str = "input") -> io.NodeOutput:
         """Read and decode the file at ``path``, cropped to ``crop`` when one is set.
 
         Args:
             path: The widget value; see ``core.resolve_image_path`` for the accepted forms.
             crop: The hidden crop widget; see ``core.parse_crop`` for the format.
+            root: A server-configured image root ID.
 
         Returns:
             The image batch.
         """
-        return io.NodeOutput(_load_image(resolve_image_path(path, folder_paths.get_input_directory()), parse_crop(crop)))
+        return io.NodeOutput(_load_image(_image_path(path, root), parse_crop(crop)))
 
     @classmethod
-    def validate_inputs(cls, path: Optional[str] = None, crop: Optional[str] = None) -> Union[bool, str]:
+    def validate_inputs(cls, path: Optional[str] = None, crop: Optional[str] = None, root: Optional[str] = "input") -> Union[bool, str]:
         """Check that ``path`` names an existing image file and ``crop`` is well formed before the prompt runs.
 
         Whether the crop fits the image needs the decoded size, so that is
@@ -434,6 +466,7 @@ class ArisuLoadImage(io.ComfyNode):
             path: The widget value; ``None`` when the input is fed by a link, which
                 the executor leaves out of validation.
             crop: The crop widget value, ``None`` likewise.
+            root: The configured root ID, ``None`` when linked.
 
         Returns:
             ``True`` when the file can be loaded, otherwise the error to show.
@@ -442,20 +475,17 @@ class ArisuLoadImage(io.ComfyNode):
             parse_crop(crop)
         except (TypeError, ValueError) as error:
             return str(error)
-        if path is None:
-            return True
         try:
-            resolved = resolve_image_path(path, folder_paths.get_input_directory())
-        except ValueError as error:
+            if root is not None:
+                select_root(image_roots(folder_paths.get_input_directory(), folder_paths.get_output_directory()), root)
+            if path is not None and root is not None:
+                _image_path(path, root)
+        except (OSError, TypeError, ValueError) as error:
             return str(error)
-        if not os.path.isfile(resolved):
-            return f"no image file at {resolved}"
-        if not is_image_file(resolved):
-            return f"not an image file type: {os.path.basename(resolved)}"
         return True
 
     @classmethod
-    def fingerprint_inputs(cls, path: Optional[str] = None, crop: Optional[str] = None) -> Optional[str]:
+    def fingerprint_inputs(cls, path: Optional[str] = None, crop: Optional[str] = None, root: Optional[str] = "input") -> Optional[str]:
         """Change the node's cache key when the file changes on disk.
 
         The path, size and modification time stand in for a content hash, so a
@@ -465,16 +495,17 @@ class ArisuLoadImage(io.ComfyNode):
         Args:
             path: The widget value; ``None`` when fed by a link.
             crop: The crop widget value; unused.
+            root: The configured root ID, ``None`` when linked.
 
         Returns:
             The fingerprint, or ``None`` when there is nothing to fingerprint.
         """
-        if path is None:
+        if path is None or root is None:
             return None
         try:
-            resolved = resolve_image_path(path, folder_paths.get_input_directory())
+            resolved = _image_path(path, root)
             stat = os.stat(resolved)
-        except (OSError, ValueError):
+        except (OSError, TypeError, ValueError):
             return path
         return f"{resolved}:{stat.st_mtime_ns}:{stat.st_size}"
 

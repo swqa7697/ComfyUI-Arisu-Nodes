@@ -8,7 +8,7 @@
 #
 # What stays: __init__.py, src/, web/, assets/ (the README's icon),
 # pyproject.toml (registry metadata), README.md (shown by Manager),
-# CHANGELOG.md, LICENSE.
+# CHANGELOG.md, LICENSE, example_workflows/.
 
 # Dev tooling and CI
 .comfyignore
@@ -29,3 +29,7 @@ uv.lock
 # Agent-facing docs; README.md is the human-facing guide and ships
 AGENTS.md
 CLAUDE.md
+
+# Local authorization and security-review artifacts
+/arisu_paths.json
+.tmp/
