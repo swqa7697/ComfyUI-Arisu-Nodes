@@ -26,7 +26,6 @@ from .core import (
     ASPECT_RATIO_LABELS,
     AUDIO_CHANNELS,
     AUDIO_LATENT_CHANNELS,
-    CROP_MODES,
     FRAME_TAG_MODES,
     REF_IMAGE_SIZE_MODES,
     VIDEO_LATENT_CHANNELS,
@@ -41,12 +40,9 @@ from .core import (
     qwen_timestamps,
     ref_image_canvas,
     ref_video_canvas,
-    resize_target,
     scaled_canvas,
     soundtrack_key,
     temporal_shape,
-    validate_context_streams,
-    video_frame_count,
 )
 
 RefItem = Dict[str, Any]
@@ -132,97 +128,6 @@ def empty_av_latent(width: int, height: int, length: int) -> Tuple[Dict[str, Any
     video = torch.zeros([1, VIDEO_LATENT_CHANNELS, latent_t, latent_h, latent_w], device=device)
     audio = torch.zeros([1, AUDIO_LATENT_CHANNELS, AUDIO_CHANNELS, audio_t], device=device)
     return {"samples": comfy.nested_tensor.NestedTensor((video, audio))}, frame_count
-
-
-def unpack_av_streams(samples: Any) -> Tuple[List[torch.Tensor], bool]:
-    """Split a LATENT ``samples`` value into its video and audio streams.
-
-    Accepts the two containers an H3 AV latent travels in: ComfyUI's
-    ``NestedTensor`` (what a sampler emits) and a plain list or tuple (what
-    third-party save/load nodes emit so the latent cannot be mistaken for a
-    decodable one). A plain tensor is refused: a video-only latent has no
-    audio to carry across. ``NestedTensor.__getitem__`` broadcasts into every
-    stream, so the pair is read through ``unbind()`` instead of indexing.
-
-    Args:
-        samples: The ``samples`` entry of a LATENT dict.
-
-    Returns:
-        ``(streams, nested)``: the ``[video, audio]`` tensors and whether they
-        arrived as a ``NestedTensor``.
-
-    Raises:
-        ValueError: If ``samples`` is neither container or does not hold exactly two streams.
-    """
-    if isinstance(samples, (list, tuple)):
-        streams, nested = list(samples), False
-    elif getattr(samples, "is_nested", False):
-        streams, nested = list(samples.unbind()), True
-    else:
-        raise ValueError(f"expected a MiniMax H3 AV latent (a nested video/audio pair), got {type(samples).__name__}")
-    if len(streams) != 2:
-        raise ValueError(f"expected a MiniMax H3 AV latent with two streams (video, audio), got {len(streams)}")
-    return streams, nested
-
-
-def pack_av_streams(streams: List[torch.Tensor], nested: bool) -> Any:
-    """Rebuild a LATENT ``samples`` value in the container it arrived in.
-
-    Args:
-        streams: ``[video, audio]`` tensors.
-        nested: ``True`` to return a ``NestedTensor``, ``False`` for a plain list.
-
-    Returns:
-        The ``samples`` value for a LATENT dict.
-    """
-    if nested:
-        return comfy.nested_tensor.NestedTensor(tuple(streams))
-    return list(streams)
-
-
-def resize_context_video(vae: Any, video: torch.Tensor, width: int, height: int, crop: str) -> torch.Tensor:
-    """Resize an H3 video latent through pixel space: decode, lanczos-resize, re-encode.
-
-    Interpolating the 24-channel latent directly would hand the model context
-    it never saw in training. Decoding to pixels and encoding again yields a
-    real latent for the new size at the cost of one VAE round trip (and the
-    8-bit hop inside ComfyUI's lanczos path, shared with every other H3 node).
-
-    Each batch item is encoded separately as a 4-D image batch: the H3 VAE crops
-    every spatial axis of its input to a multiple of 16, and on a 5-D input that
-    would silently shorten the frame axis and break the 17k+5 grid.
-
-    Args:
-        vae: The MiniMax H3 video VAE.
-        video: Video latent ``[B, 24, T, H/16, W/16]`` with ``T`` on the 5k+2 grid.
-        width: Target width in pixels, a multiple of 16.
-        height: Target height in pixels, a multiple of 16.
-        crop: ``"disabled"`` for a plain stretch or ``"center"`` for an aspect-preserving cover-crop.
-
-    Returns:
-        Video latent ``[B, 24, T, height/16, width/16]`` with the same temporal length.
-
-    Raises:
-        RuntimeError: If the VAE's temporal grid no longer matches the 17k+5 <-> 5k+2 contract.
-    """
-    latent_t = video.shape[2]
-    frame_count = video_frame_count(latent_t)
-    frames = vae.decode(video)
-    if frames.ndim != 5 or frames.shape[1] != frame_count:
-        raise RuntimeError(
-            f"decoding {latent_t} H3 latent frames returned shape {tuple(frames.shape)}, expected [B, {frame_count}, H, W, 3]; "
-            "the VAE's temporal grid no longer matches the 17k+5 contract, refusing to build a shifted context"
-        )
-    encoded: List[torch.Tensor] = []
-    for item in frames:
-        z = vae.encode(resize_frames(item, width, height, crop))
-        if z.ndim != 5 or z.shape[2] != latent_t:
-            raise RuntimeError(
-                f"re-encoding {frame_count} frames returned latent shape {tuple(z.shape)}, expected {latent_t} temporal frames; "
-                "the VAE's temporal grid no longer matches the 17k+5 contract, refusing to build a shifted context"
-            )
-        encoded.append(z)
-    return torch.cat(encoded, dim=0)
 
 
 def _require_audio_vae(audio_vae: Optional[comfy.sd.VAE]) -> comfy.sd.VAE:
@@ -718,101 +623,6 @@ class ArisuMiniMaxH3HybridToVideoAdvanced(io.ComfyNode):
         return io.NodeOutput(conds[0], latent, conds[-1])
 
 
-class ArisuMiniMaxH3ContextLatentResize(io.ComfyNode):
-    """Resize a saved H3 AV latent to a new resolution for clip chaining.
-
-    Built for the ``context_latent`` input of the H3 Motion Context node
-    (ComfyUI-H3-Motion-Context), which refuses a previous clip whose
-    resolution differs from the new one. The picture goes through one VAE
-    round trip at the new size; the audio stream and the temporal length are
-    untouched, so the chaining node's frame and audio arithmetic still holds.
-    """
-
-    @classmethod
-    def define_schema(cls) -> io.Schema:
-        """Declare the node's id, category, inputs and outputs.
-
-        Returns:
-            The schema taking a MiniMax H3 AV latent, the video VAE, the new width
-            and height and a crop mode, and returning the resized AV latent.
-        """
-        return io.Schema(
-            node_id="ArisuMiniMaxH3ContextLatentResize",
-            display_name="MiniMax H3 Context Latent Resize",
-            category="Arisu Nodes/MiniMax H3",
-            description=(
-                "Resize a MiniMax H3 AV latent to a new resolution for the H3 Motion Context node's context_latent input. "
-                "The video stream is decoded, lanczos-resized and re-encoded with the H3 video VAE; the audio stream and "
-                "the frame count are passed through untouched. Not a decodable latent when the input came from a "
-                "Motion Context Load Latent node."
-            ),
-            is_experimental=True,
-            inputs=[
-                io.Latent.Input(
-                    "latent",
-                    tooltip="A MiniMax H3 AV latent: the output of H3 Motion Context Load Latent, or a sampler's AV latent.",
-                ),
-                io.Vae.Input("vae", tooltip="The MiniMax H3 video VAE; the same one the Motion Context node takes."),
-                io.Int.Input(
-                    "width",
-                    default=1344,
-                    min=16,
-                    max=MAX_RESOLUTION,
-                    step=16,
-                    tooltip="Width of the clip being generated next, in pixels.",
-                ),
-                io.Int.Input(
-                    "height",
-                    default=768,
-                    min=16,
-                    max=MAX_RESOLUTION,
-                    step=16,
-                    tooltip="Height of the clip being generated next, in pixels.",
-                ),
-                io.Combo.Input(
-                    "crop",
-                    options=list(CROP_MODES),
-                    default="disabled",
-                    tooltip="disabled stretches the frames to the new size; center keeps the aspect ratio and crops the overflow.",
-                ),
-            ],
-            outputs=[
-                io.Latent.Output(
-                    "latent",
-                    tooltip="The AV latent at the new resolution, in the same container as the input. Wire it into context_latent.",
-                ),
-            ],
-        )
-
-    @classmethod
-    def execute(cls, latent: Dict[str, Any], vae: Any, width: int, height: int, crop: str) -> io.NodeOutput:
-        """Resize the video stream of an H3 AV latent, passing the audio through.
-
-        Args:
-            latent: A LATENT holding a MiniMax H3 AV pair.
-            vae: The MiniMax H3 video VAE.
-            width: Target width in pixels; must be a multiple of 16.
-            height: Target height in pixels; must be a multiple of 16.
-            crop: One of ``CROP_MODES``.
-
-        Returns:
-            The AV latent at the new resolution, in the container it arrived in.
-            The input latent is returned unchanged when it already matches.
-
-        Raises:
-            ValueError: If ``latent`` is not an H3 AV pair, its streams have the
-                wrong layout, or the size is off the 16-pixel grid.
-        """
-        streams, nested = unpack_av_streams(latent["samples"])
-        video, audio = streams
-        validate_context_streams(video.shape, audio.shape)
-        if resize_target(video.shape, width, height) is None:
-            return io.NodeOutput(latent)
-        out = dict(latent)
-        out["samples"] = pack_av_streams([resize_context_video(vae, video, width, height, crop), audio], nested)
-        return io.NodeOutput(out)
-
-
 def _settings_inputs_head() -> List[io.Input]:
     return [
         io.Combo.Input(
@@ -971,7 +781,6 @@ class ArisuMiniMaxH3VideoSettingsUpscale(io.ComfyNode):
 NODES: List[Type[io.ComfyNode]] = [
     ArisuMiniMaxH3HybridToVideo,
     ArisuMiniMaxH3HybridToVideoAdvanced,
-    ArisuMiniMaxH3ContextLatentResize,
     ArisuMiniMaxH3VideoSettings,
     ArisuMiniMaxH3VideoSettingsUpscale,
 ]

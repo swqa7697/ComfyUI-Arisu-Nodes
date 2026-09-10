@@ -1,9 +1,14 @@
 name: CI build
 
 on:
+  push:
+    branches:
+      - main
   pull_request:
     branches:
       - main
+      - dev
+
 jobs:
   build:
     runs-on: ${{ matrix.os }}
@@ -20,6 +25,15 @@ jobs:
         uses: astral-sh/setup-uv@v10.0.1
         with:
           python-version: ${{ matrix.python-version }}
+      # Node and pnpm before make install, so ensure_deps.sh finds them and installs nothing.
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: latest
       - name: Install dependencies
         run: make install LOCKED=1
       - name: Tidy (assert no diff)

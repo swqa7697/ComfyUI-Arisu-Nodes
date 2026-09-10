@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-09-09
+
+### Added
+
+- Add the `ArisuLoadImage` node (category `Arisu Nodes/Common`), **Load Image (Browse)**: load one image from any path on the host, absolute, `~`, or relative to the input directory, with a `browse` button that opens a directory browser (a tree of the home directory and the mounted disks, input and output shortcuts, a list of saved directories kept in the ComfyUI user's settings, thumbnails, an image-name filter) served by two new routes, `/arisu/browse` and `/arisu/view`; the file is read in place, nothing is uploaded or copied, the picked image is shown on the node at its own resolution, the accepted file types match Load Image, and the one output is the `image` batch.
+- Add a `crop…` button to **Load Image (Browse)** that opens a crop dialog on the picked image: draw, move and resize a box with the mouse, free or at a preset or custom aspect ratio remembered until another image is picked; the crop is saved with the workflow (a hidden `crop` input), previewed on the node, cut from every frame at run time, and never resized or padded; `/arisu/view` accepts a `crop` parameter.
+- Add the `ArisuResizeImage` node (category `Arisu Nodes/Common`), **Resize Image**: resize an image batch to a size by cropping at a chosen anchor, padding with a colour, fitting, or stretching, snapped to a pixel grid, with only `width` and `height` on the node; `resize_method`, `mode`, `pad_color`, `crop_position` and `divisible_by` are edited as drop-downs and fields in a dialog behind a `settings…` button and saved with the workflow; the result is previewed on the node after a run, the outputs are the `image` and a `mask` marking the padding, and the resize runs on the CPU.
+
+### Changed
+
+- Calm the browse dialog: tree rows no longer animate, the image cards rise only on entering a directory, and the tree keeps its scroll position when a folder is expanded.
+
+### Removed
+
+- Remove the experimental `ArisuMiniMaxH3ContextLatentResize` node, **MiniMax H3 Context Latent Resize**, along with its help page.
+
 ## [1.0.2] - 2026-09-08
 
 ### Changed

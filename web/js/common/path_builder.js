@@ -9,12 +9,13 @@
 // every widget input and positions it from the widget's last y, so a hidden
 // widget's socket would sit on the button row, still accepting a STRING link
 // whose value would reach the join in place of the cleared text.
-import { app } from "../../../../scripts/app.js";
-import { addButtonRow } from "./widgets.js";
 
-const NODE_TYPE = "ArisuPathBuilder";
-const COUNT_PROPERTY = "arisuSegments";
-const FIELD_PREFIX = "segment_";
+import { app } from '../../../../scripts/app.js';
+import { addButtonRow } from './widgets.js';
+
+const NODE_TYPE = 'ArisuPathBuilder';
+const COUNT_PROPERTY = 'arisuSegments';
+const FIELD_PREFIX = 'segment_';
 // LiteGraph's RenderShape.HollowCircle, the socket shape of an optional input.
 const OPTIONAL_SOCKET_SHAPE = 7;
 
@@ -46,7 +47,7 @@ function currentCount(node) {
 function restoredCount(node) {
   return fieldWidgets(node).reduce((count, widget) => {
     const linked = node.inputs?.[socketIndex(node, widget.name)]?.link != null;
-    return linked || String(widget.value ?? "").trim() ? Math.max(count, fieldIndex(widget)) : count;
+    return linked || String(widget.value ?? '').trim() ? Math.max(count, fieldIndex(widget)) : count;
   }, currentCount(node));
 }
 
@@ -62,7 +63,7 @@ function removeSocket(node, name) {
 function addSocket(node, name) {
   if (socketIndex(node, name) !== -1) return;
   const template = (node.inputs ?? []).find((input) => input.widget?.name.startsWith(FIELD_PREFIX));
-  node.addInput(name, template?.type ?? "STRING", {
+  node.addInput(name, template?.type ?? 'STRING', {
     shape: template?.shape ?? OPTIONAL_SOCKET_SHAPE,
     localized_name: name,
     widget: removedDescriptors.get(node)?.get(name) ?? { name },
@@ -75,7 +76,7 @@ function applyCount(node, count) {
   node.properties[COUNT_PROPERTY] = clamped;
   for (const widget of widgets) {
     const hidden = fieldIndex(widget) > clamped;
-    if (hidden && !widget.hidden) widget.value = "";
+    if (hidden && !widget.hidden) widget.value = '';
     widget.hidden = hidden;
     if (hidden) removeSocket(node, widget.name);
     else addSocket(node, widget.name);
@@ -85,7 +86,7 @@ function applyCount(node, count) {
 }
 
 app.registerExtension({
-  name: "Arisu.Common.PathBuilder",
+  name: 'Arisu.Common.PathBuilder',
   beforeRegisterNodeDef(nodeType, nodeData) {
     if (nodeData.name !== NODE_TYPE) return;
 
@@ -93,8 +94,8 @@ app.registerExtension({
     nodeType.prototype.onNodeCreated = function () {
       onNodeCreated?.apply(this, arguments);
       addButtonRow(this, [
-        { label: "+ field", onClick: () => applyCount(this, currentCount(this) + 1) },
-        { label: "- field", onClick: () => applyCount(this, currentCount(this) - 1) },
+        { label: '+ field', onClick: () => applyCount(this, currentCount(this) + 1) },
+        { label: '- field', onClick: () => applyCount(this, currentCount(this) - 1) },
       ]);
       applyCount(this, 1);
     };

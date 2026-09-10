@@ -21,4 +21,7 @@ uv run beautysh -i 4 scripts/*.sh tidy.sh
 log_info "mbake (Makefile)"
 uv run mbake format Makefile
 
+log_info "biome (web/js and tests/web: format, lint fixes, import order)"
+bash scripts/biome.sh check --write
+
 log_ok "done"

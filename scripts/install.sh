@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Create the project venv with the dev group. LOCKED=1 adds --locked (what CI uses)
-# so a stale uv.lock fails instead of being silently re-resolved.
+# Create the project venv with the dev group, after ensure_deps.sh has provided uv,
+# pnpm, and node. LOCKED=1 adds --locked (what CI uses) so a stale uv.lock fails
+# instead of being silently re-resolved.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."

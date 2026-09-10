@@ -7,11 +7,11 @@ a model. This module imports torch, so only ``tests/comfyui/`` may import it.
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 import torch
 
-from src.arisu_nodes.minimax_h3.core import video_frame_count, video_latent_t
+from src.arisu_nodes.minimax_h3.core import video_latent_t
 
 
 class StubClip:
@@ -29,31 +29,16 @@ class StubClip:
 
 
 class StubVae:
-    """Encodes ``[F, H, W, 3]`` to ``[1, 24, T, H/16, W/16]`` and decodes it back to pixels.
+    """Encodes ``[F, H, W, 3]`` to ``[1, 24, T, H/16, W/16]`` and records the pixels."""
 
-    Args:
-        encode_latent_t: Forces the temporal length ``encode`` returns; ``None``
-            derives it from the frame count (one frame encodes to one latent frame).
-    """
-
-    def __init__(self, encode_latent_t: Optional[int] = None):
+    def __init__(self):
         self.encoded: List[torch.Tensor] = []
-        self.decoded: List[torch.Tensor] = []
-        self.encode_latent_t = encode_latent_t
 
     def encode(self, pixels: torch.Tensor) -> torch.Tensor:
         self.encoded.append(pixels)
         frames, height, width = pixels.shape[0], pixels.shape[1], pixels.shape[2]
-        if self.encode_latent_t is not None:
-            latent_t = self.encode_latent_t
-        else:
-            latent_t = 1 if frames == 1 else video_latent_t(frames)
+        latent_t = 1 if frames == 1 else video_latent_t(frames)
         return torch.zeros(1, 24, latent_t, height // 16, width // 16)
-
-    def decode(self, video: torch.Tensor) -> torch.Tensor:
-        self.decoded.append(video)
-        batch, _, latent_t, latent_h, latent_w = video.shape
-        return torch.zeros(batch, video_frame_count(latent_t), latent_h * 16, latent_w * 16, 3)
 
 
 class StubAudioVae:
@@ -73,13 +58,3 @@ def image(height: int, width: int, channels: int = 3) -> torch.Tensor:
 def audio_input() -> Dict[str, Any]:
     """One second of stereo silence in ComfyUI's AUDIO dict shape."""
     return {"waveform": torch.zeros(1, 2, 32000), "sample_rate": 32000}
-
-
-def video_latent(batch: int = 1, latent_t: int = 7, height: int = 768, width: int = 1344) -> torch.Tensor:
-    """A random H3 video latent ``[B, 24, T, H/16, W/16]`` for a pixel canvas."""
-    return torch.rand(batch, 24, latent_t, height // 16, width // 16)
-
-
-def audio_latent(batch: int = 1) -> torch.Tensor:
-    """A random H3 audio latent ``[B, 32, 2, 37]``."""
-    return torch.rand(batch, 32, 2, 37)

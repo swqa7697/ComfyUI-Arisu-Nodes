@@ -25,13 +25,14 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 EXPECTED_NODE_IDS = [
     "ArisuMiniMaxH3HybridToVideo",
     "ArisuMiniMaxH3HybridToVideoAdvanced",
-    "ArisuMiniMaxH3ContextLatentResize",
     "ArisuMiniMaxH3VideoSettings",
     "ArisuMiniMaxH3VideoSettingsUpscale",
     "ArisuPathBuilder",
     "ArisuExtractLastImages",
     "ArisuPreviewSaveImage",
     "ArisuPreviewSaveImageUpscale",
+    "ArisuLoadImage",
+    "ArisuResizeImage",
 ]
 
 
@@ -84,7 +85,7 @@ def test_pack_loads_like_comfyui(pack: ModuleType):
     prefix = f"/extensions/{REPO_ROOT.name}/"
     for script in sorted(web_root.glob("js/**/*.js")):
         served = f"http://comfy{prefix}{script.relative_to(web_root).as_posix()}"
-        for spec in re.findall(r'^import .+ from "([^"]+)";$', script.read_text(encoding="utf-8"), flags=re.MULTILINE):
+        for spec in re.findall(r"^import .+ from ['\"]([^'\"]+)['\"];$", script.read_text(encoding="utf-8"), flags=re.MULTILINE):
             path = urlsplit(urljoin(served, spec)).path
             local = web_root / path[len(prefix) :] if path.startswith(prefix) else None
             assert path.startswith("/scripts/") or (local is not None and local.is_file()), f"{script.name}: {spec} -> {path}"

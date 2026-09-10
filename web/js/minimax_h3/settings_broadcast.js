@@ -21,21 +21,22 @@
 // a second switch on hands it the slot and switches the previous one off (later
 // change wins); a pasted node that arrives switched on is switched off; a loaded
 // workflow with several keeps the first in node order.
-import { app } from "../../../../scripts/app.js";
-import { api } from "../../../../scripts/api.js";
 
-const ADVERTISE_WIDGET = "advertise";
+import { api } from '../../../../scripts/api.js';
+import { app } from '../../../../scripts/app.js';
+
+const ADVERTISE_WIDGET = 'advertise';
 // LiteGraph node mode 0: runs normally (not muted, not bypassed).
 const MODE_ALWAYS = 0;
 
 // Widgets a hybrid node can hand over, and the outputs each settings variant carries, by shared name.
 const HYBRID_WIDGETS = {
-  ArisuMiniMaxH3HybridToVideo: ["width", "height", "length"],
-  ArisuMiniMaxH3HybridToVideoAdvanced: ["width", "height", "length", "target_width", "target_height"],
+  ArisuMiniMaxH3HybridToVideo: ['width', 'height', 'length'],
+  ArisuMiniMaxH3HybridToVideoAdvanced: ['width', 'height', 'length', 'target_width', 'target_height'],
 };
 const SETTINGS_KEYS = {
-  ArisuMiniMaxH3VideoSettings: ["width", "height", "length"],
-  ArisuMiniMaxH3VideoSettingsUpscale: ["width", "height", "length", "target_width", "target_height"],
+  ArisuMiniMaxH3VideoSettings: ['width', 'height', 'length'],
+  ArisuMiniMaxH3VideoSettingsUpscale: ['width', 'height', 'length', 'target_width', 'target_height'],
 };
 
 function rootGraph() {
@@ -43,7 +44,7 @@ function rootGraph() {
 }
 
 function toast(severity, detail) {
-  app.extensionManager?.toast?.add?.({ severity, summary: "MiniMax H3 Video Settings", detail, life: 8000 });
+  app.extensionManager?.toast?.add?.({ severity, summary: 'MiniMax H3 Video Settings', detail, life: 8000 });
 }
 
 function isActive(node) {
@@ -78,8 +79,8 @@ function enforceSingleAdvertiser(keep) {
     node.setDirtyCanvas(true, true);
   }
   if (demoted.length) {
-    const ids = demoted.map((node) => `#${node.id}`).join(", ");
-    toast("warn", `Only one MiniMax H3 Video Settings node advertises at a time: #${keep.id} advertises now, ${ids} switched off.`);
+    const ids = demoted.map((node) => `#${node.id}`).join(', ');
+    toast('warn', `Only one MiniMax H3 Video Settings node advertises at a time: #${keep.id} advertises now, ${ids} switched off.`);
   }
 }
 
@@ -89,7 +90,7 @@ function switchOffOnArrival(node) {
   if (app.configuringGraph || node.graph !== rootGraph() || !advertiseOn(node)) return;
   advertiseWidget(node).value = false;
   node.setDirtyCanvas(true, true);
-  toast("info", `MiniMax H3 Video Settings node #${node.id} was pasted with advertise on; switched off.`);
+  toast('info', `MiniMax H3 Video Settings node #${node.id} was pasted with advertise on; switched off.`);
 }
 
 /** Widget names a hybrid node hands over to the root graph's advertiser: the outputs both carry. */
@@ -119,7 +120,10 @@ function refreshHybrid(node) {
   }
   const removed = unlinkHandedOver(node, keys);
   if (removed.length) {
-    toast("info", `Hybrid node #${node.id}: ${removed.join(", ")} come from the advertising settings node; the link(s) into them were removed.`);
+    toast(
+      'info',
+      `Hybrid node #${node.id}: ${removed.join(', ')} come from the advertising settings node; the link(s) into them were removed.`,
+    );
   }
   node.setDirtyCanvas(true, true);
 }
@@ -134,7 +138,7 @@ function refreshRoot() {
 function refuseHandedOverLink(node, inputIndex) {
   const name = node.inputs?.[inputIndex]?.name;
   if (!handedOverKeys(node).includes(name)) return true;
-  toast("warn", `${name} of hybrid node #${node.id} comes from the advertising settings node; switch advertise off to wire it.`);
+  toast('warn', `${name} of hybrid node #${node.id} comes from the advertising settings node; switch advertise off to wire it.`);
   return false;
 }
 
@@ -158,7 +162,7 @@ function injectAdvertisedValues(output) {
     }
   }
   if (skipped.length) {
-    toast("warn", `Settings node #${sourceId} is not part of this run; hybrid node(s) ${skipped.join(", ")} use their own widgets.`);
+    toast('warn', `Settings node #${sourceId} is not part of this run; hybrid node(s) ${skipped.join(', ')} use their own widgets.`);
   }
 }
 
@@ -173,7 +177,7 @@ function chain(prototype, name, extra) {
 }
 
 app.registerExtension({
-  name: "Arisu.MiniMaxH3.SettingsBroadcast",
+  name: 'Arisu.MiniMaxH3.SettingsBroadcast',
   setup() {
     const queuePrompt = api.queuePrompt;
     api.queuePrompt = async function (index, prompt, ...rest) {
@@ -183,15 +187,15 @@ app.registerExtension({
   },
   beforeRegisterNodeDef(nodeType, nodeData) {
     if (nodeData.name in HYBRID_WIDGETS) {
-      chain(nodeType.prototype, "onAdded", function () {
+      chain(nodeType.prototype, 'onAdded', function () {
         refreshHybrid(this);
       });
-      chain(nodeType.prototype, "onConnectInput", function (inputIndex) {
+      chain(nodeType.prototype, 'onConnectInput', function (inputIndex) {
         return refuseHandedOverLink(this, inputIndex);
       });
     }
     if (nodeData.name in SETTINGS_KEYS) {
-      chain(nodeType.prototype, "onAdded", function () {
+      chain(nodeType.prototype, 'onAdded', function () {
         const node = this;
         const widget = advertiseWidget(node);
         if (widget && !widget.arisuWrapped) {
@@ -210,13 +214,11 @@ app.registerExtension({
         refreshRoot();
       });
       // a paste adds the node first and restores its widgets afterwards, so the switch is only visible here
-      chain(nodeType.prototype, "onConfigure", function () {
+      chain(nodeType.prototype, 'onConfigure', function () {
         switchOffOnArrival(this);
       });
       // onRemoved fires while the node is still listed; refresh once it is gone
-      chain(nodeType.prototype, "onRemoved", function () {
-        setTimeout(refreshRoot, 0);
-      });
+      chain(nodeType.prototype, 'onRemoved', () => setTimeout(refreshRoot, 0));
     }
   },
   afterConfigureGraph() {
