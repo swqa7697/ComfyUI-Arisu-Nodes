@@ -224,7 +224,13 @@ def test_browse_and_view_routes_list_and_serve_host_images(tmp_path: Path, monke
     external.mkdir()
     monkeypatch.setattr(paths, "external_roots", lambda: {"photos": str(external)})
     Image.fromarray(np.full((20, 40, 3), 90, dtype=np.uint8)).save(pics / "wide.png")
-    Image.new("RGB", (6, 4)).save(external / "other.tif")
+    Image.new("RGB", (6, 4)).save(external / "other.avif")
+    # Types browsers cannot show natively are neither listed nor served, whatever the MIME table says.
+    Image.new("RGB", (6, 4)).save(external / "scan.tif")
+    Image.new("RGB", (2, 2)).save(external / "anim.gif")
+    # Static images only: an animated PNG is not listed, though the route still streams it by extension.
+    frames = [Image.new("RGB", (2, 2), colour) for colour in ("red", "blue")]
+    frames[0].save(pics / "anim.png", save_all=True, append_images=frames[1:])
     (tmp_path / "input" / ".hidden.png").write_bytes(b"")
     (tmp_path / "input" / "notes.txt").write_text("sentinel")
     (pics / "payload.svg").write_text('<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>')
@@ -237,7 +243,7 @@ def test_browse_and_view_routes_list_and_serve_host_images(tmp_path: Path, monke
     monkeypatch.setattr(EpsImagePlugin, "Ghostscript", refuse_interpreter)
 
     (pics / "escape").symlink_to(external, target_is_directory=True)
-    (pics / "escaped.png").symlink_to(external / "other.tif")
+    (pics / "escaped.png").symlink_to(external / "other.avif")
 
     status, body, _ = get(routes.BROWSE_ROUTE)
     assert status == 200, body
@@ -253,18 +259,15 @@ def test_browse_and_view_routes_list_and_serve_host_images(tmp_path: Path, monke
     status, body, _ = get(routes.BROWSE_ROUTE, path="pics/wide.png", tree="0")
     assert status == 200 and body["path"] == "pics" and body["ancestors"] == []
     assert body["dirs"] == [] and body["files"] == ["bad.png", "document.png", "wide.png"]
+    assert get(routes.VIEW_ROUTE, path="pics/anim.png")[0] == 200
     status, body, _ = get(routes.BROWSE_ROUTE, root="photos")
-    assert status == 200 and body["files"] == ["other.tif"] and body["parent"] is None
-    status, body, content_type = get(routes.VIEW_ROUTE, root="photos", path="other.tif")
-    assert status == 200 and content_type == "image/png"
-    with Image.open(BytesIO(body)) as image:
-        assert image.size == (6, 4)
-    # Source sidecars are never served, and all full-size responses are raster PNGs.
-    (pics / "wide.png.gz").symlink_to(tmp_path / "input" / "notes.txt")
-    status, body, content_type = call("GET", routes.VIEW_ROUTE, params={"path": "pics/wide.png"}, headers={"Accept-Encoding": "gzip"})
-    assert status == 200 and content_type == "image/png"
-    with Image.open(BytesIO(body)) as image:
-        assert image.size == (40, 20) and np.array(image)[0, 0].tolist() == [90, 90, 90]
+    assert status == 200 and body["files"] == ["other.avif"] and body["parent"] is None
+    # The whole file streams as it is, like Load Image's previews through /view, under its extension's type.
+    status, body, content_type = get(routes.VIEW_ROUTE, root="photos", path="other.avif")
+    assert status == 200 and content_type == "image/avif" and body == (external / "other.avif").read_bytes()
+    status, body, content_type = get(routes.VIEW_ROUTE, path="pics/wide.png")
+    assert status == 200 and content_type == "image/png" and body == (pics / "wide.png").read_bytes()
+    # A crop is rendered at its own size and only a thumbnail is resized, both as WebP.
     for params, expected in [
         ({"max": "16"}, (16, 8)),
         ({"crop": "10,5,20,10"}, (20, 10)),
@@ -272,29 +275,36 @@ def test_browse_and_view_routes_list_and_serve_host_images(tmp_path: Path, monke
         ({"crop": "0,0,40,20"}, (40, 20)),
     ]:
         status, body, content_type = get(routes.VIEW_ROUTE, path="pics/wide.png", **params)
-        assert status == 200 and content_type == ("image/webp" if "max" in params else "image/png"), f"case={params!r}"
+        assert status == 200 and content_type == "image/webp", f"case={params!r}"
         with Image.open(BytesIO(body)) as image:
-            assert image.size == expected
+            assert image.size == expected and np.array(image.convert("RGB"))[0, 0].tolist() == [90, 90, 90], f"case={params!r}"
     for route in (routes.BROWSE_ROUTE, routes.VIEW_ROUTE):
         for params in [
             {"path": str(pics / "wide.png")},
-            {"path": "../photos/other.tif"},
+            {"path": "../photos/other.avif"},
             {"path": "pics/../pics/wide.png"},
-            {"path": "pics/escape/other.tif"},
+            {"path": "pics/escape/other.avif"},
             {"path": "pics/escaped.png"},
             {"path": "x", "root": "unknown"},
             {"path": "C:\\wide.png"},
-            {"path": "..\\photos\\other.tif"},
+            {"path": "..\\photos\\other.avif"},
             {"path": "~/wide.png"},
             {"path": "a\x00.png"},
         ]:
             status, body, _ = get(route, **params)
             assert status == 400 and str(tmp_path) not in json.dumps(body), f"case={route, params!r} body={body!r}"
+    # The extension decides what streams, as in ComfyUI's /view: mislabelled content reaches the browser, which
+    # refuses it; a rendering decodes and refuses it here, without ever starting a document interpreter.
+    status, body, content_type = get(routes.VIEW_ROUTE, path="pics/bad.png")
+    assert status == 200 and content_type == "image/png" and body == b"private non-image content"
     for expected, params in [
         (415, {"path": "notes.txt"}),
         (415, {"path": "pics/payload.svg"}),
-        (415, {"path": "pics/bad.png"}),
-        (415, {"path": "pics/document.png"}),
+        (415, {"path": "scan.tif", "root": "photos"}),
+        (415, {"path": "anim.gif", "root": "photos"}),
+        (415, {"path": "pics/bad.png", "max": "16"}),
+        (415, {"path": "pics/document.png", "max": "16"}),
+        (415, {"path": "pics/document.png", "crop": "0,0,1,1"}),
         (404, {"path": "pics/missing.png"}),
         (400, {"path": "pics/wide.png", "crop": "x"}),
         (415, {"path": "pics/wide.png", "crop": "40,0,1,1"}),
@@ -304,7 +314,7 @@ def test_browse_and_view_routes_list_and_serve_host_images(tmp_path: Path, monke
     assert get(routes.BROWSE_ROUTE, path="nope")[0] == 404
     # The HTTP layer decodes once: encoded traversal is still refused.
     for route in (routes.BROWSE_ROUTE, routes.VIEW_ROUTE):
-        assert call("GET", route + "?path=%2e%2e%2fphotos%2fother.tif")[0] == 400
+        assert call("GET", route + "?path=%2e%2e%2fphotos%2fother.avif")[0] == 400
 
 
 def test_save_guard_survives_cancellation_and_rejects_concurrent_work(monkeypatch: pytest.MonkeyPatch):

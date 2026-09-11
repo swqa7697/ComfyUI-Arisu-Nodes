@@ -115,6 +115,10 @@ node.zip
 .claude/*
 !.claude/skills/
 !.claude/comfyui-env.example.md
+.agents/*
+!.agents/skills/
+!.agents/comfyui-env.example.md
+.codex/
 
 # --- local additions ---
 .venv/
@@ -123,3 +127,4 @@ node.zip
 
 # Administrator-only image roots; never share machine paths
 /arisu_paths.json
+/config.arisu.jsonc

@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from PIL import Image
 
 from src.arisu_nodes.common.core import (
     NO_UPSCALE,
@@ -18,6 +19,8 @@ from src.arisu_nodes.common.core import (
     ViewRequest,
     browse_directory,
     crop_box,
+    image_content_type,
+    is_animated_image,
     join_path,
     parse_browse_request,
     parse_crop,
@@ -106,6 +109,17 @@ def test_image_path_helpers_resolve_and_refuse(tmp_path: Path):
     (root / ".hidden.png").write_bytes(b"")
     (root / "notes.txt").write_text("x")
     (root / "payload.svg").write_text("<svg/>")
+    # Listings and the type filter take the fixed browser-native set, in any letter case, never the MIME table.
+    (root / "scan.tif").write_bytes(b"")
+    (root / "anim.gif").write_bytes(b"")
+    (root / "UPPER.PNG").write_bytes(b"")
+    assert image_content_type("a.JPG") == "image/jpeg" and image_content_type("scan.tif") is None
+    # Static images only: an animated PNG or WebP is not listed, a static WebP is, and unreadable content is not animated.
+    frames = [Image.new("RGB", (2, 2), colour) for colour in ("red", "blue")]
+    frames[0].save(root / "anim.png", save_all=True, append_images=frames[1:])
+    frames[0].save(root / "anim.webp", save_all=True, append_images=frames[1:])
+    frames[0].save(root / "still.webp")
+    assert is_animated_image(str(root / "anim.webp")) and not is_animated_image(str(root / "ok.jpg"))
     (root / "art").mkdir()
     (base / "inside").symlink_to(root, target_is_directory=True)
     input_dir = str(base)
@@ -151,7 +165,7 @@ def test_image_path_helpers_resolve_and_refuse(tmp_path: Path):
     with pytest.raises(ValueError):
         crop_box(CropBox(6, 0, 1, 1), (6, 4))
     listing = browse_directory(str(root), input_dir)
-    assert listing == DirectoryListing("pics", "", ("art",), ("ok.jpg",), (TreeLevel("", ("inside", "pics")),))
+    assert listing == DirectoryListing("pics", "", ("art",), ("ok.jpg", "still.webp", "UPPER.PNG"), (TreeLevel("", ("inside", "pics")),))
     assert browse_directory(str(root / "ok.jpg"), input_dir) == listing
     assert browse_directory(str(root), input_dir, with_tree=False).ancestors == ()
     assert browse_directory(input_dir, input_dir).parent is None

@@ -7,7 +7,6 @@ the project's own environment, without torch or ComfyUI on the path.
 from __future__ import annotations
 
 import math
-import mimetypes
 import ntpath
 import os
 import os.path
@@ -17,6 +16,8 @@ import string
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
+
+from PIL import Image
 
 MAX_PATH_SEGMENTS = 16
 PATH_SEPARATOR = "/"
@@ -31,10 +32,19 @@ PREVIEW_FOLDER_TYPE = "temp"
 _PREVIEW_KEYS = ("filename", "subfolder", "type")
 
 # Load Image (Browse): the routes behind the browse dialog and the node preview,
-# the MIME major type ComfyUI's image loaders list, and the thumbnail bounds.
+# the accepted file types with the content type the view route serves them
+# under (raster formats every browser decodes natively; no TIFF, GIF, SVG or
+# document formats), and the thumbnail bounds.
 BROWSE_ROUTE = "/arisu/browse"
 VIEW_ROUTE = "/arisu/view"
-IMAGE_CONTENT_TYPE = "image"
+IMAGE_TYPES: Dict[str, str] = {
+    "png": "image/png",
+    "jpg": "image/jpeg",
+    "jpeg": "image/jpeg",
+    "webp": "image/webp",
+    "bmp": "image/bmp",
+    "avif": "image/avif",
+}
 MIN_THUMBNAIL = 16
 MAX_THUMBNAIL = 4096
 # The crop widget: ``left,top,width,height`` in pixels, blank for the whole image.
@@ -291,20 +301,51 @@ def preview_file_path(base_dir: str, ref: PreviewRef) -> str:
     return contained_path(base_dir, posixpath.join(folder, filename))
 
 
-def is_image_file(name: str) -> bool:
-    """Whether ComfyUI's image loaders would list ``name``.
+def image_content_type(name: str) -> Optional[str]:
+    """The content type **Load Image (Browse)** serves ``name`` under, by extension.
 
-    Uses the interpreter's MIME table, excluding active SVG content. Decoders
-    still validate file contents before pixels are loaded or served.
+    The extension is a filter, as in ComfyUI's own image loaders: the browser
+    and Pillow decode the actual content. Only ``IMAGE_TYPES`` are accepted.
 
     Args:
-        name: A file name or path; only the extension matters.
+        name: A file name or path; only the extension matters, in any case.
 
     Returns:
-        ``True`` for an image type, ``False`` for anything else or no known type.
+        The content type, or ``None`` for any other extension.
     """
-    mime_type, _ = mimetypes.guess_type(name, strict=False)
-    return mime_type is not None and mime_type.split("/")[0] == IMAGE_CONTENT_TYPE and mime_type != "image/svg+xml"
+    _, extension = os.path.splitext(name)
+    return IMAGE_TYPES.get(extension[1:].lower())
+
+
+def is_image_file(name: str) -> bool:
+    """Whether **Load Image (Browse)** lists and loads ``name``; see ``image_content_type``."""
+    return image_content_type(name) is not None
+
+
+def open_raster_image(path: str) -> Image.Image:
+    """Open one of the accepted image types with the Pillow plugins for those types only.
+
+    Pillow sniffs file contents independently of extensions; naming the
+    plugins that match ``IMAGE_TYPES`` costs nothing and keeps a renamed
+    EPS/WMF from starting an external interpreter. Filter against installed
+    plugins for compatibility with older Pillow builds (AVIF needs Pillow 11.2+).
+    """
+    Image.init()
+    formats = ("AVIF", "BMP", "JPEG", "PNG", "WEBP")
+    return Image.open(path, formats=[name for name in formats if name in Image.OPEN])
+
+
+def is_animated_image(path: str) -> bool:
+    """Whether ``path`` holds more than one frame (APNG, animated WebP or AVIF), which Browse does not list.
+
+    Reads the file header only, never a frame. A file Pillow cannot open is not
+    animated; the decoder reports the real problem if it is ever loaded.
+    """
+    try:
+        with open_raster_image(path) as image:
+            return bool(getattr(image, "is_animated", False))
+    except (OSError, ValueError):
+        return False
 
 
 def resolve_image_path(value: Any, input_dir: str) -> str:
@@ -372,7 +413,7 @@ def crop_box(crop: CropBox, size: Tuple[int, int]) -> Optional[Tuple[int, int, i
 
 
 def _scan(path: str, base_dir: str) -> Tuple[List[str], List[str]]:
-    """List visible contained directories and image files, ignoring escaping links."""
+    """List visible contained directories and static image files, ignoring escaping links."""
     dirs: List[str] = []
     files: List[str] = []
     with os.scandir(path) as entries:
@@ -383,7 +424,7 @@ def _scan(path: str, base_dir: str) -> Tuple[List[str], List[str]]:
                 target = contained_path(base_dir, os.path.relpath(entry.path, base_dir))
                 if os.path.isdir(target):
                     dirs.append(entry.name)
-                elif os.path.isfile(target) and is_image_file(entry.name):
+                elif os.path.isfile(target) and is_image_file(entry.name) and not is_animated_image(target):
                     files.append(entry.name)
             except (OSError, ValueError):
                 continue

@@ -50,8 +50,19 @@
   "evenBetterToml.formatter.trailingNewline": true,
   "evenBetterToml.formatter.allowedBlankLines": 1,
   "evenBetterToml.formatter.columnWidth": 100,
-  "ruff.lint.extendSelect": ["I"],
   "prettier.tabWidth": 2,
   "prettier.semi": true,
-  "prettier.singleQuote": false
+  "prettier.singleQuote": true,
+  "ruff.configuration": { "target-version": "py310" },
+  "ruff.lineLength": 140,
+  "ruff.lint.extendSelect": ["I", "S307"],
+  "ruff.lint.ignore": [
+    "N999",
+    "UP006",
+    "UP007",
+    "UP035",
+    "UP045",
+    "UP046",
+    "UP047"
+  ]
 }

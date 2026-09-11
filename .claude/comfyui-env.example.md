@@ -1,7 +1,8 @@
 # ComfyUI environment — local facts (template)
 
-Copy to `.claude/comfyui-env.md` and fill in for this machine. `.gitignore` tracks only this
-template, so the filled-in copy never leaves the machine. `CLAUDE.md`'s "Hard boundary" section
+Copy to `.claude/comfyui-env.md` and fill in for this machine. Claude Code and Codex
+share this file; Codex reads the same rules through `AGENTS.md` (a symlink to `CLAUDE.md`).
+`.gitignore` tracks only this template, so the filled-in copy never leaves the machine. `CLAUDE.md`'s "Hard boundary" section
 holds the *rules*, keyed on `$COMFYUI_PATH`; this file holds the machine-specific *facts* those
 rules point at. When it is missing, an agent must treat `$COMFYUI_PATH` as a live,
 expensive-to-rebuild install and ask before touching anything named below.

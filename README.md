@@ -62,11 +62,14 @@ ComfyUI's console for an import error at startup.
 ### External image directories
 
 **Load Image (Browse)** reads from the built-in `input` and `output` roots. To keep images on
-another disk or network share, the machine owner can create `arisu_paths.json` beside this pack's
-installed `__init__.py`:
+another disk or network share, edit `user/__arisu_nodes/config.arisu.jsonc` under ComfyUI.
+On its first startup after installation, the pack creates a commented template with empty `roots`;
+existing files are never overwritten. A custom ComfyUI user-directory setting relocates this folder.
+The protected `__arisu_nodes` system directory is outside the public user-data API.
 
-```json
+```jsonc
 {
+  // Image libraries shared with clients of this ComfyUI server.
   "roots": {
     "photos": "/data/photos",
     "references": "/mnt/library/references"
@@ -79,23 +82,37 @@ lowercase letter and contain at most 64 lowercase letters, digits, underscores o
 `input` and `output` are reserved. Filesystem roots such as `/` or `C:/` are refused.
 Restart ComfyUI after editing the file, then select a root inside the **Browse** dialog.
 The `path` value is relative to that root, for example `portraits/a.png` under `photos`.
-The file is local configuration: keep a backup across reinstalls and do not commit or distribute it.
-A missing configuration enables only built-in roots; invalid configuration disables all external
-roots and records the reason in the server log until corrected and ComfyUI restarted.
+The file accepts `//` line comments and `/* ... */` block comments, but no trailing commas.
+Ordinary JSON also works. This configuration survives pack reinstalls; keep a backup and do not
+commit or distribute it. A missing file becomes an empty template. Creation/read errors, invalid
+configuration or symlinked configuration destinations disable external roots and record the reason
+in the server log until corrected and ComfyUI restarted.
+
+**Migration:** the old pack-local `arisu_paths.json` is no longer read. After the first startup,
+manually copy its `roots` entries into the new template, then restart ComfyUI. No entries are
+migrated automatically.
 
 Configuring a directory permits clients of this ComfyUI server to browse it and load its images.
 Choose image-library directories you intend to share. Workflows and browser settings cannot add
 roots. Absolute paths, `~`, `..` components, and symlinks leaving the selected root are refused.
 Older workflows using absolute paths must reselect their images with **Browse**; old absolute
-bookmarks are not imported. Existing unlinked relative selections continue to work.
+bookmarks are not imported.
 
-**Browse** is the only image-selection control in the node UI. The selected `root` and `path`
+**Browse** is the only image-selection control in the node UI. A read-only row above it shows
+the selected filename; hover over a shortened name to see it in full. Selection resets are silent. The selected `root` and `path`
 are hidden, saved with the workflow, and cannot be typed or wired. Loading a workflow with a
 linked `path` or `root` removes those links and clears the selection and crop; use **Browse** to
-reselect. The browser's directory field still accepts relative paths for navigation. API/workflow
-values remain subject to server-side validation; hiding controls does not grant filesystem access.
+reselect. Reopening a saved ComfyUI workflow, refreshing it, switching existing tabs, and undo/redo
+within a workflow preserve selections. Importing JSON/PNG/API-format workflows, pasting or
+duplicating nodes, inserting a workflow, and duplicating a workflow clear the image and crop,
+reset the root to `input`, and require reselection—even when imported IDs or filenames match.
+Unknown restoration contexts also require reselection. Saved Browse bookmarks remain available.
+The browser's path display is read-only; navigate with the tree, **up**, the root shortcuts, saved
+locations and thumbnails. Direct API execution
+keeps its validated root-relative inputs; hiding controls does not grant filesystem access.
 
-Previews are decoded raster images; SVG is unsupported. Save buttons accept at most 256 previews
+Previews stream the original file, as Load Image's do; only Browse thumbnails are resized. Accepted
+types are static PNG, JPEG, WebP, BMP and AVIF images; animated files are not listed. Save buttons accept at most 256 previews
 per click, with a 1 MiB request limit. One save runs at a time; retry a busy request after it finishes.
 Both Preview & Save nodes interpret their editable or wired `path` as a filename prefix relative
 to ComfyUI's output directory: `shots/a` saves beneath `output/shots/`. Absolute paths are refused,
@@ -133,6 +150,7 @@ Categories are `Arisu Nodes/Common` and `Arisu Nodes/MiniMax H3`.
 | ComfyUI | >= 0.30.0 | The release that added MiniMax H3 support. Developed against 0.34.5. |
 | MiniMax H3 models | — | For the MiniMax H3 nodes only: the same checkpoint, CLIP, video VAE, and audio VAE the stock H3 nodes need. |
 | Python | >= 3.10 | The nodes run on ComfyUI's own interpreter; this is the floor for the dev tooling. |
+| [Pillow](https://python-pillow.org/) | any (AVIF needs >= 11.2) | The pack's one dependency, already installed by ComfyUI; nothing to add. `make install` puts it in the dev venv for the unit lane. |
 | [uv](https://docs.astral.sh/uv/) | any | Development only. `make install` installs it if missing. |
 | [pnpm](https://pnpm.io/) | any | Development only: runs the JavaScript formatter and linter. `make install` installs it if missing. |
 | [Node.js](https://nodejs.org/) | >= 22.15 | Development only: the web test lane. `make install` installs it (via pnpm) if missing. |
@@ -235,6 +253,28 @@ that install, reading `COMFYUI_PATH` (default `~/apps/comfyui`). [CLAUDE.md](CLA
 rest: the `core.py` / `nodes.py` split every node follows, the rules that keep the test suite
 small, the steps for adding a node, and the release flow. Release history is in
 [CHANGELOG.md](CHANGELOG.md).
+
+### Claude Code and Codex
+
+Open this checkout in either agent. Claude Code reads [CLAUDE.md](CLAUDE.md);
+Codex reads [AGENTS.md](AGENTS.md), which links to the same project rules.
+Both use the same Make targets and ComfyUI safety boundaries.
+
+For local ComfyUI checks, copy [.claude/comfyui-env.example.md](.claude/comfyui-env.example.md)
+to `.claude/comfyui-env.md` and fill in your machine facts. This ignored file is shared
+by both agents. Keep the checkout outside the live ComfyUI install; agent work must
+never modify that install or restart its service. Environments without ComfyUI can
+run `make install`, `make tidy`, `make lint test`, and `make build` in this checkout.
+
+After pushing a release branch through the documented release flow, invoke
+`/release-pr` in Claude Code or `$release-pr` in Codex to open its release PR.
+The skill requires `git` and authenticated GitHub CLI (`gh`). Codex discovers it
+through `.agents/skills/release-pr`, a symlink to the shared Claude skill; use
+`/skills` to find it, or restart Codex if it has not appeared. See the
+[official Codex skill documentation](https://learn.chatgpt.com/docs/build-skills)
+for discovery and invocation details. No project-specific Codex configuration is
+required; personal `.codex/` settings stay ignored. Agent files are excluded from
+Registry publishing.
 
 For VS Code, copy [.vscode/settings.example.jsonc](.vscode/settings.example.jsonc) to
 `.vscode/settings.json` and replace `/PATH/TO/ComfyUI` so Pylance can resolve `comfy_api` and torch;

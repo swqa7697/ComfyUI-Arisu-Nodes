@@ -15,7 +15,7 @@ import node_helpers
 import numpy as np
 import torch
 from comfy_api.latest import io, ui
-from PIL import Image, ImageColor, ImageOps, ImageSequence
+from PIL import ImageColor, ImageOps
 
 from .core import (
     CROP_POSITIONS,
@@ -32,6 +32,7 @@ from .core import (
     crop_box,
     is_image_file,
     join_path,
+    open_raster_image,
     parse_crop,
     parse_pad_color,
     resize_plan,
@@ -351,63 +352,42 @@ def _image_path(path: str, root: str) -> str:
     return resolved
 
 
-def open_raster_image(path: str) -> Image.Image:
-    """Open supported raster formats without invoking document/vector decoders.
-
-    Pillow sniffs file contents independently of extensions. Limit the plugins
-    it may select so a renamed EPS/WMF cannot start an external interpreter.
-    Filter against installed plugins for compatibility with older Pillow builds.
-    """
-    Image.init()
-    formats = ("BMP", "DDS", "GIF", "ICO", "JPEG", "JPEG2000", "MPO", "PCX", "PNG", "PPM", "TGA", "TIFF", "WEBP", "AVIF", "QOI")
-    return Image.open(path, formats=[name for name in formats if name in Image.OPEN])
-
-
 def _load_image(path: str, crop: Optional[CropBox]) -> torch.Tensor:
     """Decode an image file the way **Load Image** decodes its pixels, then crop it.
 
-    Every frame of an animated file becomes one image of the batch; frames of
-    a different size than the first are skipped. An alpha channel is dropped.
-    The crop applies after the EXIF transpose, in the pixel space the node
-    preview shows, and identically to every frame; nothing is resized.
+    One static image: an animated file, which Browse never lists, yields its
+    first frame, the one the preview shows. An alpha channel is dropped. The
+    crop applies after the EXIF transpose, in the pixel space the node preview
+    shows; nothing is resized.
 
     Args:
         path: The absolute path of the file.
         crop: The box to keep, or ``None`` for the whole image.
 
     Returns:
-        The images as ``[B, H, W, 3]``, float32 in ``[0, 1]``.
+        The image as ``[1, H, W, 3]``, float32 in ``[0, 1]``.
 
     Raises:
         ValueError: If the crop lies wholly outside the image.
     """
-    images: List[torch.Tensor] = []
-    size: Optional[Tuple[int, int]] = None
-    box: Optional[Tuple[int, int, int, int]] = None
     with node_helpers.pillow(open_raster_image, path) as file:
-        for raw in ImageSequence.Iterator(file):
-            frame = node_helpers.pillow(ImageOps.exif_transpose, raw)
-            rgb = frame.convert("RGB")
-            if size is None:
-                size = rgb.size
-                box = crop_box(crop, size) if crop else None
-            if rgb.size != size:
-                continue
-            if box is not None:
-                rgb = rgb.crop(box)
-            images.append(torch.from_numpy(np.array(rgb).astype(np.float32) / 255.0)[None])
-    return torch.cat(images)
+        rgb = node_helpers.pillow(ImageOps.exif_transpose, file).convert("RGB")
+    box = crop_box(crop, rgb.size) if crop else None
+    if box is not None:
+        rgb = rgb.crop(box)
+    return torch.from_numpy(np.array(rgb).astype(np.float32) / 255.0)[None]
 
 
 class ArisuLoadImage(io.ComfyNode):
-    """Load an image beneath a configured root, picked through a browse dialog, optionally cropped.
+    """Load one static image beneath a configured root, picked through a browse dialog, optionally cropped.
 
     **Load Image** lists the top level of the input directory and brings other
     files in by copying them there. This node takes a path instead: the pack's
     frontend script adds a ``browse`` button that opens a directory browser
     backed by the ``/arisu/browse`` and ``/arisu/view`` routes, and the picked
-    file is read in place at run time. Nothing is uploaded or copied. A second
-    button opens a crop dialog whose result lands in the hidden ``crop`` input.
+    file is read in place at run time. Nothing is uploaded or copied. Browse
+    lists static PNG, JPEG, WebP, BMP and AVIF files only. A second button
+    opens a crop dialog whose result lands in the hidden ``crop`` input.
     """
 
     @classmethod
@@ -423,7 +403,7 @@ class ArisuLoadImage(io.ComfyNode):
             category="Arisu Nodes/Common",
             search_aliases=["load image path", "browse image", "image picker"],
             description=(
-                "Load one image beneath a server-configured directory, selected with Browse, "
+                "Load one static image beneath a server-configured directory, selected with Browse, "
                 "and optionally cropped in a dialog. Same image output as "
                 "Load Image; nothing is uploaded or copied."
             ),
@@ -436,10 +416,10 @@ class ArisuLoadImage(io.ComfyNode):
                     default="input",
                     optional=True,
                     socketless=True,
-                    tooltip="The image directory selected inside Browse. External roots are set in arisu_paths.json.",
+                    tooltip="The image directory selected inside Browse. External roots are set in config.arisu.jsonc.",
                 ),
             ],
-            outputs=[io.Image.Output("image", tooltip="The image, or every frame of an animated file as a batch.")],
+            outputs=[io.Image.Output("image", tooltip="The image, cropped when a crop is set, as a batch of one.")],
         )
 
     @classmethod
@@ -452,7 +432,7 @@ class ArisuLoadImage(io.ComfyNode):
             root: A server-configured image root ID.
 
         Returns:
-            The image batch.
+            The image as a batch of one.
         """
         return io.NodeOutput(_load_image(_image_path(path, root), parse_crop(crop)))
 
