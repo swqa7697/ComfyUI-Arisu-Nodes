@@ -12,7 +12,7 @@ license = "GPL-3.0-only"
 license-files = ["LICENSE"]
 requires-python = ">=3.10"
 classifiers = []
-dependencies = []
+dependencies = ["pillow"]
 
 [dependency-groups]
 dev = ["beautysh>=6.4.3", "mbake>=1.4.6", "pytest>=9.1.1", "ruff>=0.16.7", "uv-sort>=0.8.0"]
@@ -34,19 +34,15 @@ addopts = "-m 'not comfyui'"
 markers = ["comfyui: needs ComfyUI's interpreter and source tree on sys.path"]
 
 [tool.ruff]
-line-length = 140
-# First-party roots, matching the sys.path wiring in tests/conftest.py: the repo root
-# (`src.arisu_nodes`), scripts/ (`release_common`), src/ and tests/.
-src = [".", "scripts", "src", "tests"]
 target-version = "py310"
+line-length = 140
+src = [".", "scripts", "src", "tests"]
 
 [tool.ruff.lint]
 extend-select = [
     "I",    # isort: sorted top-level imports (see CLAUDE.md, Import conventions)
     "S307", # suspicious-eval-usage: flag any eval() call; not in ruff's default set
 ]
-# Track ruff's (>=0.16) widened defaults, opting out only where they conflict
-# with this project's conventions (see CLAUDE.md) or intentional patterns.
 ignore = [
     "N999",  # the repo dir is the package ComfyUI imports; its name is fixed
     "UP006", # typing convention: List/Dict/... over list/dict builtins

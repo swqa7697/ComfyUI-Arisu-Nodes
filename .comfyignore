@@ -23,7 +23,7 @@ Makefile
 tidy.sh
 biome.json
 
-# Dev environment pins; the pack itself has no runtime dependencies
+# Dev environment pins; the pack's one dependency, Pillow, is already installed by ComfyUI
 uv.lock
 .python-version
 .gitignore

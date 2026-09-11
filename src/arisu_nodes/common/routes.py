@@ -20,6 +20,7 @@ from typing import Any, Callable, Dict, List, Optional
 import comfy.model_management
 import comfy.utils
 import folder_paths
+import node_helpers
 import numpy as np
 import torch
 from aiohttp import web
@@ -38,13 +39,13 @@ from .core import (
     contained_path,
     crop_box,
     expand_save_prefix,
-    is_image_file,
+    image_content_type,
+    open_raster_image,
     parse_browse_request,
     parse_save_request,
     parse_view_request,
     preview_file_path,
 )
-from .nodes import open_raster_image
 from .paths import image_roots, select_root
 
 logger = logging.getLogger(__name__)
@@ -59,9 +60,12 @@ _COMPRESS_LEVEL = 4
 _TILE = 512
 _MIN_TILE = 128
 _OVERLAP = 32
-# The browse dialog's thumbnails and the node preview: WEBP, the format /view's own previews use.
-_THUMBNAIL_FORMAT = "WEBP"
-_THUMBNAIL_QUALITY = 80
+# Renderings of the view route (``max`` thumbnails, the only resized output, and ``crop`` previews at
+# the crop's own size): WEBP, the format /view's own previews use. libwebp's fastest method encodes a
+# 3 MP crop in a third of the default's time for the same size at this quality; these are previews.
+_RENDER_FORMAT = "WEBP"
+_RENDER_QUALITY = 80
+_RENDER_METHOD = 0
 _SAVE_BODY_LIMIT = 1024 * 1024
 _SAVE_LOCK = threading.Lock()
 _IMAGE_HEADERS = {"X-Content-Type-Options": "nosniff"}
@@ -169,18 +173,25 @@ async def _browse(request: web.Request) -> web.Response:
     )
 
 
-async def _view(request: web.Request) -> web.Response:
-    """Serve decoded raster pixels only, never source files or compressed sidecars."""
+async def _view(request: web.Request) -> web.StreamResponse:
+    """Stream the original file as ComfyUI's ``/view`` does, or a WebP rendering when ``max`` or ``crop`` is given.
+
+    Path containment is the boundary: the file is served as it is, under the
+    content type of its accepted extension. Decoding happens only for a rendering.
+    """
     try:
         base = select_root(_roots(), request.query.get("root", "input"))
         req = parse_view_request(request.query, base)
     except (TypeError, ValueError) as error:
         return _error(str(error), 400)
+    content_type = image_content_type(req.path)
+    if content_type is None:
+        return _error("unsupported image type", 415)
+    if not os.path.isfile(req.path):
+        return _error("image file not found in the selected root", 404)
+    if req.max_size is None and req.crop is None:
+        return web.FileResponse(req.path, headers={**_IMAGE_HEADERS, "Content-Type": content_type})
     try:
-        if not os.path.isfile(req.path):
-            return _error("image file not found in the selected root", 404)
-        if not is_image_file(req.path):
-            return _error("unsupported image type", 415)
         body = await asyncio.to_thread(render, req.path, req.max_size, req.crop)
     except FileNotFoundError:
         return _error("image file not found in the selected root", 404)
@@ -189,25 +200,29 @@ async def _view(request: web.Request) -> web.Response:
     except Exception:
         logger.exception("Arisu view failed")
         return _error("rendering failed; see the server log", 500)
-    return web.Response(body=body, content_type="image/png" if req.max_size is None else "image/webp", headers=_IMAGE_HEADERS)
+    return web.Response(body=body, content_type=f"image/{_RENDER_FORMAT.lower()}", headers=_IMAGE_HEADERS)
 
 
 def render(path: str, max_size: Optional[int], crop: Optional[CropBox]) -> bytes:
-    """Encode the upright first frame as PNG, or bounded WebP when requested.
+    """The upright first frame of ``path``, cut to ``crop`` and, for a thumbnail, shrunk into ``max_size``, as WEBP.
 
-    Strip metadata and preserve alpha; PNG preserves full source dimensions
-    for the crop dialog, including source formats browsers cannot decode.
+    The crop applies after the EXIF transpose, as ``nodes._load_image`` applies
+    it, so the node preview shows the pixels a run produces, at their own size.
+    Only a ``max_size`` thumbnail is ever resized. WEBP refuses a side above
+    16383 pixels, which the route reports as an undecodable image.
+
+    Raises:
+        ValueError: If the crop lies wholly outside the image.
     """
-    with open_raster_image(path) as image:
-        frame = ImageOps.exif_transpose(image).convert("RGBA" if "A" in image.getbands() or "transparency" in image.info else "RGB")
+    with node_helpers.pillow(open_raster_image, path) as image:
+        frame = node_helpers.pillow(ImageOps.exif_transpose, image)
         box = crop_box(crop, frame.size) if crop else None
         if box is not None:
             frame = frame.crop(box)
         if max_size is not None:
             frame.thumbnail((max_size, max_size))
-        frame.info.clear()
         buffer = BytesIO()
-        frame.save(buffer, format="PNG" if max_size is None else _THUMBNAIL_FORMAT, quality=_THUMBNAIL_QUALITY)
+        frame.save(buffer, format=_RENDER_FORMAT, quality=_RENDER_QUALITY, method=_RENDER_METHOD)
     return buffer.getvalue()
 
 

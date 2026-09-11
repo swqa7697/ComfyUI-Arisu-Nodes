@@ -200,6 +200,7 @@ test('browse navigates configured roots, saves relative bookmarks, and selects a
   api.responses.push(jsonResponse(200, listing('photos', 'refs', '', [], ['b.png', 'c.jpg'], [{ path: '', dirs: ['refs'] }])));
   await savedRows(dialog)[0][0].onclick();
   assert.deepEqual(query(api.calls.at(-1).route), { root: 'photos', path: 'refs' });
+  assert.equal(byClass(dialog, 'arisu-browser-path')[0].textContent, 'refs');
   await savedRows(dialog)[1][1].onclick();
   assert.deepEqual(settings[SAVED_SETTING], [{ root: 'photos', path: 'refs' }]);
   descendants(dialog)
@@ -237,8 +238,8 @@ test('browse navigates configured roots, saves relative bookmarks, and selects a
   const [restored] = await app.loadGraphData({ nodes: [serialized(values[0], '1,1,2,2', values[2])] }, true, true, { isPersisted: true });
   assert.deepEqual(restored.inputs, []);
   assert.equal(query(restored.imgs[0].src).crop, '1,1,2,2');
-  // Reopening a saved workflow preserves root selection and all formats arrive as raster pixels.
-  const [saved] = await app.loadGraphData({ nodes: [serialized('scan.tif', '', 'photos')] }, true, true, { isPersisted: true });
+  // Reopening a saved workflow preserves root selection and previews the original file, never a resized one.
+  const [saved] = await app.loadGraphData({ nodes: [serialized('scan.avif', '', 'photos')] }, true, true, { isPersisted: true });
   assert.equal(query(saved.imgs[0].src).root, 'photos');
   assert.equal(query(saved.imgs[0].src).max, undefined);
   assert.deepEqual(toastSeverities(), []);
@@ -282,11 +283,14 @@ test('legacy paths require reselection, invalid bookmarks stay inert, and failed
   assert.deepEqual(query(api.calls[0].route), { root: 'input', path: '' });
   assert.equal(savedRows(dialog).length, 1);
   assert.equal(savedRows(dialog)[0][0].title, 'photos:refs');
-  // Typed absolute paths are refused by the server; no ad-hoc roots are created.
+  // The path display is read-only; a refused or failed navigation from the tree leaves the dialog where it was.
   const field = byClass(dialog, 'arisu-browser-path')[0];
-  field.value = '/outside';
+  assert.equal(field.tagName, 'OUTPUT');
+  assert.equal(field.onkeydown, undefined);
+  assert.equal(field.textContent, '/');
+  const outputRow = descendants(dialog).find((element) => element.title === 'output:/');
   api.responses.push(jsonResponse(400, { error: 'path must be relative' }));
-  await field.onkeydown({ key: 'Enter' });
+  await outputRow.onclick();
   assert.equal(dialog.open, true);
   assert.deepEqual(treeRows(dialog), [
     ['input:/', true],
@@ -295,8 +299,9 @@ test('legacy paths require reselection, invalid bookmarks stay inert, and failed
   ]);
   assert.equal(toastSeverities().at(-1), 'error');
   api.responses.push(new Error('offline'));
-  await field.onkeydown({ key: 'Enter' });
+  await outputRow.onclick();
   assert.equal(toastSeverities().at(-1), 'error');
+  assert.equal(field.textContent, '/');
   dialog.onpointerdown({ target: dialog });
   dialog.onclick({ target: dialog });
   assert.equal(dialog.open, false);
@@ -422,7 +427,7 @@ test('workflow provenance preserves reopening and undo, while imports, paste and
   assert.equal(openDialog(), undefined);
   assert.equal(reopened.widgets[0].value, '');
 
-  // A preview already loading at reset cannot return pixels or start a fallback request.
+  // A preview already loading at reset cannot return pixels or start another request.
   const OriginalImage = globalThis.Image;
   const pending = [];
   globalThis.Image = class {

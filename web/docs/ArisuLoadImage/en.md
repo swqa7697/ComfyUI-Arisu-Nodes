@@ -23,8 +23,8 @@ A read-only row above **browse** shows the selected filename, or “No image sel
 are shortened with an ellipsis; hover to see the full filename.
 
 The browser's tree contains only configured roots. Click a folder to enter it, its chevron to
-expand it, and **collapse** to fold everything but the current chain. The path field is relative
-to the selected root; **up** stops at that root. **input dir** and **output dir** switch roots.
+expand it, and **collapse** to fold everything but the current chain. The read-only path display
+shows the current directory relative to the selected root; **up** stops at that root. **input dir** and **output dir** switch roots.
 The filter narrows image names in the current directory. Click an image to select both its root
 and relative path. Nothing is uploaded or copied.
 
@@ -78,7 +78,7 @@ crop.
 
 | Output  | Type  | Description                                                                              |
 |---------|-------|------------------------------------------------------------------------------------------|
-| `image` | IMAGE | The image, cropped when a crop is set, as `[1, H, W, 3]`; every frame of an animated file becomes one image of the batch. |
+| `image` | IMAGE | The image, cropped when a crop is set, as `[1, H, W, 3]`. |
 
 ## Wiring
 
@@ -92,15 +92,16 @@ Load Image (Browse) ─▶ (first_frame) MiniMax H3 Hybrid to Video
 - Paths are resolved beneath the selected root, including symlink targets. Absolute paths, home
   expansion, `..` components, drive/UNC paths, and escaping symlinks are rejected in both the
   routes and node execution. Hidden entries are omitted from the browser.
-- Supported files are raster image types Pillow can decode (PNG, JPEG, WebP, GIF, TIFF, and others).
-  SVG, document formats such as EPS/WMF (even renamed), and undecodable content are refused. An animated file still loads all matching-size frames
-  into the node's output; browser previews show its first frame.
-- Full-size previews and the crop dialog receive decoded PNG pixels at the original upright size;
-  thumbnails receive bounded WebP. This also allows cropping TIFF images. Source metadata and
-  active document content are never served through the view route.
+- Supported files are PNG, JPEG, WebP, BMP and AVIF, the raster types browsers decode natively;
+  the extension decides, in any letter case. TIFF, GIF, SVG, document formats and anything else are
+  neither listed nor loaded. Static images only: Browse does not list animated PNG, WebP or AVIF
+  files; a selection restored from a workflow loads its first frame.
+- The node preview and the crop dialog receive the original file, exactly as Load Image's previews
+  do, never a resized or re-encoded copy. A crop is previewed as a WebP rendering at the crop's own
+  size; Browse thumbnails are the only resized images.
 - Editing the source file changes the node's cache key through its size and modification time.
 - The hidden `crop` input is `left,top,width,height` in pixels after EXIF rotation. It applies to
-  every frame. A crop reaching beyond an edge is clipped; one wholly outside the image is refused.
+  the image. A crop reaching beyond an edge is clipped; one wholly outside the image is refused.
   Picking a different file or changing roots clears the crop.
 - Browse-only selection is a UI restriction. API and workflow JSON still carry root-relative
   values, which the server validates at execution, validation and fingerprinting. Hidden controls

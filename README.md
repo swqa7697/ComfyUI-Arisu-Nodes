@@ -107,10 +107,12 @@ within a workflow preserve selections. Importing JSON/PNG/API-format workflows, 
 duplicating nodes, inserting a workflow, and duplicating a workflow clear the image and crop,
 reset the root to `input`, and require reselection—even when imported IDs or filenames match.
 Unknown restoration contexts also require reselection. Saved Browse bookmarks remain available.
-The browser's directory field still accepts relative paths for navigation. Direct API execution
+The browser's path display is read-only; navigate with the tree, **up**, the root shortcuts, saved
+locations and thumbnails. Direct API execution
 keeps its validated root-relative inputs; hiding controls does not grant filesystem access.
 
-Previews are decoded raster images; SVG is unsupported. Save buttons accept at most 256 previews
+Previews stream the original file, as Load Image's do; only Browse thumbnails are resized. Accepted
+types are static PNG, JPEG, WebP, BMP and AVIF images; animated files are not listed. Save buttons accept at most 256 previews
 per click, with a 1 MiB request limit. One save runs at a time; retry a busy request after it finishes.
 Both Preview & Save nodes interpret their editable or wired `path` as a filename prefix relative
 to ComfyUI's output directory: `shots/a` saves beneath `output/shots/`. Absolute paths are refused,
@@ -148,6 +150,7 @@ Categories are `Arisu Nodes/Common` and `Arisu Nodes/MiniMax H3`.
 | ComfyUI | >= 0.30.0 | The release that added MiniMax H3 support. Developed against 0.34.5. |
 | MiniMax H3 models | — | For the MiniMax H3 nodes only: the same checkpoint, CLIP, video VAE, and audio VAE the stock H3 nodes need. |
 | Python | >= 3.10 | The nodes run on ComfyUI's own interpreter; this is the floor for the dev tooling. |
+| [Pillow](https://python-pillow.org/) | any (AVIF needs >= 11.2) | The pack's one dependency, already installed by ComfyUI; nothing to add. `make install` puts it in the dev venv for the unit lane. |
 | [uv](https://docs.astral.sh/uv/) | any | Development only. `make install` installs it if missing. |
 | [pnpm](https://pnpm.io/) | any | Development only: runs the JavaScript formatter and linter. `make install` installs it if missing. |
 | [Node.js](https://nodejs.org/) | >= 22.15 | Development only: the web test lane. `make install` installs it (via pnpm) if missing. |

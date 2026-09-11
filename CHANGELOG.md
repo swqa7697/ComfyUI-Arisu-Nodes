@@ -15,9 +15,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Accept only PNG, JPEG, WebP, BMP and AVIF in Load Image (Browse); TIFF, GIF, SVG and other types are no longer listed or loaded.
+- Render cropped Load Image previews as full-size WebP; Browse thumbnails remain the only resized previews.
+- Handle static images only in Load Image (Browse): Browse no longer lists animated PNG, WebP or AVIF files, and the output is always one image.
+- Show the browse dialog's current path as read-only text; navigate with the tree, up, roots, saved locations and thumbnails.
 - Clear Load Image selections silently, including when removing legacy location wires.
 
 - Preserve Load Image selections when reopening saved workflows or existing tabs, and require Browse reselection after workflow imports, insertion, or node/workflow duplication.
+
+### Fixed
+
+- Speed up Load Image (Browse) previews and the crop dialog by streaming the original file, as Load Image does, instead of re-encoding it as PNG.
 
 ### Security
 

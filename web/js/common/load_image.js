@@ -1,4 +1,5 @@
-// Browse and crop raster images beneath server-configured roots. Paths and bookmarks are relative.
+// Browse and crop images beneath server-configured roots. Paths and bookmarks are relative; previews
+// stream the original file, as Load Image's do, and only the browser's thumbnails are resized.
 import { api } from '../../../../scripts/api.js';
 import { app } from '../../../../scripts/app.js';
 import { cropImage } from './cropper.js';
@@ -13,8 +14,6 @@ const VIEW_ROUTE = '/arisu/view';
 const THUMBNAIL_MAX = 256;
 /** The hidden ComfyUI setting holding the browser's saved directories, an array of {root, path} locations. */
 const SAVED_PATHS_SETTING = 'Arisu.LoadImage.SavedLocations';
-/** The fallback bound if a full-resolution raster response cannot be loaded. */
-const PREVIEW_MAX = 1024;
 /** The context-menu entry the frontend adds to every previewing node; see beforeRegisterNodeDef for why it goes. */
 const MASK_EDITOR_ENTRY = /mask ?editor/i;
 const ICONS = { root: '\u{1F4BE}', folder: '\u{1F4C1}', saved: '\u{1F4CC}' };
@@ -37,7 +36,8 @@ const STYLE = `
 .arisu-browser input:focus-visible { outline: none; border-color: var(--p-primary-color, #6ea8fe); }
 .arisu-browser-bar { display: flex; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--border-color, #444); }
 .arisu-browser-bar button:hover { border-color: var(--p-primary-color, #6ea8fe); }
-.arisu-browser-path { flex: 1; min-width: 0; }
+.arisu-browser-path { flex: 1; min-width: 0; padding: 6px 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--descrip-text, #999); font-variant-numeric: tabular-nums; }
 .arisu-browser-body { display: flex; flex: 1; min-height: 0; transition: opacity 150ms ease; }
 .arisu-browser-body[aria-busy="true"] { opacity: 0.45; pointer-events: none; transition-delay: 200ms; }
 .arisu-browser-tree, .arisu-browser-grid { overflow: auto; scrollbar-width: thin; scrollbar-color: var(--border-color, #444) transparent; }
@@ -294,8 +294,8 @@ function notMaskEditor(option) {
 }
 
 /**
- * The view route's URL for `path`: full-resolution pixels, or pixels bounded to `max` and cut to `crop`
- * (the widget text) when given; `bust` defeats the browser cache for a file that may have changed.
+ * The view route's URL for `path`: the original file, or a WebP rendering shrunk into `max` and/or cut to
+ * `crop` (the widget text) when given; `bust` defeats the browser cache for a file that may have changed.
  */
 function viewUrl(path, max, bust = false, crop = '', root = 'input') {
   const params = new URLSearchParams({ root, path });
@@ -330,10 +330,8 @@ async function showPreview(node) {
   const crop = cropWidget(node)?.value?.trim() ?? '';
   const token = {};
   previewTokens.set(node, token);
-  // Full-resolution raster pixels preserve the caption size; a failed render gets a bounded retry.
-  let img = await loadImage(viewUrl(path, undefined, true, crop, root));
-  if (previewTokens.get(node) !== token) return;
-  if (!img) img = await loadImage(viewUrl(path, PREVIEW_MAX, true, crop, root));
+  // The original file, or the crop rendered at its own size: the caption shows what a run produces.
+  const img = await loadImage(viewUrl(path, undefined, true, crop, root));
   if (previewTokens.get(node) !== token) return;
   if (img) {
     node.imgs = [img];
@@ -371,7 +369,7 @@ async function openCropper(node) {
     toast('warn', 'Pick an image first.');
     return;
   }
-  // Full-resolution raster pixels keep crop coordinates aligned with node execution.
+  // The original file keeps crop coordinates aligned with node execution.
   const root = rootValue(node);
   const img = await loadImage(viewUrl(path, undefined, true, '', root));
   if (selectionTokens.get(node) !== selection) return;
@@ -399,12 +397,8 @@ async function openBrowser(node) {
   let navigation = 0;
   const roots = new Map();
   const tree = new Map();
-  const pathField = el('input', {
-    className: 'arisu-browser-path',
-    type: 'text',
-    placeholder: 'path relative to selected root',
-    onkeydown: (event) => (event.key === 'Enter' ? navigate(listing.root, pathField.value) : undefined),
-  });
+  // Read-only: the tree, up, the roots, saved locations and thumbnails are the only ways to move.
+  const pathField = el('output', { className: 'arisu-browser-path' });
   const upButton = el('button', { textContent: '↑ up', onclick: () => navigate(listing.root, listing.parent) });
   const filterField = el('input', { type: 'search', placeholder: 'filter images', oninput: () => renderGrid(false) });
   const saveButton = el('button', { textContent: '+ save', onclick: savePath });
@@ -570,7 +564,7 @@ async function openBrowser(node) {
       listing = data;
       loaded = true;
       absorb(data);
-      pathField.value = data.path;
+      pathField.textContent = data.path || '/';
       pathField.title = `Relative to ${data.root}`;
       upButton.disabled = data.parent == null;
       renderGrid(true);

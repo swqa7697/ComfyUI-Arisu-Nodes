@@ -70,7 +70,8 @@ def test_load_image_decodes_like_the_stock_loader(tmp_path: Path, monkeypatch: p
     Image.fromarray(rgba, "RGBA").save(tmp_path / "input" / "sub" / "a.png")
     Image.fromarray(np.full((3, 5, 3), 128, dtype=np.uint8)).save(tmp_path / "elsewhere.jpg")
     frames = [Image.fromarray(np.full((2, 2, 3), value, dtype=np.uint8)) for value in (0, 255)]
-    frames[0].save(tmp_path / "anim.gif", save_all=True, append_images=frames[1:])
+    frames[0].save(tmp_path / "anim.png", save_all=True, append_images=frames[1:])
+    Image.new("RGB", (2, 2)).save(tmp_path / "scan.tif")
 
     # a path relative to the input directory: RGB pixels, the alpha channel dropped; the image is the one output
     (image,) = ArisuLoadImage.execute(path="sub/a.png").args
@@ -80,10 +81,10 @@ def test_load_image_decodes_like_the_stock_loader(tmp_path: Path, monkeypatch: p
     monkeypatch.setattr(paths, "external_roots", lambda: {"photos": str(tmp_path)})
     (image,) = ArisuLoadImage.execute(path="elsewhere.jpg", root="photos").args
     assert image.shape == (1, 3, 5, 3)
-    # every frame of an animation is one image of the batch
-    (image,) = ArisuLoadImage.execute(path="anim.gif", root="photos").args
-    assert image.shape == (2, 2, 2, 3)
-    # a crop, left,top,width,height in pixels, is cut from every frame after decoding, never resized: the whole image
+    # an animated file, which Browse never lists, yields its first frame only
+    (image,) = ArisuLoadImage.execute(path="anim.png", root="photos").args
+    assert image.shape == (1, 2, 2, 3) and image.max().item() == 0.0
+    # a crop, left,top,width,height in pixels, is cut after decoding, never resized: the whole image
     # is no crop, a box past the edge is cut to the image, and one outside it is an error
     (image,) = ArisuLoadImage.execute(path="sub/a.png", crop="1,1,3,2").args
     assert image.shape == (1, 2, 3, 3)
@@ -91,8 +92,8 @@ def test_load_image_decodes_like_the_stock_loader(tmp_path: Path, monkeypatch: p
     assert image.shape == (1, 4, 6, 3)
     (image,) = ArisuLoadImage.execute(path="sub/a.png", crop="4,2,10,10").args
     assert image.shape == (1, 2, 2, 3)
-    (image,) = ArisuLoadImage.execute(path="anim.gif", root="photos", crop="0,0,1,1").args
-    assert image.shape == (2, 1, 1, 3)
+    (image,) = ArisuLoadImage.execute(path="anim.png", root="photos", crop="0,0,1,1").args
+    assert image.shape == (1, 1, 1, 3)
     with pytest.raises(ValueError):
         ArisuLoadImage.execute(path="sub/a.png", crop="6,0,1,1")
 
@@ -105,6 +106,10 @@ def test_load_image_decodes_like_the_stock_loader(tmp_path: Path, monkeypatch: p
     (tmp_path / "notes.txt").write_text("x")
     for bad in ["", "sub/missing.png", str(tmp_path / "notes.txt")]:
         assert isinstance(ArisuLoadImage.validate_inputs(path=bad), str), f"case={bad!r}"
+    # A type outside the browser-native set is refused by name before any decoding, like a text file.
+    with pytest.raises(ValueError):
+        ArisuLoadImage.execute(path="scan.tif", root="photos")
+    assert isinstance(ArisuLoadImage.validate_inputs(path="scan.tif", root="photos"), str)
     # Direct execution, validation and cache fingerprinting all enforce containment.
     outside = tmp_path / "outside"
     outside.mkdir()
