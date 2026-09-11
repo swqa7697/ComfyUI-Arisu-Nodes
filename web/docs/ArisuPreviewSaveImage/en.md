@@ -1,6 +1,6 @@
 # Preview & Save Image
 
-Preview an image batch and pass it through unchanged. A run saves nothing; the **save** button
+Preview an image batch and pass it through unchanged. A run writes only temporary previews; the **save** button
 writes the previewed images under ComfyUI's output directory at `path`, without queueing a run.
 
 ## Why
@@ -36,7 +36,9 @@ Path Builder ─▶ (path)
 - A click accepts at most 256 previews and a 1 MiB JSON request. Only one save runs at a time;
   a busy request returns 429 and can be retried after the current save finishes, even if its browser disconnected.
 - Preview reads stay under ComfyUI's temp directory and writes stay under its output directory,
-  including symlink targets. Absolute paths and every `..` component are refused. Existing files
+  including symlink targets. Supply `path` as a relative filename prefix; absolute paths are refused
+  even when already inside output. Every `..` component is refused. External image roots cannot
+  redirect saves. Temporary previews remain in temp. Existing files
   and symlinks are never overwritten; the counter advances to an unused filename.
 
 - The button saves what the preview shows, so run first. After a page reload or a ComfyUI restart

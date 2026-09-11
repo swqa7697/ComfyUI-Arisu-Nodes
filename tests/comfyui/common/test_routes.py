@@ -23,7 +23,7 @@ from PIL import EpsImagePlugin, Image
 from PIL.PngImagePlugin import PngImageFile, PngInfo
 
 from src.arisu_nodes.common import paths, routes
-from src.arisu_nodes.common.nodes import ArisuPreviewSaveImage
+from src.arisu_nodes.common.nodes import ArisuPreviewSaveImage, ArisuPreviewSaveImageUpscale
 
 pytestmark = pytest.mark.comfyui
 
@@ -90,15 +90,30 @@ def test_save_route_copies_the_preview_and_upscales_on_request(dirs: Path, monke
     status, body = post({"images": previews[:1], "path": "shots/a"})
     assert status == 200 and body["saved"][0]["filename"] == "a_00003_.png"
 
+    # The upscale node also keeps previews in temp and saves its relative prefix beneath output.
+    ui = ArisuPreviewSaveImageUpscale.execute(images=batch[:1], path="nested/shots/a", upscale_model="none").ui
+    assert isinstance(ui, dict)
+    assert all(ref["type"] == "temp" for ref in ui["images"])
+    status, body = post({"images": ui["images"], "path": ui["path"][0], "upscale_model": ui["upscale_model"][0]})
+    assert status == 200, body
+    assert body["saved"][0]["subfolder"] == "nested/shots"
+    assert (pixels(dirs / "output" / "nested" / "shots" / "a_00001_.png") == pixels(saved[0])).all()
+
     # with a model selected the saved file is the upscaled image, and the preview's metadata survives
     (dirs / "temp" / "sub").mkdir(parents=True)
     metadata = PngInfo()
     metadata.add_text("prompt", '{"1": "recorded"}')
     Image.fromarray(np.full((4, 5, 3), 200, dtype=np.uint8)).save(dirs / "temp" / "sub" / "meta.png", pnginfo=metadata)
     monkeypatch.setattr(routes, "model_upscaler", lambda name: lambda t: t.repeat_interleave(2, dim=1).repeat_interleave(2, dim=2))
-    status, body = post({"images": [{"filename": "meta.png", "subfolder": "sub", "type": "temp"}], "path": "big", "upscale_model": "stub"})
+    status, body = post(
+        {
+            "images": [{"filename": "meta.png", "subfolder": "sub", "type": "temp"}],
+            "path": "shots/%width%x%height%/big",
+            "upscale_model": "stub",
+        }
+    )
     assert status == 200, body
-    with Image.open(dirs / "output" / "big_00001_.png") as image:
+    with Image.open(dirs / "output" / "shots" / "10x8" / "big_00001_.png") as image:
         assert isinstance(image, PngImageFile)
         assert image.size == (10, 8)
         assert image.text == {"prompt": '{"1": "recorded"}'}
@@ -127,6 +142,7 @@ def test_save_route_refuses_bad_requests(dirs: Path, monkeypatch: pytest.MonkeyP
     (dirs / "output").mkdir()
     outside = dirs / "outside"
     outside.mkdir()
+    monkeypatch.setattr(paths, "external_roots", lambda: {"photos": str(outside)})
     Image.new("RGB", (3, 2)).save(dirs / "temp" / "ok.png")
     Image.new("RGB", (3, 2)).save(outside / "secret.png")
     sentinel = (outside / "secret.png").read_bytes()
@@ -143,6 +159,21 @@ def test_save_route_refuses_bad_requests(dirs: Path, monkeypatch: pytest.MonkeyP
         {"images": [ok], "path": "escape/new/a"},
         {"images": [ok], "path": "escape/%width%/a"},
     ]
+    # Even an absolute prefix already inside output must be supplied as a relative path.
+    malicious.extend(
+        {"images": [ok], "path": prefix}
+        for prefix in (
+            str(dirs / "output" / "absolute"),
+            str(outside / "absolute"),
+            "~/a",
+            "C:/a",
+            "C:relative",
+            "\\\\server\\share\\a",
+            "../outside/a",
+            "nested/../a",
+            "nested\\..\\a",
+        )
+    )
     for payload in malicious:
         status, body = post({**payload, "upscale_model": "stub"})
         assert status == 400 and "error" in body, f"case={payload!r}"
@@ -160,6 +191,13 @@ def test_save_route_refuses_bad_requests(dirs: Path, monkeypatch: pytest.MonkeyP
     (dirs / "temp" / "bad.png").write_text("<svg><script>alert(1)</script></svg>")
     status, _ = post({"images": [{**ok, "filename": "bad.png"}], "path": "b"})
     assert status == 415
+
+    # Read roots never redirect saves, even when a custom client supplies a root parameter.
+    status, body = post({"images": [ok], "root": "photos", "path": "photos/nested/a"})
+    assert status == 200, body
+    assert (dirs / "output" / "photos" / "nested" / "a_00001_.png").is_file()
+    assert sorted(p.name for p in outside.iterdir()) == ["secret.png"]
+    assert (outside / "secret.png").read_bytes() == sentinel
 
     # Unexpected failures stay in server logs, not in client responses.
     def fail(req: Any) -> Any:

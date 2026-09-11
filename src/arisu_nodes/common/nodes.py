@@ -44,11 +44,11 @@ UPSCALE_MODELS_FOLDER = "upscale_models"
 _PATH_TOOLTIP = (
     "Where the save button writes: a filename prefix under ComfyUI's output directory, with Save Image's "
     "filename_prefix rules. 'shots/a' saves output/shots/a_00001_.png; %year%, %width% and the like are expanded; "
-    "absolute paths and '..' are refused."
+    "absolute paths (even inside output) and '..' are refused. External image roots are not save destinations."
 )
 _LOAD_PATH_TOOLTIP = (
-    "The image file relative to the selected configured root ('sub/a.png'). Absolute paths require reselection. "
-    "The browse button fills it in. Nothing is uploaded or copied."
+    "The image file relative to the selected configured root ('sub/a.png'), stored by Browse. "
+    "Select images with Browse; manual input and wiring are unavailable in the UI. Nothing is uploaded or copied."
 )
 _LOAD_CROP_TOOLTIP = (
     "An optional crop as left,top,width,height in pixels of the upright image; blank loads the whole image. "
@@ -423,19 +423,20 @@ class ArisuLoadImage(io.ComfyNode):
             category="Arisu Nodes/Common",
             search_aliases=["load image path", "browse image", "image picker"],
             description=(
-                "Load one image beneath a server-configured directory, picked with Browse or typed as a relative path, "
+                "Load one image beneath a server-configured directory, selected with Browse, "
                 "and optionally cropped in a dialog. Same image output as "
                 "Load Image; nothing is uploaded or copied."
             ),
             inputs=[
-                io.String.Input("path", default="", tooltip=_LOAD_PATH_TOOLTIP),
+                io.String.Input("path", default="", socketless=True, tooltip=_LOAD_PATH_TOOLTIP),
                 io.String.Input("crop", default="", tooltip=_LOAD_CROP_TOOLTIP),
                 io.Combo.Input(
                     "root",
                     options=list(image_roots(folder_paths.get_input_directory(), folder_paths.get_output_directory())),
                     default="input",
                     optional=True,
-                    tooltip="The server-configured image directory. External roots are set in arisu_paths.json.",
+                    socketless=True,
+                    tooltip="The image directory selected inside Browse. External roots are set in arisu_paths.json.",
                 ),
             ],
             outputs=[io.Image.Output("image", tooltip="The image, or every frame of an animated file as a batch.")],

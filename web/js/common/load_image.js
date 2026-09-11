@@ -118,10 +118,22 @@ function formatCrop(rect, img) {
   return whole ? '' : [rect.x, rect.y, rect.w, rect.h].join(',');
 }
 
-/** Keep the crop widget out of sight: the crop dialog is its editor, and the preview shows its effect. */
-function hideCrop(node) {
-  const widget = cropWidget(node);
-  if (widget) hideWidget(node, widget);
+/** Persist dialog-owned values without editable widgets or sockets; linked legacy locations need reselection. */
+function hideSelection(node) {
+  const linked = node.inputs?.some((input) => [PATH_WIDGET, 'root'].includes(input.widget?.name ?? input.name) && input.link != null);
+  for (const widget of [pathWidget(node), cropWidget(node), rootWidget(node)]) {
+    if (!widget) continue;
+    widget.options ??= {};
+    widget.options.socketless = true;
+    hideWidget(node, widget);
+  }
+  if (linked) {
+    pathWidget(node).value = '';
+    if (cropWidget(node)) cropWidget(node).value = '';
+    if (rootWidget(node)) rootWidget(node).value = 'input';
+    cropRatios.delete(node);
+    toast('warn', 'Linked image locations are no longer supported in the UI. Reselect this image with Browse.');
+  }
 }
 
 /** The saved directories, from the user's ComfyUI settings. */
@@ -134,10 +146,6 @@ function savedPaths() {
 
 function storeSavedPaths(paths) {
   return app.extensionManager?.setting?.set?.(SAVED_PATHS_SETTING, paths);
-}
-
-function isLinked(node, name) {
-  return node.inputs?.some((input) => input.widget?.name === name && input.link != null) ?? false;
 }
 
 function rootWidget(node) {
@@ -237,7 +245,6 @@ function pick(node, path, root) {
   const rootField = rootWidget(node);
   if (rootField && rootField.value !== root) setWidget(node, rootField, root);
   setWidget(node, widget, path);
-  if (isLinked(node, PATH_WIDGET) || isLinked(node, 'root')) toast('warn', 'The root or path is linked; a run uses its linked value.');
   return showPreview(node);
 }
 
@@ -256,7 +263,7 @@ async function openCropper(node) {
     toast('warn', `Cannot crop ${path}: the browser cannot decode this file.`);
     return;
   }
-  // a path typed into the field never passes through pick(): a ratio chosen for another file starts over as free
+  // Restored selections may differ from the remembered file; start their ratio over as free.
   const remembered = cropRatios.get(node);
   if (remembered && (remembered.path !== path || remembered.root !== root)) cropRatios.delete(node);
   const { rect, ratio } = await cropImage(img, { rect: parseCrop(crop.value), ratio: cropRatios.get(node)?.ratio ?? '' });
@@ -494,26 +501,14 @@ app.registerExtension({
       onNodeCreated?.apply(this, arguments);
       addButton(this, 'browse', () => openBrowser(this));
       addButton(this, 'crop…', () => openCropper(this));
-      hideCrop(this);
-      const root = rootWidget(this);
-      if (root) {
-        const node = this;
-        const callback = root.callback;
-        root.callback = function () {
-          callback?.apply(this, arguments);
-          const crop = cropWidget(node);
-          if (crop) crop.value = '';
-          cropRatios.delete(node);
-          return showPreview(node);
-        };
-      }
+      hideSelection(this);
     };
 
     // configure() has restored the widget values, and the saved sockets, by the time it calls this: show the saved file again
     const onConfigure = nodeType.prototype.onConfigure;
     nodeType.prototype.onConfigure = function () {
       onConfigure?.apply(this, arguments);
-      hideCrop(this);
+      hideSelection(this);
       return showPreview(this);
     };
 

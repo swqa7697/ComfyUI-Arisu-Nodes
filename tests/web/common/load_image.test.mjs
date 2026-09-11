@@ -38,7 +38,7 @@ function makeLoadNode(value, root = 'input') {
       { name: 'crop', value: '' },
       { name: 'root', value: root },
     ],
-    inputs: [{ name: 'path' }, { name: 'crop' }],
+    inputs: [{ name: 'path' }, { name: 'crop' }, { name: 'root' }],
   });
   LoadImage.prototype.onNodeCreated.call(node);
   return node;
@@ -93,7 +93,8 @@ test('browse navigates configured roots, saves relative bookmarks, and selects a
   reset();
   const node = makeLoadNode('');
   assert.equal(browseButton(node).serialize, false);
-  assert.equal(node.widgets[1].hidden, true);
+  assert.equal(node.inputs.length, 0);
+  assert.ok(node.widgets.slice(0, 3).every((widget) => widget.hidden && widget.options.hidden && widget.options.socketless));
   api.responses.push(jsonResponse(200, listing('input', '', null, ['clips'], ['a.png'])));
   await browseButton(node).callback();
   const dialog = openDialog();
@@ -117,6 +118,11 @@ test('browse navigates configured roots, saves relative bookmarks, and selects a
   api.responses.push(jsonResponse(200, listing('photos', 'refs', '', [], ['b.png', 'c.jpg'])));
   await treeRow(dialog, 'photos:refs').onclick();
   assert.equal(treeRow(dialog, 'photos:refs').ariaCurrent, 'true');
+  // Navigating directories alone never changes the node's selected image.
+  assert.deepEqual(
+    node.widgets.slice(0, 3).map((widget) => widget.value),
+    ['', '', 'input'],
+  );
   assert.equal(byClass(dialog, 'arisu-browser-file').length, 2);
   const filter = descendants(dialog).find((element) => element.type === 'search');
   filter.value = 'C.J';
@@ -166,6 +172,14 @@ test('browse navigates configured roots, saves relative bookmarks, and selects a
     options.map((option) => option?.content ?? null),
     ['Open Image', null, 'Bypass'],
   );
+  // Hidden values remain serialized in their original order and restore with no sockets.
+  const values = node.widgets.filter((widget) => widget.serialize !== false).map((widget) => widget.value);
+  assert.deepEqual(values, ['refs/c.jpg', '', 'photos']);
+  const restored = makeLoadNode(values[0], values[2]);
+  restored.widgets[1].value = '1,1,2,2';
+  await LoadImage.prototype.onConfigure.call(restored);
+  assert.deepEqual(restored.inputs, []);
+  assert.equal(query(restored.imgs[0].src).crop, '1,1,2,2');
   // Reloading a workflow preserves root selection and all formats arrive as raster pixels.
   const saved = makeLoadNode('scan.tif', 'photos');
   await LoadImage.prototype.onConfigure.call(saved);
@@ -176,6 +190,29 @@ test('browse navigates configured roots, saves relative bookmarks, and selects a
 
 test('legacy paths require reselection, invalid bookmarks stay inert, and failed requests preserve the browser', async () => {
   reset();
+  // Restored path/root wires must not silently fall back to stale stored selections.
+  for (const names of [['path'], ['root'], ['path', 'root']]) {
+    const linked = makeLoadNode('stale.png', 'photos');
+    linked.widgets[1].value = '1,1,2,2';
+    linked.imgs = [{}];
+    names.forEach((name, index) => {
+      linked.addInput(name, 'STRING', { link: index });
+    });
+    // Include the modern widget-associated socket and the legacy name-only shape.
+    if (names.includes('path')) linked.inputs[0].widget = { name: names[0] };
+    await LoadImage.prototype.onConfigure.call(linked);
+    assert.deepEqual(linked.inputs, []);
+    assert.deepEqual(
+      linked.widgets.slice(0, 3).map((widget) => widget.value),
+      ['', '', 'input'],
+    );
+    assert.equal(linked.imgs, undefined);
+    assert.equal(toastSeverities().length, 1);
+    assert.equal(toastSeverities()[0], 'warn');
+    await LoadImage.prototype.onConfigure.call(linked);
+    assert.equal(toastSeverities().length, 1);
+    reset();
+  }
   settings['Arisu.LoadImage.SavedPaths'] = ['/mnt/old'];
   settings[SAVED_SETTING] = ['/mnt/old', { root: 'photos', path: '../escape' }, { root: 'photos', path: 'refs' }];
   const node = makeLoadNode('/old/private/a.png');

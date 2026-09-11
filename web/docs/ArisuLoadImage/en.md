@@ -1,8 +1,7 @@
 # Load Image (Browse)
 
-Load one image from any path on the machine running ComfyUI, picked with the **browse** button or
-typed, and cropped with the **crop…** button if you like. Same file types as **Load Image**, one
-`image` output; nothing is uploaded or copied.
+Load an image beneath a server-configured directory using the **browse** button, and optionally
+crop it with **crop…**. The node returns one `image` output; nothing is uploaded or copied.
 
 ## Why
 
@@ -15,8 +14,8 @@ browser with thumbnails, remembers the picked path, and shows the image on the n
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `path` | STRING | Image path relative to the selected root, such as `refs/a.png`. Browse fills it in; typing or linking works too. |
-| `root` | COMBO | A server-configured directory ID; `input` by default. Includes `output` and any administrator-configured external roots. |
+| `path` | hidden STRING | Image path relative to the selected root, such as `refs/a.png`. Stored by Browse; unavailable for typing or wiring in the UI. |
+| `root` | hidden COMBO | Directory ID stored by Browse; `input` by default. Select `input`, `output` or a configured external root inside the browser. |
 | `browse` | button | Open the directory browser at the selected file or root. |
 | `crop…` | button | Crop the image in a dialog. The crop is saved with the workflow. |
 
@@ -29,6 +28,10 @@ and relative path. Nothing is uploaded or copied.
 **Saved** holds pinned `{root, path}` locations in your ComfyUI user settings. **+ save** pins a
 directory (including a root); its row opens it and **✕** forgets it. Bookmarks do not grant access.
 Legacy absolute bookmarks are not imported, and old absolute workflow paths must be reselected.
+Existing unlinked relative selections and crops remain saved with the workflow. When a workflow
+restores a wired `path` or `root`, the node disconnects those inputs, clears the selected path and
+crop, resets the root to `input`, and warns you to reselect with **browse**. Navigating directories
+alone does not change the selected image; click an image to select it.
 
 The machine owner can enable external disks or shares with `arisu_paths.json` beside the installed
 pack's root `__init__.py`, then restart ComfyUI:
@@ -82,8 +85,9 @@ Load Image (Browse) ─▶ (first_frame) MiniMax H3 Hybrid to Video
 - The hidden `crop` input is `left,top,width,height` in pixels after EXIF rotation. It applies to
   every frame. A crop reaching beyond an edge is clipped; one wholly outside the image is refused.
   Picking a different file or changing roots clears the crop.
-- When `path` or `root` is linked, execution uses its linked value. Browse only selects the widget
-  values; the same containment checks apply at execution even when pre-run validation has no value.
+- Browse-only selection is a UI restriction. API and workflow JSON still carry root-relative
+  values, which the server validates at execution, validation and fingerprinting. Hidden controls
+  and socket restrictions do not replace filesystem containment checks.
 - `/arisu/browse` and `/arisu/view` accept a root ID and relative path. Listings and errors do not
   reveal physical root paths. Missing files return 404; invalid paths return 400; unsupported
   image contents return 415. Unexpected errors stay in the server log.

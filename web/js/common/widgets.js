@@ -35,7 +35,7 @@ export function hideWidget(node, widget) {
   widget.hidden = true;
   widget.options ??= {};
   widget.options.hidden = true;
-  const socket = node.inputs?.findIndex((input) => input.widget?.name === widget.name) ?? -1;
+  const socket = node.inputs?.findIndex((input) => (input.widget?.name ?? input.name) === widget.name) ?? -1;
   if (socket !== -1) node.removeInput(socket);
   node.setSize(node.computeSize());
 }

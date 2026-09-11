@@ -77,7 +77,7 @@ installed `__init__.py`:
 Use existing absolute directories (on Windows, for example `"D:/Photos"`). Root IDs begin with a
 lowercase letter and contain at most 64 lowercase letters, digits, underscores or hyphens;
 `input` and `output` are reserved. Filesystem roots such as `/` or `C:/` are refused.
-Restart ComfyUI after editing the file, then select a root in the node or browse dialog.
+Restart ComfyUI after editing the file, then select a root inside the **Browse** dialog.
 The `path` value is relative to that root, for example `portraits/a.png` under `photos`.
 The file is local configuration: keep a backup across reinstalls and do not commit or distribute it.
 A missing configuration enables only built-in roots; invalid configuration disables all external
@@ -87,10 +87,20 @@ Configuring a directory permits clients of this ComfyUI server to browse it and 
 Choose image-library directories you intend to share. Workflows and browser settings cannot add
 roots. Absolute paths, `~`, `..` components, and symlinks leaving the selected root are refused.
 Older workflows using absolute paths must reselect their images with **Browse**; old absolute
-bookmarks are not imported. Existing relative input paths continue to work.
+bookmarks are not imported. Existing unlinked relative selections continue to work.
+
+**Browse** is the only image-selection control in the node UI. The selected `root` and `path`
+are hidden, saved with the workflow, and cannot be typed or wired. Loading a workflow with a
+linked `path` or `root` removes those links and clears the selection and crop; use **Browse** to
+reselect. The browser's directory field still accepts relative paths for navigation. API/workflow
+values remain subject to server-side validation; hiding controls does not grant filesystem access.
 
 Previews are decoded raster images; SVG is unsupported. Save buttons accept at most 256 previews
 per click, with a 1 MiB request limit. One save runs at a time; retry a busy request after it finishes.
+Both Preview & Save nodes interpret their editable or wired `path` as a filename prefix relative
+to ComfyUI's output directory: `shots/a` saves beneath `output/shots/`. Absolute paths are refused,
+even when they name a location inside output. Configured image roots do not change the save
+location. Temporary previews continue to use ComfyUI's temp directory.
 
 ---
 
