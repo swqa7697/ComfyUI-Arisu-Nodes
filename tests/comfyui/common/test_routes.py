@@ -245,6 +245,13 @@ def test_browse_and_view_routes_list_and_serve_host_images(tmp_path: Path, monke
     (pics / "escape").symlink_to(external, target_is_directory=True)
     (pics / "escaped.png").symlink_to(external / "other.avif")
 
+    # Settings discovery exposes IDs only, even when directory listing is unavailable.
+    with monkeypatch.context() as discovery:
+        discovery.setattr(routes, "browse_directory", refuse_interpreter)
+        status, body, _ = get(routes.ROOTS_ROUTE)
+        assert status == 200 and body == {"roots": [{"id": name, "label": name} for name in ("input", "output", "photos")]}
+        assert str(tmp_path) not in json.dumps(body)
+
     status, body, _ = get(routes.BROWSE_ROUTE)
     assert status == 200, body
     assert {key: body[key] for key in ("root", "path", "parent", "dirs", "files")} == {

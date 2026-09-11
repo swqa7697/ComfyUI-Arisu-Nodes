@@ -36,6 +36,7 @@ _PREVIEW_KEYS = ("filename", "subfolder", "type")
 # under (raster formats every browser decodes natively; no TIFF, GIF, SVG or
 # document formats), and the thumbnail bounds.
 BROWSE_ROUTE = "/arisu/browse"
+ROOTS_ROUTE = "/arisu/roots"
 VIEW_ROUTE = "/arisu/view"
 IMAGE_TYPES: Dict[str, str] = {
     "png": "image/png",

@@ -203,6 +203,8 @@ test('the crop button opens a box over the picked file; drags, a ratio, apply an
   assert.deepEqual(written, ['400,200,400,400', '']);
   assert.deepEqual(toastSeverities(), []);
   // picking another file in the browser drops the remembered ratio along with the crop
+  api.responses.push(jsonResponse(200, { roots: [{ id: 'photos', label: 'photos' }] }));
+  await extensionNamed('Arisu.Common.LoadImage').setup();
   api.responses.push(
     jsonResponse(200, {
       root: 'photos',

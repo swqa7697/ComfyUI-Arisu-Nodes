@@ -31,6 +31,7 @@ from PIL.PngImagePlugin import PngInfo
 from .core import (
     BROWSE_ROUTE,
     NO_UPSCALE,
+    ROOTS_ROUTE,
     SAVE_IMAGE_ROUTE,
     VIEW_ROUTE,
     CropBox,
@@ -91,6 +92,7 @@ def register_routes(routes: web.RouteTableDef) -> None:
     """
     routes.post(SAVE_IMAGE_ROUTE)(_save_image)
     routes.get(BROWSE_ROUTE)(_browse)
+    routes.get(ROOTS_ROUTE)(_list_roots)
     routes.get(VIEW_ROUTE)(_view)
 
 
@@ -140,6 +142,15 @@ def _save_guarded(req: SaveRequest) -> List[Dict[str, str]]:
         return _save(req)
     finally:
         _SAVE_LOCK.release()
+
+
+async def _list_roots(request: web.Request) -> web.Response:
+    """Expose configured root IDs without listing directories or physical paths."""
+    try:
+        return web.json_response({"roots": [{"id": name, "label": name} for name in _roots()]}, headers=_IMAGE_HEADERS)
+    except Exception:
+        logger.exception("Arisu roots failed")
+        return _error("roots unavailable; see the server log", 500)
 
 
 async def _browse(request: web.Request) -> web.Response:

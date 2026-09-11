@@ -107,8 +107,15 @@ within a workflow preserve selections. Importing JSON/PNG/API-format workflows, 
 duplicating nodes, inserting a workflow, and duplicating a workflow clear the image and crop,
 reset the root to `input`, and require reselection—even when imported IDs or filenames match.
 Unknown restoration contexts also require reselection. Saved Browse bookmarks remain available.
-The browser's path display is read-only; navigate with the tree, **up**, the root shortcuts, saved
-locations and thumbnails. Direct API execution
+The browser's path display is read-only; navigate with the tree, **up**, the **input dir** and
+**output dir** toolbar shortcuts, saved locations and thumbnails. **+ save** lets you name a saved
+directory; use its pencil button to rename it, or **✕** to remove it. Names are optional, and
+existing bookmarks remain available.
+
+In **ComfyUI Settings → Arisu → LoadImage**, **Load Image (Browse): default location** chooses
+where Browse starts when no image is selected. Choose `input` (the default), `output`, or a
+configured root; saved bookmarks are not choices. A selected image keeps its existing location,
+and an unavailable default falls back to `input`. Direct API execution
 keeps its validated root-relative inputs; hiding controls does not grant filesystem access.
 
 Previews stream the original file, as Load Image's do; only Browse thumbnails are resized. Accepted

@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Add inline names and renaming for saved Load Image browse paths.
+- Add a ComfyUI setting for the default Load Image browse root when no image is selected.
+
+### Changed
+
+- Move the Load Image input and output directory shortcuts beside up in the browse toolbar to free sidebar space.
+
 ### Fixed
 
 - Fix the selected Load Image filename being clipped above Browse.

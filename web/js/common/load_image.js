@@ -11,9 +11,38 @@ const PATH_WIDGET = 'path';
 const CROP_WIDGET = 'crop';
 const BROWSE_ROUTE = '/arisu/browse';
 const VIEW_ROUTE = '/arisu/view';
+const ROOTS_ROUTE = '/arisu/roots';
 const THUMBNAIL_MAX = 256;
-/** The hidden ComfyUI setting holding the browser's saved directories, an array of {root, path} locations. */
+/** The hidden ComfyUI setting holding the browser's saved directories, an array of {root, path, name?} locations. */
 const SAVED_PATHS_SETTING = 'Arisu.LoadImage.SavedLocations';
+const DEFAULT_ROOT_SETTING = {
+  id: 'Arisu.LoadImage.DefaultRoot',
+  name: 'Load Image (Browse): default location',
+  type: 'combo',
+  defaultValue: 'input',
+  options: ['input', 'output'],
+  tooltip: 'Starting root when Browse opens without a selected image. Saved paths are not included.',
+};
+let rootsDiscovered = false;
+
+/** Populate settings without scanning directories. Retry a failed discovery on Browse. */
+async function discoverRoots() {
+  rootsDiscovered = false;
+  try {
+    const response = await api.fetchApi(ROOTS_ROUTE);
+    if (!response.ok) return;
+    const data = await response.json();
+    const options = data.roots.map(({ id, label }) => ({ value: id, text: label }));
+    DEFAULT_ROOT_SETTING.options = options;
+    // Update the registered definition so the settings panel observes the change reactively.
+    const registered = app.ui?.settings?.settingsLookup?.[DEFAULT_ROOT_SETTING.id];
+    if (registered) registered.options = options;
+    rootsDiscovered = true;
+  } catch {
+    // Built-in choices remain usable; a later Browse retries discovery.
+  }
+}
+
 /** The context-menu entry the frontend adds to every previewing node; see beforeRegisterNodeDef for why it goes. */
 const MASK_EDITOR_ENTRY = /mask ?editor/i;
 const ICONS = { root: '\u{1F4BE}', folder: '\u{1F4C1}', saved: '\u{1F4CC}' };
@@ -34,7 +63,9 @@ const STYLE = `
 .arisu-browser button:disabled { opacity: 0.4; cursor: default; pointer-events: none; }
 .arisu-browser :focus-visible { outline: 2px solid var(--p-primary-color, #6ea8fe); outline-offset: 2px; }
 .arisu-browser input:focus-visible { outline: none; border-color: var(--p-primary-color, #6ea8fe); }
-.arisu-browser-bar { display: flex; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--border-color, #444); }
+.arisu-browser-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--border-color, #444); }
+.arisu-browser-bar button { flex-shrink: 0; white-space: nowrap; }
+.arisu-browser-bar input { min-width: 0; width: 160px; max-width: 100%; }
 .arisu-browser-bar button:hover { border-color: var(--p-primary-color, #6ea8fe); }
 .arisu-browser-path { flex: 1; min-width: 0; padding: 6px 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   color: var(--descrip-text, #999); font-variant-numeric: tabular-nums; }
@@ -43,16 +74,15 @@ const STYLE = `
 .arisu-browser-tree, .arisu-browser-grid { overflow: auto; scrollbar-width: thin; scrollbar-color: var(--border-color, #444) transparent; }
 .arisu-browser-tree { width: 280px; flex-shrink: 0; display: flex; flex-direction: column; gap: 2px; padding: 8px;
   border-right: 1px solid var(--border-color, #444); }
-.arisu-browser-places { display: flex; gap: 6px; padding-bottom: 8px; }
-.arisu-browser-places button { flex: 1; padding: 5px 8px; font-size: 12px; }
-.arisu-browser-places button:hover { border-color: var(--p-primary-color, #6ea8fe); }
 .arisu-browser-tree-head { display: flex; justify-content: space-between; align-items: center; padding: 4px 6px;
   font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--descrip-text, #999); }
 .arisu-browser-tree-head button { padding: 2px 8px; font-size: 11px; text-transform: none; letter-spacing: 0; }
+.arisu-browser-name-editor { display: flex; flex-wrap: wrap; gap: 4px; padding: 4px 0; }
+.arisu-browser-name-editor input { width: 100%; box-sizing: border-box; }
 .arisu-browser-saved { display: flex; align-items: center; flex-shrink: 0; }
-.arisu-browser-saved-remove { width: 22px; height: 26px; padding: 0; flex-shrink: 0; background: none; border-color: transparent;
+.arisu-browser-saved-action { width: 22px; height: 26px; padding: 0; flex-shrink: 0; background: none; border-color: transparent;
   color: var(--descrip-text, #999); }
-.arisu-browser-saved-remove:hover { color: inherit; }
+.arisu-browser-saved-action:hover { color: inherit; }
 .arisu-browser-tree-node { display: flex; align-items: center; flex-shrink: 0; padding-left: calc(var(--depth, 0) * 14px); }
 .arisu-browser-tree-toggle { width: 22px; height: 26px; padding: 0; flex-shrink: 0; background: none; border-color: transparent;
   color: var(--descrip-text, #999); }
@@ -256,6 +286,10 @@ function savedPaths() {
     : [];
 }
 
+function savedLabel(location) {
+  return typeof location.name === 'string' && location.name.trim() ? location.name.trim() : locationLabel(location.root, location.path);
+}
+
 function storeSavedPaths(paths) {
   return app.extensionManager?.setting?.set?.(SAVED_PATHS_SETTING, paths);
 }
@@ -396,20 +430,18 @@ async function openBrowser(node) {
   let listing = { root: rootValue(node), path: '', parent: null, dirs: [], files: [], ancestors: [] };
   let loaded = false;
   let navigation = 0;
+  let editor = null;
+  let saving = false;
   const roots = new Map();
   const tree = new Map();
   // Read-only: the tree, up, the roots, saved locations and thumbnails are the only ways to move.
   const pathField = el('output', { className: 'arisu-browser-path' });
   const upButton = el('button', { textContent: '↑ up', onclick: () => navigate(listing.root, listing.parent) });
   const filterField = el('input', { type: 'search', placeholder: 'filter images', oninput: () => renderGrid(false) });
-  const saveButton = el('button', { textContent: '+ save', onclick: savePath });
+  const saveButton = el('button', { textContent: '+ save', onclick: () => editPath({ root: listing.root, path: listing.path }, false) });
   const savedList = el('div', { className: 'arisu-browser-saved-list' });
   const treeList = el('div', { className: 'arisu-browser-tree-list' });
   const treePane = el('div', { className: 'arisu-browser-tree' }, [
-    el('div', { className: 'arisu-browser-places' }, [
-      el('button', { textContent: 'input dir', onclick: () => navigate('input', '') }),
-      el('button', { textContent: 'output dir', onclick: () => navigate('output', '') }),
-    ]),
     el('div', { className: 'arisu-browser-tree-head' }, [el('span', { textContent: 'Saved' }), saveButton]),
     savedList,
     el('div', { className: 'arisu-browser-tree-head' }, [
@@ -420,16 +452,28 @@ async function openBrowser(node) {
   ]);
   const grid = el('div', { className: 'arisu-browser-grid' });
   const panes = el('div', { className: 'arisu-browser-body' }, [treePane, grid]);
-  const dialog = el('dialog', { className: 'arisu-browser', onclose: () => dialog.remove() }, [
-    el('style', { textContent: STYLE }),
-    el('div', { className: 'arisu-browser-bar' }, [
-      pathField,
-      upButton,
-      filterField,
-      el('button', { textContent: '✕', onclick: () => dialog.close() }),
-    ]),
-    panes,
-  ]);
+  const dialog = el(
+    'dialog',
+    {
+      className: 'arisu-browser',
+      onclose: () => {
+        editor = null;
+        dialog.remove();
+      },
+    },
+    [
+      el('style', { textContent: STYLE }),
+      el('div', { className: 'arisu-browser-bar' }, [
+        pathField,
+        upButton,
+        el('button', { textContent: 'input dir', onclick: () => navigate('input', '') }),
+        el('button', { textContent: 'output dir', onclick: () => navigate('output', '') }),
+        filterField,
+        el('button', { textContent: '✕', onclick: () => dialog.close() }),
+      ]),
+      panes,
+    ],
+  );
   closeOnBackdropClick(dialog);
   browserDialogs.set(node, dialog);
 
@@ -497,29 +541,105 @@ async function openBrowser(node) {
         ariaCurrent: current(root, path) ? 'true' : null,
         onclick: () => navigate(root, path),
       },
-      [el('span', { textContent: ICONS.saved }), el('span', { textContent: locationLabel(root, path) })],
+      [el('span', { textContent: ICONS.saved }), el('span', { textContent: savedLabel(location) })],
     );
     const remove = el('button', {
-      className: 'arisu-browser-saved-remove',
+      className: 'arisu-browser-saved-action',
       textContent: '✕',
+      ariaLabel: `Remove ${locationLabel(root, path)}`,
+      disabled: saving,
       onclick: async () => {
-        await storeSavedPaths(savedPaths().filter((saved) => locationKey(saved.root, saved.path) !== locationKey(root, path)));
+        if (saving || !isCurrent()) return;
+        saving = true;
         renderSaved();
+        try {
+          await storeSavedPaths(savedPaths().filter((saved) => locationKey(saved.root, saved.path) !== locationKey(root, path)));
+        } catch {
+          if (isCurrent()) toast('error', 'Cannot remove saved path. Try again.');
+        } finally {
+          saving = false;
+          if (isCurrent()) renderSaved();
+        }
       },
     });
-    return el('div', { className: 'arisu-browser-saved' }, [row, remove]);
+    const rename = el('button', {
+      className: 'arisu-browser-saved-action',
+      textContent: '✎',
+      title: 'Rename',
+      ariaLabel: `Rename ${locationLabel(root, path)}`,
+      disabled: saving,
+      onclick: () => editPath(location, true),
+    });
+    return el('div', { className: 'arisu-browser-saved' }, [row, rename, remove]);
   }
 
   function renderSaved() {
     const saved = savedPaths();
-    saveButton.disabled = !loaded || saved.some(({ root, path }) => current(root, path));
-    savedList.replaceChildren(...saved.map(savedRow));
+    saveButton.disabled = saving || !loaded || saved.some(({ root, path }) => current(root, path));
+    savedList.replaceChildren(...saved.map(savedRow), ...(editor ? [editor.element] : []));
   }
 
-  async function savePath() {
-    if (saveButton.disabled) return;
-    await storeSavedPaths([...savedPaths(), { root: listing.root, path: listing.path }]);
+  function editPath(location, rename) {
+    if (saving || !loaded || !isCurrent() || (!rename && saveButton.disabled)) return;
+    const { root, path } = location;
+    const input = el('input', {
+      type: 'text',
+      ariaLabel: 'Saved path name',
+      value: savedLabel(location),
+    });
+    const cancel = () => {
+      editor = null;
+      renderSaved();
+      saveButton.focus();
+    };
+    const submit = el('button', {
+      textContent: 'Save',
+      onclick: async () => {
+        if (saving || editor !== draft || !isCurrent()) return;
+        const name = input.value.trim();
+        const value = { root, path, ...(name ? { name } : {}) };
+        const key = locationKey(root, path);
+        const paths = savedPaths();
+        const updated = rename
+          ? paths.map((entry) => (locationKey(entry.root, entry.path) === key ? value : entry))
+          : [...paths.filter((entry) => locationKey(entry.root, entry.path) !== key), value];
+        saving = true;
+        input.disabled = submit.disabled = true;
+        renderSaved();
+        try {
+          await storeSavedPaths(updated);
+          if (editor === draft) editor = null;
+        } catch {
+          if (isCurrent()) toast('error', 'Cannot save path. Try again.');
+        } finally {
+          saving = false;
+          input.disabled = submit.disabled = false;
+          if (isCurrent()) renderSaved();
+        }
+      },
+    });
+    const element = el(
+      'div',
+      {
+        className: 'arisu-browser-name-editor',
+        onkeydown: (event) => {
+          if (event.key === 'Escape') {
+            event.preventDefault();
+            event.stopPropagation();
+            cancel();
+          }
+          if (event.key === 'Enter' && event.target === input) {
+            event.preventDefault();
+            return submit.onclick();
+          }
+        },
+      },
+      [input, submit, el('button', { textContent: 'Cancel', onclick: cancel })],
+    );
+    const draft = { element };
+    editor = draft;
     renderSaved();
+    input.focus();
   }
 
   function renderGrid(fresh) {
@@ -557,6 +677,8 @@ async function openBrowser(node) {
 
   async function navigate(root, path, withTree = true) {
     if (path == null || !isCurrent()) return;
+    editor = null;
+    renderSaved();
     const token = ++navigation;
     panes.ariaBusy = 'true';
     try {
@@ -605,15 +727,23 @@ async function openBrowser(node) {
   renderSaved();
   const start = pathWidget(node)?.value?.trim() ?? '';
   if (!relativePath(start)) toast('warn', 'Reselect this image under a configured root; absolute paths are no longer accepted.');
-  await navigate(rootValue(node), relativePath(start) ? start : '');
+  if (!rootsDiscovered) await discoverRoots();
+  if (!isCurrent() || navigation !== 0) return;
+  const preferred = app.extensionManager?.setting?.get?.(DEFAULT_ROOT_SETTING.id) ?? 'input';
+  const allowed = DEFAULT_ROOT_SETTING.options.some((option) => (typeof option === 'string' ? option : option.value) === preferred);
+  await navigate(start ? rootValue(node) : allowed ? preferred : 'input', relativePath(start) ? start : '');
   if (!loaded) await navigate('input', '');
 }
 
 app.registerExtension({
   name: 'Arisu.Common.LoadImage',
   init: installLoadGuards,
+  setup: discoverRoots,
   // hidden: edited from the browse dialog, persisted per ComfyUI user by the frontend's settings store
-  settings: [{ id: SAVED_PATHS_SETTING, name: 'Load Image (Browse): saved browse paths', type: 'hidden', defaultValue: [] }],
+  settings: [
+    DEFAULT_ROOT_SETTING,
+    { id: SAVED_PATHS_SETTING, name: 'Load Image (Browse): saved browse paths', type: 'hidden', defaultValue: [] },
+  ],
   beforeRegisterNodeDef(nodeType, nodeData) {
     if (nodeData.name !== NODE_TYPE) return;
 

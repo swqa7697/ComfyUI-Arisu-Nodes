@@ -24,12 +24,23 @@ are shortened with an ellipsis; hover to see the full filename.
 
 The browser's tree contains only configured roots. Click a folder to enter it, its chevron to
 expand it, and **collapse** to fold everything but the current chain. The read-only path display
-shows the current directory relative to the selected root; **up** stops at that root. **input dir** and **output dir** switch roots.
+shows the current directory relative to the selected root; **up** stops at that root. **input dir** and **output dir** sit beside **up** in the top bar and switch roots.
 The filter narrows image names in the current directory. Click an image to select both its root
 and relative path. Nothing is uploaded or copied.
 
-**Saved** holds pinned `{root, path}` locations in your ComfyUI user settings. **+ save** pins a
-directory (including a root); its row opens it and **✕** forgets it. Bookmarks do not grant access.
+**Saved** holds named directory bookmarks in your ComfyUI user settings. **+ save** opens an
+inline name field for the current directory (including a root); **Save** or Enter confirms it.
+Use the pencil button to rename a bookmark, its row to open it, or **✕** to forget it. **Cancel**
+or Escape discards editing; navigating or closing Browse also discards unfinished names.
+Blank names display the original root-relative location, and hovering a bookmark shows that
+location. Existing unnamed bookmarks still work. Bookmarks do not grant access.
+
+In **ComfyUI Settings → Arisu → LoadImage**, set **Load Image (Browse): default location** to
+`input`, `output`, or an administrator-configured root. It defaults to `input` and applies only
+when Browse opens with no image selected. Saved bookmarks are not included. If the chosen root
+is removed or unavailable, Browse falls back to `input`. Changing this preference does not select
+an image or change a workflow's node values.
+
 Legacy absolute bookmarks are not imported, and old absolute workflow paths must be reselected.
 Reopening a saved ComfyUI workflow, refreshing it, switching existing tabs, and undo/redo within
 that workflow preserve selections and crops. Imported JSON/PNG/API-format workflows, pasted or
