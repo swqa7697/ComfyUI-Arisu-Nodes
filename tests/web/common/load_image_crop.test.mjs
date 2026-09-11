@@ -23,6 +23,7 @@ function makeLoadNode(path) {
     widgets: [
       { name: 'path', value: path },
       { name: 'crop', value: '' },
+      { name: 'root', value: 'photos' },
     ],
     inputs: [{ name: 'path' }, { name: 'crop' }],
   });
@@ -83,7 +84,7 @@ function reset() {
 
 test('the crop button opens a box over the picked file; drags, a ratio, apply and reset drive the hidden crop and the preview', async () => {
   reset();
-  const node = makeLoadNode('/in/a.png');
+  const node = makeLoadNode('a.png');
   const written = [];
   cropWidget(node).callback = (value) => written.push(value);
   // opening loads the file itself, whole, and starts with the whole image as the box
@@ -92,7 +93,8 @@ test('the crop button opens a box over the picked file; drags, a ratio, apply an
   let dialog = openDialog();
   assert.equal(dialog.open, true);
   const img = descendants(dialog).find((element) => element.tagName === 'IMG');
-  assert.equal(query(img.src).path, '/in/a.png');
+  assert.equal(query(img.src).path, 'a.png');
+  assert.equal(query(img.src).root, 'photos');
   assert.equal(query(img.src).max, undefined);
   assert.equal(readout(dialog), '800 × 600 at 0, 0');
   // the image is shown at half size: pointer positions map to image pixels through its on-screen rectangle
@@ -138,7 +140,7 @@ test('the crop button opens a box over the picked file; drags, a ratio, apply an
   assert.deepEqual(written, ['400,200,400,400']);
   assert.equal(dialog.open, false);
   assert.equal(openDialog(), undefined);
-  assert.deepEqual([query(node.imgs[0].src).path, query(node.imgs[0].src).crop], ['/in/a.png', '400,200,400,400']);
+  assert.deepEqual([query(node.imgs[0].src).path, query(node.imgs[0].src).crop], ['a.png', '400,200,400,400']);
   assert.equal(query(node.imgs[0].src).max, undefined);
   // opening again starts from the saved box and the remembered ratio; custom shows two fields, which read as free
   // until both are filled and then make the box the largest one of their ratio; cancel leaves the widget alone
@@ -201,10 +203,20 @@ test('the crop button opens a box over the picked file; drags, a ratio, apply an
   assert.deepEqual(written, ['400,200,400,400', '']);
   assert.deepEqual(toastSeverities(), []);
   // picking another file in the browser drops the remembered ratio along with the crop
-  api.responses.push(jsonResponse(200, { path: '/in', parent: '/', dirs: [], files: ['b.png'], ancestors: [], roots: [], places: {} }));
+  api.responses.push(
+    jsonResponse(200, {
+      root: 'photos',
+      path: '',
+      parent: null,
+      dirs: [],
+      files: ['b.png'],
+      ancestors: [],
+      roots: [{ id: 'photos', label: 'photos' }],
+    }),
+  );
   await node.widgets.find((widget) => widget.name === 'browse').callback();
   await byClass(openDialog(), 'arisu-browser-file')[0].onclick();
-  assert.equal(node.widgets[0].value, '/in/b.png');
+  assert.equal(node.widgets[0].value, 'b.png');
   applied = cropButton(node).callback();
   await settle();
   assert.equal(ratioControls(openDialog()).menu.value, 'free');
@@ -212,7 +224,7 @@ test('the crop button opens a box over the picked file; drags, a ratio, apply an
   button(openDialog(), 'cancel').onclick();
   await applied;
   // the ratio belongs to the file it was chosen for: a path typed into the field, which the browser never sees, starts free
-  node.widgets[0].value = '/in/c.png';
+  node.widgets[0].value = 'c.png';
   applied = cropButton(node).callback();
   await settle();
   assert.equal(ratioControls(openDialog()).menu.value, 'free');
@@ -220,7 +232,7 @@ test('the crop button opens a box over the picked file; drags, a ratio, apply an
   await applied;
   // nothing to crop without a file, and a format the browser cannot decode has no known size: a warning, no dialog
   await cropButton(makeLoadNode('')).callback();
-  await cropButton(makeLoadNode('/in/scan.tif')).callback();
+  await cropButton(makeLoadNode('broken.png')).callback();
   assert.equal(openDialog(), undefined);
   assert.deepEqual(toastSeverities(), ['warn', 'warn']);
 });

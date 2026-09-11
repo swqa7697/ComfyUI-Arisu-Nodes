@@ -1,6 +1,6 @@
 # Preview & Save Image (Upscale)
 
-**Preview & Save Image** with an upscale model applied when saving. A run saves nothing and never
+**Preview & Save Image** with an upscale model applied when saving. A run writes only temporary previews and never
 touches the model; the **save** button upscales the previewed images with `upscale_model` and writes
 them under ComfyUI's output directory at `path`, without queueing a run. `none` saves them as is.
 
@@ -34,9 +34,17 @@ Path Builder ─▶ (path)
 
 ## Notes
 
+- A click accepts at most 256 previews and a 1 MiB JSON request. Only one save runs at a time;
+  a busy request returns 429 and can be retried after the current save finishes, even if its browser disconnected.
+- Preview reads stay under ComfyUI's temp directory and writes stay under its output directory,
+  including symlink targets. Supply `path` as a relative filename prefix; absolute paths are refused
+  even when already inside output. Every `..` component is refused. External image roots cannot
+  redirect saves. Temporary previews remain in temp. Existing files
+  and symlinks are never overwritten; the counter advances to an unused filename.
+
 - The upscale runs on the GPU inside the save request, sharing it with any job that is running. It
   uses 512 px tiles with a 32 px overlap and halves the tile when memory runs out, like the stock
-  node; a very large image on a busy GPU is slower, not a failure.
+  node; very large images can still exceed available memory.
 - The saved size is the preview size times the model's factor (`4x-...` models give 4×). The preview
   and the `images` output stay at the original size.
 - Everything in the notes of **Preview & Save Image** applies: run first, `path` is read at click

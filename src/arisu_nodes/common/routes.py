@@ -9,16 +9,17 @@ directory listing live in ``core.py``.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
-import string
+import threading
+from datetime import datetime
 from io import BytesIO
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional
 
 import comfy.model_management
 import comfy.utils
 import folder_paths
-import node_helpers
 import numpy as np
 import torch
 from aiohttp import web
@@ -32,17 +33,19 @@ from .core import (
     SAVE_IMAGE_ROUTE,
     VIEW_ROUTE,
     CropBox,
-    DirectoryListing,
     SaveRequest,
-    TreeRoot,
     browse_directory,
+    contained_path,
     crop_box,
+    expand_save_prefix,
+    is_image_file,
     parse_browse_request,
     parse_save_request,
     parse_view_request,
     preview_file_path,
-    tree_roots,
 )
+from .nodes import open_raster_image
+from .paths import image_roots, select_root
 
 logger = logging.getLogger(__name__)
 
@@ -59,9 +62,21 @@ _OVERLAP = 32
 # The browse dialog's thumbnails and the node preview: WEBP, the format /view's own previews use.
 _THUMBNAIL_FORMAT = "WEBP"
 _THUMBNAIL_QUALITY = 80
-# Where the mounted disks come from, per platform: Linux's mount table, macOS's volumes directory.
-_LINUX_MOUNTS = "/proc/self/mounts"
-_MACOS_VOLUMES = "/Volumes"
+_SAVE_BODY_LIMIT = 1024 * 1024
+_SAVE_LOCK = threading.Lock()
+_IMAGE_HEADERS = {"X-Content-Type-Options": "nosniff"}
+
+
+class UnsupportedImage(ValueError):
+    """A file cannot safely be decoded as a raster image."""
+
+
+def _error(message: str, status: int) -> web.Response:
+    return web.json_response({"error": message}, status=status, headers=_IMAGE_HEADERS)
+
+
+def _roots() -> Dict[str, str]:
+    return image_roots(folder_paths.get_input_directory(), folder_paths.get_output_directory())
 
 
 def register_routes(routes: web.RouteTableDef) -> None:
@@ -76,186 +91,180 @@ def register_routes(routes: web.RouteTableDef) -> None:
 
 
 async def _save_image(request: web.Request) -> web.Response:
-    """Save the previews named in the JSON body; see ``core.parse_save_request`` for the shape.
-
-    The work runs on a worker thread so a multi-second upscale does not stall
-    the server's event loop and the progress websocket of a running job.
-    """
+    """Read bounded JSON and run one save worker, retaining the guard after disconnect."""
+    if request.content_type != "application/json":
+        return _error("Content-Type must be application/json", 415)
+    if request.content_length is not None and request.content_length > _SAVE_BODY_LIMIT:
+        return _error("save request exceeds 1 MiB", 413)
     try:
-        req = parse_save_request(await request.json())
-        saved = await asyncio.to_thread(_save, req)
-    except FileNotFoundError as error:
-        return web.json_response({"error": f"{error}; run the workflow again to refresh the preview"}, status=404)
-    except (TypeError, ValueError) as error:
-        return web.json_response({"error": str(error)}, status=400)
-    except Exception as error:
+        body = bytearray()
+        async for chunk in request.content.iter_chunked(65536):
+            body.extend(chunk)
+            if len(body) > _SAVE_BODY_LIMIT:
+                return _error("save request exceeds 1 MiB", 413)
+        req = parse_save_request(json.loads(body))
+        if not _SAVE_LOCK.acquire(blocking=False):
+            return _error("another save is still running; try again when it finishes", 429)
+        task = asyncio.create_task(asyncio.to_thread(_save_guarded, req))
+        # Observe a worker failure even when the request awaiting it was cancelled.
+        task.add_done_callback(_observe_save)
+        saved = await asyncio.shield(task)
+    except FileNotFoundError:
+        return _error("preview not found; run the workflow again", 404)
+    except UnsupportedImage:
+        return _error("preview is not a supported raster image", 415)
+    except (TypeError, ValueError, UnicodeError):
+        # Decoder/model ValueErrors can contain physical paths too; keep the
+        # full diagnostic in the server log, including validation failures.
+        logger.warning("Arisu save request rejected", exc_info=True)
+        return _error("invalid save request, preview, path or upscale model; see the server log", 400)
+    except Exception:
         logger.exception("Arisu save_image failed")
-        return web.json_response({"error": str(error)}, status=500)
-    return web.json_response({"saved": saved})
+        return _error("saving failed; see the server log", 500)
+    return web.json_response({"saved": saved}, headers=_IMAGE_HEADERS)
+
+
+def _observe_save(task: asyncio.Task[List[Dict[str, str]]]) -> None:
+    if not task.cancelled():
+        error = task.exception()
+        if error is not None and not isinstance(error, (FileNotFoundError, TypeError, ValueError)):
+            logger.error("Arisu save worker failed", exc_info=(type(error), error, error.__traceback__))
+
+
+def _save_guarded(req: SaveRequest) -> List[Dict[str, str]]:
+    try:
+        return _save(req)
+    finally:
+        _SAVE_LOCK.release()
 
 
 async def _browse(request: web.Request) -> web.Response:
-    """List a directory for the browse dialog; see ``core.browse_directory``.
-
-    Without ``path`` the listing is ComfyUI's input directory. The response
-    also carries the tree roots, the input and output places, and the
-    ancestor chain (unless ``tree=0``). Directory listing is blocking I/O, so
-    it runs on a worker thread.
-    """
-    req = parse_browse_request(request.query, folder_paths.get_input_directory())
+    """List a configured root, returning only relative locations."""
     try:
-        roots, listing = await asyncio.to_thread(_browse_tree, req.path, req.with_tree)
+        roots = _roots()
+        root = request.query.get("root", "input")
+        base = select_root(roots, root)
+        req = parse_browse_request(request.query, base)
+        listing = await asyncio.to_thread(browse_directory, req.path, base, req.with_tree)
+    except (TypeError, ValueError) as error:
+        return _error(str(error), 400)
     except (FileNotFoundError, NotADirectoryError):
-        return web.json_response({"error": f"no such directory: {req.path}"}, status=404)
+        return _error("directory not found in the selected root", 404)
     except PermissionError:
-        return web.json_response({"error": f"permission denied: {req.path}"}, status=403)
-    except Exception as error:
+        return _error("directory cannot be read", 403)
+    except Exception:
         logger.exception("Arisu browse failed")
-        return web.json_response({"error": str(error)}, status=500)
+        return _error("browsing failed; see the server log", 500)
     return web.json_response(
         {
+            "root": root,
             "path": listing.path,
             "parent": listing.parent,
             "dirs": list(listing.dirs),
             "files": list(listing.files),
             "ancestors": [{"path": level.path, "dirs": list(level.dirs)} for level in listing.ancestors],
-            "roots": [{"label": root.label, "path": root.path} for root in roots],
-            "places": {"input": folder_paths.get_input_directory(), "output": folder_paths.get_output_directory()},
-        }
+            "roots": [{"id": name, "label": name} for name in roots],
+        },
+        headers=_IMAGE_HEADERS,
     )
 
 
-def _browse_tree(path: str, with_tree: bool) -> Tuple[Tuple[TreeRoot, ...], DirectoryListing]:
-    """The tree roots and the listing of ``path``, both from blocking I/O."""
-    home = os.path.expanduser("~")
-    roots = tree_roots(home, _mounts_text(), _volumes(), _drives())
-    return roots, browse_directory(path, [root.path for root in roots], home, with_tree)
-
-
-def _mounts_text() -> Optional[str]:
-    """The mount table on Linux, ``None`` where there is none."""
+async def _view(request: web.Request) -> web.Response:
+    """Serve decoded raster pixels only, never source files or compressed sidecars."""
     try:
-        with open(_LINUX_MOUNTS, encoding="utf-8", errors="replace") as mounts:
-            return mounts.read()
-    except OSError:
-        return None
-
-
-def _volumes() -> List[str]:
-    """The mounted volumes on macOS other than the boot volume, which is ``/`` itself."""
+        base = select_root(_roots(), request.query.get("root", "input"))
+        req = parse_view_request(request.query, base)
+    except (TypeError, ValueError) as error:
+        return _error(str(error), 400)
     try:
-        names = os.listdir(_MACOS_VOLUMES)
-    except OSError:
-        return []
-    volumes: List[str] = []
-    for name in names:
-        volume = os.path.join(_MACOS_VOLUMES, name)
-        try:
-            if not name.startswith(".") and not os.path.samefile(volume, "/"):
-                volumes.append(volume)
-        except OSError:
-            continue
-    return volumes
-
-
-def _drives() -> List[str]:
-    """The drive roots on Windows, none elsewhere."""
-    if os.name != "nt":
-        return []
-    listdrives = getattr(os, "listdrives", None)  # Python 3.12+
-    if listdrives is not None:
-        return list(listdrives())
-    return [f"{letter}:\\" for letter in string.ascii_uppercase if os.path.exists(f"{letter}:\\")]
-
-
-async def _view(request: web.Request) -> web.StreamResponse:
-    """Serve an image file from the host, or a rendering of it when ``max`` or ``crop`` is given.
-
-    Only files whose name passes ComfyUI's image filter are served; see
-    ``core.parse_view_request``. Decoding for a rendering runs on a worker thread.
-    """
-    try:
-        req = parse_view_request(request.query)
-    except ValueError as error:
-        return web.json_response({"error": str(error)}, status=400)
-    if not os.path.isfile(req.path):
-        return web.json_response({"error": f"no image file at {req.path}"}, status=404)
-    if req.max_size is None and req.crop is None:
-        return web.FileResponse(req.path)
-    try:
+        if not os.path.isfile(req.path):
+            return _error("image file not found in the selected root", 404)
+        if not is_image_file(req.path):
+            return _error("unsupported image type", 415)
         body = await asyncio.to_thread(render, req.path, req.max_size, req.crop)
-    except (OSError, ValueError) as error:  # what Pillow raises for a listed type it cannot decode, SVG for one
-        return web.json_response({"error": f"cannot render {os.path.basename(req.path)}: {error}"}, status=415)
-    return web.Response(body=body, content_type="image/webp")
+    except FileNotFoundError:
+        return _error("image file not found in the selected root", 404)
+    except (OSError, ValueError, Image.DecompressionBombError):
+        return _error("cannot decode or crop this image", 415)
+    except Exception:
+        logger.exception("Arisu view failed")
+        return _error("rendering failed; see the server log", 500)
+    return web.Response(body=body, content_type="image/png" if req.max_size is None else "image/webp", headers=_IMAGE_HEADERS)
 
 
 def render(path: str, max_size: Optional[int], crop: Optional[CropBox]) -> bytes:
-    """The first frame of ``path``, cropped to ``crop`` and downscaled to fit in ``max_size`` pixels, as WEBP.
+    """Encode the upright first frame as PNG, or bounded WebP when requested.
 
-    The crop applies after the EXIF transpose, as ``nodes._load_image`` applies
-    it, so the node preview shows the pixels a run produces. WEBP refuses a
-    side above 16383 pixels; the frontend then falls back to a bounded render.
-
-    Args:
-        path: An image file.
-        max_size: The bound on both sides, or ``None`` to keep the size; a smaller image is not enlarged.
-        crop: The box to keep, or ``None`` for the whole image.
-
-    Returns:
-        The encoded image.
-
-    Raises:
-        ValueError: If the crop lies wholly outside the image.
+    Strip metadata and preserve alpha; PNG preserves full source dimensions
+    for the crop dialog, including source formats browsers cannot decode.
     """
-    with node_helpers.pillow(Image.open, path) as image:
-        frame = node_helpers.pillow(ImageOps.exif_transpose, image)
+    with open_raster_image(path) as image:
+        frame = ImageOps.exif_transpose(image).convert("RGBA" if "A" in image.getbands() or "transparency" in image.info else "RGB")
         box = crop_box(crop, frame.size) if crop else None
         if box is not None:
             frame = frame.crop(box)
         if max_size is not None:
             frame.thumbnail((max_size, max_size))
+        frame.info.clear()
         buffer = BytesIO()
-        frame.save(buffer, format=_THUMBNAIL_FORMAT, quality=_THUMBNAIL_QUALITY)
+        frame.save(buffer, format="PNG" if max_size is None else _THUMBNAIL_FORMAT, quality=_THUMBNAIL_QUALITY)
     return buffer.getvalue()
 
 
+def _validate_previews(req: SaveRequest):
+    """Validate the complete batch and destinations before models or writes."""
+    for ref in req.previews:
+        source = preview_file_path(folder_paths.get_temp_directory(), ref)
+        if not os.path.isfile(source):
+            raise FileNotFoundError("preview not found")
+        try:
+            with Image.open(source, formats=["PNG"]) as image:
+                if image.format != "PNG":
+                    raise UnsupportedImage("preview must be PNG")
+                prefix = expand_save_prefix(req.path, image.width, image.height, datetime.now().astimezone())
+                contained_path(folder_paths.get_output_directory(), prefix)
+                image.verify()
+        except (OSError, Image.DecompressionBombError) as error:
+            raise UnsupportedImage("preview cannot be decoded") from error
+
+
 def _save(req: SaveRequest) -> List[Dict[str, str]]:
-    upscale = None if req.upscale_model == NO_UPSCALE else model_upscaler(req.upscale_model)
-    return save_previews(req, upscale)
+    """Validate the batch, optionally upscale it, and exclusively create output PNGs.
 
-
-def save_previews(req: SaveRequest, upscale: Optional[Upscaler]) -> List[Dict[str, str]]:
-    """Copy each preview under the output directory at ``req.path``, upscaling on the way if asked.
-
-    The PNG text chunks of the preview (prompt and workflow) are carried over,
-    so the saved file has the metadata Save Image would have written.
-
-    Args:
-        req: The validated request.
-        upscale: Maps a ``[1, H, W, 3]`` float batch to a larger one, or ``None`` to save as is.
-
-    Returns:
-        The saved files as ``{filename, subfolder, type}`` entries, the shape ComfyUI uses for outputs.
-
-    Raises:
-        FileNotFoundError: If a preview no longer exists; the temp directory is wiped on restart.
-        ValueError: If a preview reference would leave the temp directory.
+    Supported placeholders and metadata match Save Image. Recheck the final
+    destination immediately before opening, never following an existing output
+    file (including a symlink), and advance the counter on collisions.
     """
-    temp_dir = folder_paths.get_temp_directory()
+    _validate_previews(req)
+    upscale = None if req.upscale_model == NO_UPSCALE else model_upscaler(req.upscale_model)
     output_dir = folder_paths.get_output_directory()
     saved: List[Dict[str, str]] = []
     for ref in req.previews:
-        source = preview_file_path(temp_dir, ref)
-        if not os.path.isfile(source):
-            raise FileNotFoundError(f"preview {ref.filename} is gone")
-        with Image.open(source) as png:
+        source = preview_file_path(folder_paths.get_temp_directory(), ref)
+        with Image.open(source, formats=["PNG"]) as png:
             metadata = _copy_metadata(png)
             pixels = png.convert("RGB")
         if upscale is not None:
             pixels = _to_pil(upscale(_to_tensor(pixels)))
-        folder, filename, counter, subfolder, _ = folder_paths.get_save_image_path(req.path, output_dir, pixels.width, pixels.height)
-        file = f"{filename}_{counter:05}_.png"
-        pixels.save(os.path.join(folder, file), pnginfo=metadata, compress_level=_COMPRESS_LEVEL)
+        prefix = expand_save_prefix(req.path, pixels.width, pixels.height, datetime.now().astimezone())
+        contained_path(output_dir, prefix)
+        folder, filename, counter, subfolder, _ = folder_paths.get_save_image_path(prefix, output_dir, pixels.width, pixels.height)
+        while True:
+            file = f"{filename}_{counter:05}_.png"
+            relative = os.path.join(subfolder, file)
+            # An existing basename is a collision even if it is a dangling symlink.
+            target = os.path.join(folder, file)
+            if os.path.lexists(target):
+                counter += 1
+                continue
+            target = contained_path(output_dir, relative)
+            try:
+                with open(target, "xb") as output:
+                    pixels.save(output, format="PNG", pnginfo=metadata, compress_level=_COMPRESS_LEVEL)
+            except FileExistsError:
+                counter += 1
+                continue
+            break
         saved.append({"filename": file, "subfolder": subfolder, "type": SAVED_FOLDER_TYPE})
     return saved
 

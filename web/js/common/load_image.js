@@ -1,50 +1,4 @@
-// Load Image (Browse): a "browse" button that picks an image file from any path on the host.
-//
-// The stock Load Image lists the top level of the input directory and brings
-// other files in by uploading a copy there. This node holds a path instead;
-// the button opens a directory browser fed by the pack's /arisu/browse route
-// with thumbnails and the node preview served by /arisu/view. Picking a file
-// writes its path into the `path` widget; the file is read in place at run
-// time. Nothing is uploaded.
-//
-// The left pane is a directory tree the way a system file explorer draws one:
-// the roots are the user's home and the mounted disks the route reports, plus
-// an ad-hoc root for the chain to a directory outside them (a typed path, or
-// an install under /opt). A listing carries its ancestor chain, so the tree
-// opens expanded down to the current directory; a click from inside the tree
-// asks for no chain (`tree=0`), since it already has one. Clicking a row
-// navigates, the chevron only expands, and "collapse" folds everything but the
-// chain to the current directory. The filter box narrows the image cards only.
-// Above the tree sits a "Saved" list of directories the user pinned with the
-// `+ save` button, each with a remove button; they live in a hidden ComfyUI
-// setting, so they follow the ComfyUI user rather than the browser.
-//
-// The browser is a native <dialog>: it sits in the browser's top layer above
-// the canvas and the frontend's own layers, traps focus, and closes on Escape,
-// on the close button, or on a backdrop click (a press there too: a drag out of
-// a field that ends on the backdrop is not one). Every element is built through
-// `el()`, so the dialog touches a small DOM surface. Motion and state live in
-// the stylesheet: the dialog pops in, the image cards rise once when a
-// directory is entered (never on a tree click or a filter keystroke, and the
-// tree rows never animate), and the loading and picked states are ARIA
-// attributes the CSS reads, so the script only assigns properties.
-//
-// A second button, `crop…`, opens the crop dialog of cropper.js on the picked
-// file. The result lives in the node's `crop` input, `left,top,width,height`
-// in pixels of the upright image, which this script hides: the dialog is its
-// editor and the preview shows its effect. A blank crop is the whole image, so
-// applying the whole image or pressing reset stores nothing, and picking
-// another file drops the crop of the previous one, and the aspect ratio chosen
-// in the dialog, which is remembered per node until then. Nothing is uploaded:
-// the run crops in memory and the preview asks /arisu/view for the cropped pixels.
-//
-// The preview goes through `node.imgs`, which the classic node canvas draws
-// below the widgets. The frontend captions it with the loaded image's own
-// size, so the preview loads the file itself (cropped by the route when a crop
-// is set) and falls back to a thumbnail only for a format the browser cannot
-// decode. The Vue node renderer ("Nodes 2.0") reads previews from its own
-// store instead, so there the node shows none; the dialogs still work.
-
+// Browse and crop raster images beneath server-configured roots. Paths and bookmarks are relative.
 import { api } from '../../../../scripts/api.js';
 import { app } from '../../../../scripts/app.js';
 import { cropImage } from './cropper.js';
@@ -57,14 +11,13 @@ const CROP_WIDGET = 'crop';
 const BROWSE_ROUTE = '/arisu/browse';
 const VIEW_ROUTE = '/arisu/view';
 const THUMBNAIL_MAX = 256;
-/** The hidden ComfyUI setting holding the browser's saved directories, an array of absolute paths. */
-const SAVED_PATHS_SETTING = 'Arisu.LoadImage.SavedPaths';
-/** The preview's fallback bound, for a file the browser cannot decode itself (TIFF, for one). */
+/** The hidden ComfyUI setting holding the browser's saved directories, an array of {root, path} locations. */
+const SAVED_PATHS_SETTING = 'Arisu.LoadImage.SavedLocations';
+/** The fallback bound if a full-resolution raster response cannot be loaded. */
 const PREVIEW_MAX = 1024;
 /** The context-menu entry the frontend adds to every previewing node; see beforeRegisterNodeDef for why it goes. */
 const MASK_EDITOR_ENTRY = /mask ?editor/i;
-/** Tree icons by row kind: the home root, a mounted disk, an ad-hoc root for a path outside them, a folder. */
-const ICONS = { home: '\u{1F3E0}', disk: '\u{1F4BE}', adhoc: '\u{1F5A5}', folder: '\u{1F4C1}', saved: '\u{1F4CC}' };
+const ICONS = { root: '\u{1F4BE}', folder: '\u{1F4C1}', saved: '\u{1F4CC}' };
 
 const STYLE = `
 .arisu-browser { width: min(1100px, 92vw); height: min(760px, 88vh); padding: 0; border: 1px solid var(--border-color, #444);
@@ -165,33 +118,63 @@ function formatCrop(rect, img) {
   return whole ? '' : [rect.x, rect.y, rect.w, rect.h].join(',');
 }
 
-/** Keep the crop widget out of sight: the crop dialog is its editor, and the preview shows its effect. */
-function hideCrop(node) {
-  const widget = cropWidget(node);
-  if (widget) hideWidget(node, widget);
+/** Persist dialog-owned values without editable widgets or sockets; linked legacy locations need reselection. */
+function hideSelection(node) {
+  const linked = node.inputs?.some((input) => [PATH_WIDGET, 'root'].includes(input.widget?.name ?? input.name) && input.link != null);
+  for (const widget of [pathWidget(node), cropWidget(node), rootWidget(node)]) {
+    if (!widget) continue;
+    widget.options ??= {};
+    widget.options.socketless = true;
+    hideWidget(node, widget);
+  }
+  if (linked) {
+    pathWidget(node).value = '';
+    if (cropWidget(node)) cropWidget(node).value = '';
+    if (rootWidget(node)) rootWidget(node).value = 'input';
+    cropRatios.delete(node);
+    toast('warn', 'Linked image locations are no longer supported in the UI. Reselect this image with Browse.');
+  }
 }
 
 /** The saved directories, from the user's ComfyUI settings. */
 function savedPaths() {
   const value = app.extensionManager?.setting?.get?.(SAVED_PATHS_SETTING);
-  return Array.isArray(value) ? value : [];
+  return Array.isArray(value)
+    ? value.filter((entry) => entry && typeof entry.root === 'string' && typeof entry.path === 'string' && relativePath(entry.path))
+    : [];
 }
 
 function storeSavedPaths(paths) {
   return app.extensionManager?.setting?.set?.(SAVED_PATHS_SETTING, paths);
 }
 
-function isLinked(node, name) {
-  return node.inputs?.some((input) => input.widget?.name === name && input.link != null) ?? false;
+function rootWidget(node) {
+  return node.widgets?.find((widget) => widget.name === 'root');
+}
+
+function rootValue(node) {
+  return rootWidget(node)?.value ?? 'input';
+}
+
+/** Client-side migration hint only; the server is the security boundary. */
+function relativePath(path) {
+  return !/^[\\/~]|^[a-z]:/i.test(path) && !path.replaceAll('\\', '/').split('/').includes('..');
 }
 
 function joinPath(dir, name) {
-  return dir.endsWith('/') || dir.endsWith('\\') ? `${dir}${name}` : `${dir}/${name}`;
+  return dir ? `${dir}/${name}` : name;
 }
 
-/** Whether `path` is `dir` or lies inside it. */
 function isWithin(path, dir) {
-  return path === dir || path.startsWith(joinPath(dir, ''));
+  return dir === '' || path === dir || path.startsWith(`${dir}/`);
+}
+
+function locationKey(root, path) {
+  return JSON.stringify([root, path]);
+}
+
+function locationLabel(root, path) {
+  return `${root}:${path || '/'}`;
 }
 
 /** LiteGraph separates menu groups with `null` entries, hence the guard. */
@@ -200,11 +183,11 @@ function notMaskEditor(option) {
 }
 
 /**
- * The view route's URL for `path`: the file itself, or a rendering bounded to `max` pixels and cut to `crop`
+ * The view route's URL for `path`: full-resolution pixels, or pixels bounded to `max` and cut to `crop`
  * (the widget text) when given; `bust` defeats the browser cache for a file that may have changed.
  */
-function viewUrl(path, max, bust = false, crop = '') {
-  const params = new URLSearchParams({ path });
+function viewUrl(path, max, bust = false, crop = '', root = 'input') {
+  const params = new URLSearchParams({ root, path });
   if (max != null) params.set('max', String(max));
   if (crop) params.set('crop', crop);
   if (bust) params.set('t', String(Date.now()));
@@ -224,12 +207,20 @@ function loadImage(url) {
 /** Show the widgets' file, cropped as they say, on the node once it has loaded; a failed load leaves no stale image behind. */
 async function showPreview(node) {
   const path = pathWidget(node)?.value?.trim();
-  if (!path) return;
+  if (!path || !relativePath(path)) {
+    previewTokens.set(node, {});
+    node.imgs = undefined;
+    node.setDirtyCanvas(true, true);
+    if (path) toast('warn', 'Reselect this image with Browse under a configured root; absolute paths are no longer accepted.');
+    return;
+  }
+  const root = rootValue(node);
   const crop = cropWidget(node)?.value?.trim() ?? '';
   const token = {};
   previewTokens.set(node, token);
-  // the file itself, so the frontend's caption shows its real size; a format the browser cannot decode gets a thumbnail
-  const img = (await loadImage(viewUrl(path, undefined, true, crop))) ?? (await loadImage(viewUrl(path, PREVIEW_MAX, true, crop)));
+  // Full-resolution raster pixels preserve the caption size; a failed render gets a bounded retry.
+  const img =
+    (await loadImage(viewUrl(path, undefined, true, crop, root))) ?? (await loadImage(viewUrl(path, PREVIEW_MAX, true, crop, root)));
   if (previewTokens.get(node) !== token) return;
   if (img) {
     node.imgs = [img];
@@ -243,16 +234,17 @@ async function showPreview(node) {
 }
 
 /** Write the picked file into the path widget the way a user edit would, then preview it; another file drops the old crop. */
-function pick(node, path) {
+function pick(node, path, root) {
   const widget = pathWidget(node);
   if (!widget) return undefined;
   const crop = cropWidget(node);
-  if (widget.value !== path) {
+  if (widget.value !== path || rootValue(node) !== root) {
     if (crop) crop.value = '';
     cropRatios.delete(node);
   }
+  const rootField = rootWidget(node);
+  if (rootField && rootField.value !== root) setWidget(node, rootField, root);
   setWidget(node, widget, path);
-  if (isLinked(node, PATH_WIDGET)) toast('warn', 'path is fed by a link, so a run uses the linked value, not the picked file.');
   return showPreview(node);
 }
 
@@ -260,62 +252,54 @@ function pick(node, path) {
 async function openCropper(node) {
   const path = pathWidget(node)?.value?.trim();
   const crop = cropWidget(node);
-  if (!path || !crop) {
+  if (!path || !relativePath(path) || !crop) {
     toast('warn', 'Pick an image first.');
     return;
   }
-  // the file itself: the crop is in its pixels, and a thumbnail would not tell how many there are
-  const img = await loadImage(viewUrl(path, undefined, true));
+  // Full-resolution raster pixels keep crop coordinates aligned with node execution.
+  const root = rootValue(node);
+  const img = await loadImage(viewUrl(path, undefined, true, '', root));
   if (!img) {
     toast('warn', `Cannot crop ${path}: the browser cannot decode this file.`);
     return;
   }
-  // a path typed into the field never passes through pick(): a ratio chosen for another file starts over as free
+  // Restored selections may differ from the remembered file; start their ratio over as free.
   const remembered = cropRatios.get(node);
-  if (remembered && remembered.path !== path) cropRatios.delete(node);
+  if (remembered && (remembered.path !== path || remembered.root !== root)) cropRatios.delete(node);
   const { rect, ratio } = await cropImage(img, { rect: parseCrop(crop.value), ratio: cropRatios.get(node)?.ratio ?? '' });
-  cropRatios.set(node, { path, ratio });
-  if (!rect) return;
+  cropRatios.set(node, { root, path, ratio });
+  if (!rect || pathWidget(node)?.value?.trim() !== path || rootValue(node) !== root) return;
   setWidget(node, crop, formatCrop(rect, img));
   await showPreview(node);
 }
 
 async function openBrowser(node) {
-  let listing = { path: '', parent: null, dirs: [], files: [], ancestors: [] };
-  let places = { input: '', output: '' };
-  /** The tree roots by path, `{ label, kind }`: the route's roots, plus ad-hoc ones for the dialog's lifetime. */
+  let listing = { root: rootValue(node), path: '', parent: null, dirs: [], files: [], ancestors: [] };
+  let loaded = false;
+  let navigation = 0;
   const roots = new Map();
-  /** Every directory the tree has seen, by path: `{ dirs, expanded }`, `dirs` null until listed. */
   const tree = new Map();
-  /** The directory the tree last scrolled to, so expanding a folder leaves the list where it is. */
-  let scrolledTo = null;
-
   const pathField = el('input', {
     className: 'arisu-browser-path',
     type: 'text',
-    placeholder: 'directory path',
-    onkeydown: (event) => (event.key === 'Enter' ? navigate(pathField.value) : undefined),
+    placeholder: 'path relative to selected root',
+    onkeydown: (event) => (event.key === 'Enter' ? navigate(listing.root, pathField.value) : undefined),
   });
-  const upButton = el('button', { textContent: '↑ up', title: 'parent directory', onclick: () => navigate(listing.parent) });
+  const upButton = el('button', { textContent: '↑ up', onclick: () => navigate(listing.root, listing.parent) });
   const filterField = el('input', { type: 'search', placeholder: 'filter images', oninput: () => renderGrid(false) });
-  const outputPlace = el('button', {
-    textContent: 'output dir',
-    title: "ComfyUI's output directory",
-    onclick: () => navigate(places.output),
-  });
-  const saveButton = el('button', { textContent: '+ save', title: 'save the current directory', onclick: () => savePath() });
+  const saveButton = el('button', { textContent: '+ save', onclick: savePath });
   const savedList = el('div', { className: 'arisu-browser-saved-list' });
   const treeList = el('div', { className: 'arisu-browser-tree-list' });
   const treePane = el('div', { className: 'arisu-browser-tree' }, [
     el('div', { className: 'arisu-browser-places' }, [
-      el('button', { textContent: 'input dir', title: "ComfyUI's input directory", onclick: () => navigate('') }),
-      outputPlace,
+      el('button', { textContent: 'input dir', onclick: () => navigate('input', '') }),
+      el('button', { textContent: 'output dir', onclick: () => navigate('output', '') }),
     ]),
     el('div', { className: 'arisu-browser-tree-head' }, [el('span', { textContent: 'Saved' }), saveButton]),
     savedList,
     el('div', { className: 'arisu-browser-tree-head' }, [
       el('span', { textContent: 'Folders' }),
-      el('button', { textContent: 'collapse', title: 'collapse every folder but the current one', onclick: () => collapseAll() }),
+      el('button', { textContent: 'collapse', onclick: collapseAll }),
     ]),
     treeList,
   ]);
@@ -327,32 +311,20 @@ async function openBrowser(node) {
       pathField,
       upButton,
       filterField,
-      el('button', { textContent: '✕', title: 'close', onclick: () => dialog.close() }),
+      el('button', { textContent: '✕', onclick: () => dialog.close() }),
     ]),
     panes,
   ]);
   closeOnBackdropClick(dialog);
 
-  function matches(name) {
-    return name.toLowerCase().includes(filterField.value.trim().toLowerCase());
+  function treeNode(root, path) {
+    const key = locationKey(root, path);
+    if (!tree.has(key)) tree.set(key, { root, path, dirs: null, expanded: false });
+    return tree.get(key);
   }
 
-  function empty(text) {
-    return el('div', { className: 'arisu-browser-empty', textContent: text });
-  }
-
-  function treeNode(path) {
-    let state = tree.get(path);
-    if (!state) {
-      state = { dirs: null, expanded: false };
-      tree.set(path, state);
-    }
-    return state;
-  }
-
-  /** Fetch the listing of `path` (an empty path is the input directory); `withTree` asks for the ancestor chain too. */
-  async function fetchListing(path, withTree) {
-    const params = new URLSearchParams({ path });
+  async function fetchListing(root, path, withTree) {
+    const params = new URLSearchParams({ root, path });
     if (!withTree) params.set('tree', '0');
     const response = await api.fetchApi(`${BROWSE_ROUTE}?${params}`);
     const data = await response.json().catch(() => ({}));
@@ -360,168 +332,140 @@ async function openBrowser(node) {
     return data;
   }
 
-  /** Take a listing's roots, places and chain into the tree; the chain and the listed directory open. */
   function absorb(data) {
-    (data.roots ?? []).forEach((root, index) => {
-      if (!roots.has(root.path)) roots.set(root.path, { label: root.label, kind: index === 0 ? 'home' : 'disk' });
-    });
-    places = data.places ?? places;
-    const chain = data.ancestors ?? [];
-    const top = chain[0]?.path ?? data.path;
-    if (![...roots.keys()].some((root) => isWithin(top, root))) roots.set(top, { label: top, kind: 'adhoc' });
-    for (const level of chain) Object.assign(treeNode(level.path), { dirs: level.dirs, expanded: true });
-    Object.assign(treeNode(data.path), { dirs: data.dirs, expanded: true });
+    for (const root of data.roots) roots.set(root.id, root.label);
+    for (const level of data.ancestors) Object.assign(treeNode(data.root, level.path), { dirs: level.dirs, expanded: true });
+    Object.assign(treeNode(data.root, data.path), { dirs: data.dirs, expanded: true });
   }
 
-  /** The rows for `path` and, when it is expanded, its subdirectories, depth first. */
-  function treeRows(path, label, kind, depth) {
-    const state = treeNode(path);
-    const known = state.dirs != null;
+  function current(root, path) {
+    return loaded && root === listing.root && path === listing.path;
+  }
+
+  function treeRows(root, path, label, depth) {
+    const state = treeNode(root, path);
     const toggle = el('button', {
       className: 'arisu-browser-tree-toggle',
-      title: state.expanded ? 'collapse' : 'expand',
       ariaExpanded: state.expanded ? 'true' : 'false',
-      disabled: known && state.dirs.length === 0,
-      onclick: () => expand(path),
+      disabled: state.dirs?.length === 0,
+      onclick: () => expand(root, path),
     });
     const row = el(
       'button',
       {
         className: 'arisu-browser-tree-row',
-        title: path,
-        ariaCurrent: path === listing.path ? 'true' : null,
-        onclick: () => navigate(path, false),
+        title: locationLabel(root, path),
+        ariaCurrent: current(root, path) ? 'true' : null,
+        onclick: () => navigate(root, path, false),
       },
-      [el('span', { textContent: ICONS[kind] }), el('span', { textContent: label })],
+      [el('span', { textContent: path ? ICONS.folder : ICONS.root }), el('span', { textContent: label })],
     );
     const rows = [el('div', { className: 'arisu-browser-tree-node', style: `--depth: ${depth}` }, [toggle, row])];
-    if (state.expanded && known) {
-      for (const name of state.dirs) rows.push(...treeRows(joinPath(path, name), name, 'folder', depth + 1));
+    if (state.expanded && state.dirs) {
+      for (const name of state.dirs) rows.push(...treeRows(root, joinPath(path, name), name, depth + 1));
     }
     return rows;
   }
 
-  /** One saved directory: a row that opens it, outlined when it is the current one, and a button that forgets it. */
-  function savedRow(path) {
-    const name =
-      path
-        .replace(/[\\/]+$/, '')
-        .split(/[\\/]/)
-        .pop() || path;
+  function renderTree() {
+    treeList.replaceChildren(...[...roots].flatMap(([id, label]) => treeRows(id, '', label, 0)));
+  }
+
+  function savedRow(location) {
+    const { root, path } = location;
     const row = el(
       'button',
       {
         className: 'arisu-browser-tree-row',
-        title: path,
-        ariaCurrent: path === listing.path ? 'true' : null,
-        onclick: () => navigate(path),
+        title: locationLabel(root, path),
+        ariaCurrent: current(root, path) ? 'true' : null,
+        onclick: () => navigate(root, path),
       },
-      [el('span', { textContent: ICONS.saved }), el('span', { textContent: name })],
+      [el('span', { textContent: ICONS.saved }), el('span', { textContent: locationLabel(root, path) })],
     );
     const remove = el('button', {
       className: 'arisu-browser-saved-remove',
       textContent: '✕',
-      title: 'remove',
-      onclick: () => forgetPath(path),
+      onclick: async () => {
+        await storeSavedPaths(savedPaths().filter((saved) => locationKey(saved.root, saved.path) !== locationKey(root, path)));
+        renderSaved();
+      },
     });
     return el('div', { className: 'arisu-browser-saved' }, [row, remove]);
   }
 
   function renderSaved() {
     const saved = savedPaths();
-    saveButton.disabled = !listing.path || saved.includes(listing.path);
+    saveButton.disabled = !loaded || saved.some(({ root, path }) => current(root, path));
     savedList.replaceChildren(...saved.map(savedRow));
   }
 
   async function savePath() {
-    const saved = savedPaths();
-    if (!listing.path || saved.includes(listing.path)) return;
-    await storeSavedPaths([...saved, listing.path]);
+    if (saveButton.disabled) return;
+    await storeSavedPaths([...savedPaths(), { root: listing.root, path: listing.path }]);
     renderSaved();
   }
 
-  async function forgetPath(path) {
-    await storeSavedPaths(savedPaths().filter((saved) => saved !== path));
-    renderSaved();
-  }
-
-  function renderTree() {
-    outputPlace.disabled = !places.output;
-    const rows = [];
-    for (const [path, root] of roots) rows.push(...treeRows(path, root.label, root.kind, 0));
-    treeList.replaceChildren(...rows);
-    if (listing.path === scrolledTo) return;
-    scrolledTo = listing.path;
-    rows.find((row) => row.children[1].ariaCurrent === 'true')?.scrollIntoView?.({ block: 'nearest' });
-  }
-
-  /** A thumbnail card; the card holding `current`, the path already in the widget, is outlined. */
-  function fileCard(name, index, current) {
-    const full = joinPath(listing.path, name);
-    const onclick = () => {
-      dialog.close();
-      return pick(node, full);
-    };
-    // onload is assigned before src: a cached thumbnail fires load as soon as src is set
-    const thumbnail = el('img', {
-      loading: 'lazy',
-      alt: name,
-      onload: (event) => {
-        event.target.className = 'arisu-loaded';
-      },
-      src: viewUrl(full, THUMBNAIL_MAX),
-    });
-    const props = {
-      className: 'arisu-browser-file',
-      style: `--i: ${index}`,
-      title: full,
-      ariaCurrent: full === current ? 'true' : null,
-      onclick,
-    };
-    return el('button', props, [thumbnail, el('span', { textContent: name })]);
-  }
-
-  /**
-   * The image cards of the current directory, narrowed by the filter box; folders are never filtered.
-   * `fresh` marks a directory just entered, the one time the cards rise into place.
-   */
   function renderGrid(fresh) {
-    const current = pathWidget(node)?.value?.trim();
-    const files = listing.files.filter(matches).map((name, index) => fileCard(name, index, current));
+    const files = listing.files.filter((name) => name.toLowerCase().includes(filterField.value.trim().toLowerCase()));
+    const cards = files.map((name, index) => {
+      const path = joinPath(listing.path, name);
+      const root = listing.root;
+      const thumbnail = el('img', {
+        loading: 'lazy',
+        alt: name,
+        onload: (event) => {
+          event.target.className = 'arisu-loaded';
+        },
+        src: viewUrl(path, THUMBNAIL_MAX, false, '', root),
+      });
+      return el(
+        'button',
+        {
+          className: 'arisu-browser-file',
+          style: `--i: ${index}`,
+          title: locationLabel(root, path),
+          ariaCurrent: root === rootValue(node) && path === pathWidget(node)?.value?.trim() ? 'true' : null,
+          onclick: () => {
+            dialog.close();
+            return pick(node, path, root);
+          },
+        },
+        [thumbnail, el('span', { textContent: name })],
+      );
+    });
     grid.className = fresh ? 'arisu-browser-grid arisu-fresh' : 'arisu-browser-grid';
-    grid.replaceChildren(...(files.length ? files : [empty('No images here')]));
+    grid.replaceChildren(...(cards.length ? cards : [el('div', { className: 'arisu-browser-empty', textContent: 'No images here' })]));
   }
 
-  function render() {
-    upButton.disabled = listing.parent == null;
-    renderGrid(true);
-    renderSaved();
-    renderTree();
-  }
-
-  /** Show `path`; on failure the dialog stays for another try. A click inside the tree needs no chain. */
-  async function navigate(path, withTree = true) {
+  async function navigate(root, path, withTree = true) {
     if (path == null) return;
+    const token = ++navigation;
     panes.ariaBusy = 'true';
     try {
-      const data = await fetchListing(path, withTree);
+      const data = await fetchListing(root, path, withTree);
+      if (token !== navigation || !dialog.open) return;
       listing = data;
+      loaded = true;
       absorb(data);
       pathField.value = data.path;
-      render();
+      pathField.title = `Relative to ${data.root}`;
+      upButton.disabled = data.parent == null;
+      renderGrid(true);
+      renderSaved();
+      renderTree();
     } catch (error) {
-      toast('error', `Cannot open directory: ${error.message}`);
+      if (token === navigation) toast('error', `Cannot open directory: ${error.message}`);
     } finally {
-      panes.ariaBusy = 'false';
+      if (token === navigation) panes.ariaBusy = 'false';
     }
   }
 
-  /** Toggle the subdirectories of `path` in the tree, listing them first when they are not known yet. */
-  async function expand(path) {
-    const state = treeNode(path);
+  async function expand(root, path) {
+    const state = treeNode(root, path);
     if (!state.expanded && state.dirs == null) {
       try {
-        state.dirs = (await fetchListing(path, false)).dirs;
+        state.dirs = (await fetchListing(root, path, false)).dirs;
       } catch (error) {
         toast('error', `Cannot open directory: ${error.message}`);
         return;
@@ -531,20 +475,18 @@ async function openBrowser(node) {
     renderTree();
   }
 
-  /** Fold every folder except the current directory and the chain leading to it. */
   function collapseAll() {
-    for (const [path, state] of tree) state.expanded = isWithin(listing.path, path);
+    for (const state of tree.values()) state.expanded = state.root === listing.root && isWithin(listing.path, state.path);
     renderTree();
   }
 
   document.body.append(dialog);
   dialog.showModal();
-  // the saved directories are there before, and whether or not, the first listing arrives
   renderSaved();
-  // open where the current file lives (the route lists a file's directory); fall back to the input directory
   const start = pathWidget(node)?.value?.trim() ?? '';
-  await navigate(start);
-  if (start && listing.path === '') await navigate('');
+  if (!relativePath(start)) toast('warn', 'Reselect this image under a configured root; absolute paths are no longer accepted.');
+  await navigate(rootValue(node), relativePath(start) ? start : '');
+  if (!loaded) await navigate('input', '');
 }
 
 app.registerExtension({
@@ -559,14 +501,14 @@ app.registerExtension({
       onNodeCreated?.apply(this, arguments);
       addButton(this, 'browse', () => openBrowser(this));
       addButton(this, 'crop…', () => openCropper(this));
-      hideCrop(this);
+      hideSelection(this);
     };
 
     // configure() has restored the widget values, and the saved sockets, by the time it calls this: show the saved file again
     const onConfigure = nodeType.prototype.onConfigure;
     nodeType.prototype.onConfigure = function () {
       onConfigure?.apply(this, arguments);
-      hideCrop(this);
+      hideSelection(this);
       return showPreview(this);
     };
 
