@@ -20,20 +20,15 @@ LoadImage.prototype.getExtraMenuOptions = (_canvas, options) => {
 };
 extensionNamed('Arisu.Common.LoadImage').beforeRegisterNodeDef(LoadImage, { name: 'ArisuLoadImage' });
 
-const ROOTS = [
-  { label: 'Home', path: '/home/ray' },
-  { label: 'nas', path: '/mnt/nas' },
-];
-const PLACES = { input: '/home/ray/comfy/input', output: '/home/ray/comfy/output' };
-const SAVED_SETTING = 'Arisu.LoadImage.SavedPaths';
+const ROOTS = ['input', 'output', 'photos'].map((id) => ({ id, label: id }));
+const SAVED_SETTING = 'Arisu.LoadImage.SavedLocations';
 
-/** A route body the way `_browse` answers: the listing plus the tree roots, the places and the chain. */
-function listing(path, parent, dirs, files, ancestors = []) {
-  return { path, parent, dirs, files, ancestors, roots: ROOTS, places: PLACES };
+function listing(root, path, parent, dirs, files, ancestors = []) {
+  return { root, path, parent, dirs, files, ancestors, roots: ROOTS };
 }
 
 /** A node with its path widget at `value` and a blank crop, after LiteGraph created it, so it carries the buttons. */
-function makeLoadNode(value) {
+function makeLoadNode(value, root = 'input') {
   const node = makeNode({
     id: 3,
     type: 'ArisuLoadImage',
@@ -41,8 +36,9 @@ function makeLoadNode(value) {
     widgets: [
       { name: 'path', value },
       { name: 'crop', value: '' },
+      { name: 'root', value: root },
     ],
-    inputs: [{ name: 'path' }, { name: 'crop' }],
+    inputs: [{ name: 'path' }, { name: 'crop' }, { name: 'root' }],
   });
   LoadImage.prototype.onNodeCreated.call(node);
   return node;
@@ -93,217 +89,176 @@ function reset() {
   resetDom();
 }
 
-test('browse lists a directory in a tree, entering a folder refetches, and picking a file fills the widget and previews it', async () => {
+test('browse navigates configured roots, saves relative bookmarks, and selects and previews an external image', async () => {
   reset();
   const node = makeLoadNode('');
-  const picked = [];
-  node.widgets[0].callback = (value) => picked.push(value);
-  // the buttons are canvas controls, never written into the saved workflow; the crop widget is there for the run,
-  // but out of sight and without a socket: the crop dialog is its editor
   assert.equal(browseButton(node).serialize, false);
-  assert.equal(node.widgets.find((widget) => widget.name === 'crop…').serialize, false);
-  assert.equal(node.widgets[1].hidden, true);
-  assert.deepEqual(
-    node.inputs.map((input) => input.name),
-    ['path'],
-  );
-  // opening asks for the input directory (an empty path) with its chain; the tree shows the roots and the chain
-  // expanded down to the current directory, the grid a thumbnail per image
-  api.responses.push(
-    jsonResponse(
-      200,
-      listing(
-        PLACES.input,
-        '/home/ray/comfy',
-        ['clips'],
-        ['a.png'],
-        [
-          { path: '/home/ray', dirs: ['comfy', 'Pictures'] },
-          { path: '/home/ray/comfy', dirs: ['input', 'output'] },
-        ],
-      ),
-    ),
-  );
+  assert.equal(node.inputs.length, 0);
+  assert.ok(node.widgets.slice(0, 3).every((widget) => widget.hidden && widget.options.hidden && widget.options.socketless));
+  api.responses.push(jsonResponse(200, listing('input', '', null, ['clips'], ['a.png'])));
   await browseButton(node).callback();
-  assert.equal(api.calls.length, 1);
-  assert.ok(api.calls[0].route.startsWith('/arisu/browse?'));
-  assert.deepEqual(query(api.calls[0].route), { path: '' });
   const dialog = openDialog();
   assert.equal(dialog.open, true);
+  assert.deepEqual(query(api.calls[0].route), { root: 'input', path: '' });
   assert.deepEqual(treeRows(dialog), [
-    ['/home/ray', true],
-    ['/home/ray/comfy', true],
-    ['/home/ray/comfy/input', true],
-    ['/home/ray/comfy/input/clips', false],
-    ['/home/ray/comfy/output', false],
-    ['/home/ray/Pictures', false],
-    ['/mnt/nas', false],
+    ['input:/', true],
+    ['input:clips', false],
+    ['output:/', false],
+    ['photos:/', false],
   ]);
-  assert.equal(treeRow(dialog, PLACES.input).ariaCurrent, 'true');
-  assert.equal(treeRow(dialog, '/mnt/nas').ariaCurrent, null);
-  const [thumbnail] = descendants(dialog).filter((element) => element.tagName === 'IMG');
-  assert.ok(thumbnail.src.startsWith('/api/arisu/view?'));
-  assert.deepEqual(query(thumbnail.src), { path: `${PLACES.input}/a.png`, max: '256' });
-  // a chevron lists a folder the tree has not seen, without the chain, and opens it in place
-  api.responses.push(jsonResponse(200, listing('/mnt/nas', '/mnt', ['refs'], ['n.png'])));
-  await treeToggle(dialog, '/mnt/nas').onclick();
-  assert.deepEqual(query(api.calls[1].route), { path: '/mnt/nas', tree: '0' });
-  assert.ok(treeRows(dialog).some(([path, expanded]) => path === '/mnt/nas' && expanded));
-  assert.ok(treeRow(dialog, '/mnt/nas/refs'));
-  assert.equal(treeRow(dialog, PLACES.input).ariaCurrent, 'true');
-  // clicking a tree row navigates there, also without the chain; the filter box narrows the images by substring, never the folders
-  api.responses.push(jsonResponse(200, listing(`${PLACES.input}/clips`, PLACES.input, [], ['b.png', 'c.jpg'])));
-  await treeRow(dialog, `${PLACES.input}/clips`).onclick();
-  assert.deepEqual(query(api.calls[2].route), { path: `${PLACES.input}/clips`, tree: '0' });
-  assert.equal(treeRow(dialog, `${PLACES.input}/clips`).ariaCurrent, 'true');
+  assert.equal(descendants(dialog).find((element) => element.textContent === '↑ up').disabled, true);
+  const thumbnail = descendants(dialog).find((element) => element.tagName === 'IMG');
+  assert.deepEqual(query(thumbnail.src), { root: 'input', path: 'a.png', max: '256' });
+  // Expanding another root preserves the current directory; navigating then selects that root.
+  api.responses.push(jsonResponse(200, listing('photos', '', null, ['refs'], [])));
+  await treeToggle(dialog, 'photos:/').onclick();
+  assert.deepEqual(query(api.calls.at(-1).route), { root: 'photos', path: '', tree: '0' });
+  assert.ok(treeRow(dialog, 'photos:refs'));
+  assert.equal(treeRow(dialog, 'input:/').ariaCurrent, 'true');
+  api.responses.push(jsonResponse(200, listing('photos', 'refs', '', [], ['b.png', 'c.jpg'])));
+  await treeRow(dialog, 'photos:refs').onclick();
+  assert.equal(treeRow(dialog, 'photos:refs').ariaCurrent, 'true');
+  // Navigating directories alone never changes the node's selected image.
+  assert.deepEqual(
+    node.widgets.slice(0, 3).map((widget) => widget.value),
+    ['', '', 'input'],
+  );
   assert.equal(byClass(dialog, 'arisu-browser-file').length, 2);
   const filter = descendants(dialog).find((element) => element.type === 'search');
   filter.value = 'C.J';
   filter.oninput();
   assert.deepEqual(
     byClass(dialog, 'arisu-browser-file').map((file) => file.title),
-    [`${PLACES.input}/clips/c.jpg`],
+    ['photos:refs/c.jpg'],
   );
-  assert.equal(treeRows(dialog).length, 8);
-  // + save pins the current directory into the user's settings and lists it above the tree, outlined while it is the
-  // current one; a second save is disabled; the row navigates there; ✕ forgets it
-  assert.equal(savedRows(dialog).length, 0);
-  assert.equal(saveButton(dialog).disabled, false);
   await saveButton(dialog).onclick();
-  assert.deepEqual(settings[SAVED_SETTING], [`${PLACES.input}/clips`]);
-  assert.deepEqual(
-    savedRows(dialog).map(([row]) => [row.title, row.ariaCurrent]),
-    [[`${PLACES.input}/clips`, 'true']],
-  );
+  assert.deepEqual(settings[SAVED_SETTING], [{ root: 'photos', path: 'refs' }]);
+  assert.equal(savedRows(dialog)[0][0].title, 'photos:refs');
   assert.equal(saveButton(dialog).disabled, true);
-  api.responses.push(jsonResponse(200, listing(PLACES.input, '/home/ray/comfy', ['clips'], ['a.png'])));
-  await treeRow(dialog, PLACES.input).onclick();
-  assert.equal(savedRows(dialog)[0][0].ariaCurrent, null);
-  assert.equal(saveButton(dialog).disabled, false);
-  api.responses.push(jsonResponse(200, listing(`${PLACES.input}/clips`, PLACES.input, [], ['b.png', 'c.jpg'])));
+  // A root itself is a valid bookmark, even though its relative path is empty.
+  api.responses.push(jsonResponse(200, listing('input', '', null, ['clips'], ['a.png'])));
+  await treeRow(dialog, 'input:/').onclick();
+  await saveButton(dialog).onclick();
+  assert.deepEqual(settings[SAVED_SETTING][1], { root: 'input', path: '' });
+  api.responses.push(jsonResponse(200, listing('photos', 'refs', '', [], ['b.png', 'c.jpg'], [{ path: '', dirs: ['refs'] }])));
   await savedRows(dialog)[0][0].onclick();
-  assert.deepEqual(query(api.calls.at(-1).route), { path: `${PLACES.input}/clips` });
-  await savedRows(dialog)[0][1].onclick();
-  assert.deepEqual(settings[SAVED_SETTING], []);
-  assert.equal(savedRows(dialog).length, 0);
-  // a press in the path field that ends on the backdrop is not a backdrop click; a press there is
-  dialog.onpointerdown({ target: byClass(dialog, 'arisu-browser-path')[0] });
-  dialog.onclick({ target: dialog });
-  assert.equal(dialog.open, true);
-  // collapse folds everything but the chain to the current directory
+  assert.deepEqual(query(api.calls.at(-1).route), { root: 'photos', path: 'refs' });
+  await savedRows(dialog)[1][1].onclick();
+  assert.deepEqual(settings[SAVED_SETTING], [{ root: 'photos', path: 'refs' }]);
   descendants(dialog)
     .find((element) => element.textContent === 'collapse')
     .onclick();
   assert.deepEqual(treeRows(dialog), [
-    ['/home/ray', true],
-    ['/home/ray/comfy', true],
-    ['/home/ray/comfy/input', true],
-    ['/home/ray/comfy/input/clips', true],
-    ['/home/ray/comfy/output', false],
-    ['/home/ray/Pictures', false],
-    ['/mnt/nas', false],
+    ['input:/', false],
+    ['output:/', false],
+    ['photos:/', true],
+    ['photos:refs', true],
   ]);
-  // picking: the widget gets the full path and its callback, the dialog goes away, the node previews the file itself;
-  // a crop belonged to the previous file and goes
+  dialog.onpointerdown({ target: byClass(dialog, 'arisu-browser-path')[0] });
+  dialog.onclick({ target: dialog });
+  assert.equal(dialog.open, true);
   node.widgets[1].value = '1,1,2,2';
   await byClass(dialog, 'arisu-browser-file')[0].onclick();
-  assert.equal(node.widgets[0].value, `${PLACES.input}/clips/c.jpg`);
-  assert.deepEqual(picked, [`${PLACES.input}/clips/c.jpg`]);
+  assert.equal(node.widgets[0].value, 'refs/c.jpg');
+  assert.equal(node.widgets[2].value, 'photos');
   assert.equal(node.widgets[1].value, '');
-  assert.equal(dialog.open, false);
   assert.equal(openDialog(), undefined);
-  assert.equal(query(node.imgs[0].src).path, `${PLACES.input}/clips/c.jpg`);
-  assert.equal(query(node.imgs[0].src).max, undefined);
+  assert.equal(query(node.imgs[0].src).root, 'photos');
+  assert.equal(query(node.imgs[0].src).path, 'refs/c.jpg');
   assert.equal(query(node.imgs[0].src).crop, undefined);
-  assert.equal(node.imageIndex, 0);
-  assert.equal(node.previewMediaType, 'image');
-  assert.deepEqual(toastSeverities(), []);
-  // the node previews now, so the frontend's menu hook would offer its mask editor, which cannot load a path: that entry goes
   const options = [];
-  const extra = LoadImage.prototype.getExtraMenuOptions.call(node, {}, options);
+  assert.deepEqual(LoadImage.prototype.getExtraMenuOptions.call(node, {}, options), []);
   assert.deepEqual(
     options.map((option) => option?.content ?? null),
     ['Open Image', null, 'Bypass'],
   );
-  assert.deepEqual(extra, []);
-  // a loaded workflow shows its saved file again; a format the browser cannot decode falls back to a thumbnail; an empty path shows nothing
-  const saved = makeLoadNode('/in/a.png');
+  // Hidden values remain serialized in their original order and restore with no sockets.
+  const values = node.widgets.filter((widget) => widget.serialize !== false).map((widget) => widget.value);
+  assert.deepEqual(values, ['refs/c.jpg', '', 'photos']);
+  const restored = makeLoadNode(values[0], values[2]);
+  restored.widgets[1].value = '1,1,2,2';
+  await LoadImage.prototype.onConfigure.call(restored);
+  assert.deepEqual(restored.inputs, []);
+  assert.equal(query(restored.imgs[0].src).crop, '1,1,2,2');
+  // Reloading a workflow preserves root selection and all formats arrive as raster pixels.
+  const saved = makeLoadNode('scan.tif', 'photos');
   await LoadImage.prototype.onConfigure.call(saved);
-  assert.equal(query(saved.imgs[0].src).path, '/in/a.png');
-  const tiff = makeLoadNode('/in/scan.tif');
-  await LoadImage.prototype.onConfigure.call(tiff);
-  assert.deepEqual([query(tiff.imgs[0].src).path, query(tiff.imgs[0].src).max], ['/in/scan.tif', '1024']);
+  assert.equal(query(saved.imgs[0].src).root, 'photos');
+  assert.equal(query(saved.imgs[0].src).max, undefined);
   assert.deepEqual(toastSeverities(), []);
-  const blank = makeLoadNode('');
-  await LoadImage.prototype.onConfigure.call(blank);
-  assert.equal(blank.imgs, undefined);
 });
 
-test('a failed listing keeps the dialog open with an error, and a failed preview leaves no image on the node', async () => {
+test('legacy paths require reselection, invalid bookmarks stay inert, and failed requests preserve the browser', async () => {
   reset();
-  settings[SAVED_SETTING] = ['/mnt/nas/refs'];
-  const node = makeLoadNode('');
-  // the route refuses: an error, and an empty dialog that stays for another try
-  api.responses.push(jsonResponse(500, { error: 'permission denied' }));
+  // Restored path/root wires must not silently fall back to stale stored selections.
+  for (const names of [['path'], ['root'], ['path', 'root']]) {
+    const linked = makeLoadNode('stale.png', 'photos');
+    linked.widgets[1].value = '1,1,2,2';
+    linked.imgs = [{}];
+    names.forEach((name, index) => {
+      linked.addInput(name, 'STRING', { link: index });
+    });
+    // Include the modern widget-associated socket and the legacy name-only shape.
+    if (names.includes('path')) linked.inputs[0].widget = { name: names[0] };
+    await LoadImage.prototype.onConfigure.call(linked);
+    assert.deepEqual(linked.inputs, []);
+    assert.deepEqual(
+      linked.widgets.slice(0, 3).map((widget) => widget.value),
+      ['', '', 'input'],
+    );
+    assert.equal(linked.imgs, undefined);
+    assert.equal(toastSeverities().length, 1);
+    assert.equal(toastSeverities()[0], 'warn');
+    await LoadImage.prototype.onConfigure.call(linked);
+    assert.equal(toastSeverities().length, 1);
+    reset();
+  }
+  settings['Arisu.LoadImage.SavedPaths'] = ['/mnt/old'];
+  settings[SAVED_SETTING] = ['/mnt/old', { root: 'photos', path: '../escape' }, { root: 'photos', path: 'refs' }];
+  const node = makeLoadNode('/old/private/a.png');
+  node.imgs = [{}];
+  await LoadImage.prototype.onConfigure.call(node);
+  assert.equal(node.imgs, undefined);
+  assert.deepEqual(toastSeverities(), ['warn']);
+  api.responses.push(jsonResponse(200, listing('input', '', null, [], [])));
   await browseButton(node).callback();
-  assert.deepEqual(toastSeverities(), ['error']);
-  const dialog = openDialog();
+  let dialog = openDialog();
+  assert.deepEqual(query(api.calls[0].route), { root: 'input', path: '' });
+  assert.equal(savedRows(dialog).length, 1);
+  assert.equal(savedRows(dialog)[0][0].title, 'photos:refs');
+  // Typed absolute paths are refused by the server; no ad-hoc roots are created.
+  const field = byClass(dialog, 'arisu-browser-path')[0];
+  field.value = '/outside';
+  api.responses.push(jsonResponse(400, { error: 'path must be relative' }));
+  await field.onkeydown({ key: 'Enter' });
   assert.equal(dialog.open, true);
-  assert.equal(byClass(dialog, 'arisu-browser-file').length, 0);
-  // the saved directories come from the settings, so they are there even when nothing listed
-  assert.deepEqual(
-    savedRows(dialog).map(([row]) => row.title),
-    ['/mnt/nas/refs'],
-  );
-  // the request itself fails (server unreachable) for a path typed into the field: same outcome
-  api.responses.push(new Error('offline'));
-  const pathField = byClass(dialog, 'arisu-browser-path')[0];
-  pathField.value = '/somewhere';
-  await pathField.onkeydown({ key: 'Enter' });
-  assert.deepEqual(query(api.calls[1].route), { path: '/somewhere' });
-  assert.deepEqual(toastSeverities(), ['error', 'error']);
-  // a typed directory outside every root still lists, and the tree grows a root for its chain, showing only that chain at the top
-  api.responses.push(
-    jsonResponse(
-      200,
-      listing(
-        '/opt/refs',
-        '/opt',
-        [],
-        ['r.png'],
-        [
-          { path: '/', dirs: ['opt'] },
-          { path: '/opt', dirs: ['comfy', 'refs'] },
-        ],
-      ),
-    ),
-  );
-  await pathField.onkeydown({ key: 'Enter' });
   assert.deepEqual(treeRows(dialog), [
-    ['/home/ray', false],
-    ['/mnt/nas', false],
-    ['/', true],
-    ['/opt', true],
-    ['/opt/comfy', false],
-    ['/opt/refs', true],
+    ['input:/', true],
+    ['output:/', false],
+    ['photos:/', false],
   ]);
-  assert.equal(treeRow(dialog, '/opt/refs').ariaCurrent, 'true');
-  // a press and a click both on the backdrop close the dialog
+  assert.equal(toastSeverities().at(-1), 'error');
+  api.responses.push(new Error('offline'));
+  await field.onkeydown({ key: 'Enter' });
+  assert.equal(toastSeverities().at(-1), 'error');
   dialog.onpointerdown({ target: dialog });
   dialog.onclick({ target: dialog });
   assert.equal(dialog.open, false);
-  // a saved path opens where the file lives; when that directory is gone the dialog falls back to the input directory
+  // Removed roots fail closed and the browser recovers at input without changing the workflow.
   resetApi();
-  const saved = makeLoadNode('/gone/broken.png');
-  api.responses.push(jsonResponse(404, { error: 'no such directory' }), jsonResponse(200, listing('/in', '/', [], ['broken.png'])));
-  await browseButton(saved).callback();
+  const removed = makeLoadNode('broken.png', 'removed');
+  api.responses.push(jsonResponse(400, { error: 'unknown root' }), jsonResponse(200, listing('input', '', null, [], ['broken.png'])));
+  await browseButton(removed).callback();
   assert.deepEqual(
     api.calls.map((call) => query(call.route)),
-    [{ path: '/gone/broken.png' }, { path: '' }],
+    [
+      { root: 'removed', path: 'broken.png' },
+      { root: 'input', path: '' },
+    ],
   );
-  // a preview that fails to load, whole and as a thumbnail, leaves no stale image on the node and warns once
-  await byClass(openDialog(), 'arisu-browser-file')[0].onclick();
-  assert.equal(saved.widgets[0].value, '/in/broken.png');
-  assert.equal(saved.imgs, undefined);
-  assert.deepEqual(toastSeverities().slice(-2), ['error', 'warn']);
+  dialog = openDialog();
+  await byClass(dialog, 'arisu-browser-file')[0].onclick();
+  assert.equal(removed.widgets[2].value, 'input');
+  assert.equal(removed.imgs, undefined);
+  assert.equal(toastSeverities().at(-1), 'warn');
 });

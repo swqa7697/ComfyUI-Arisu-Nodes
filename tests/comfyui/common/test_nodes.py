@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import folder_paths
 import numpy as np
 import pytest
 import torch
-from PIL import Image
+from PIL import EpsImagePlugin, Image, UnidentifiedImageError
 
+from src.arisu_nodes.common import paths
 from src.arisu_nodes.common.nodes import (
     ArisuExtractLastImages,
     ArisuLoadImage,
@@ -74,11 +76,12 @@ def test_load_image_decodes_like_the_stock_loader(tmp_path: Path, monkeypatch: p
     (image,) = ArisuLoadImage.execute(path="sub/a.png").args
     assert image.shape == (1, 4, 6, 3)
     assert torch.allclose(image[0, 0, 0], torch.tensor([1.0, 0.0, 0.0]))
-    # an absolute path outside the input directory
-    (image,) = ArisuLoadImage.execute(path=str(tmp_path / "elsewhere.jpg")).args
+    # An explicitly configured external directory works without copying files.
+    monkeypatch.setattr(paths, "external_roots", lambda: {"photos": str(tmp_path)})
+    (image,) = ArisuLoadImage.execute(path="elsewhere.jpg", root="photos").args
     assert image.shape == (1, 3, 5, 3)
     # every frame of an animation is one image of the batch
-    (image,) = ArisuLoadImage.execute(path=str(tmp_path / "anim.gif")).args
+    (image,) = ArisuLoadImage.execute(path="anim.gif", root="photos").args
     assert image.shape == (2, 2, 2, 3)
     # a crop, left,top,width,height in pixels, is cut from every frame after decoding, never resized: the whole image
     # is no crop, a box past the edge is cut to the image, and one outside it is an error
@@ -88,7 +91,7 @@ def test_load_image_decodes_like_the_stock_loader(tmp_path: Path, monkeypatch: p
     assert image.shape == (1, 4, 6, 3)
     (image,) = ArisuLoadImage.execute(path="sub/a.png", crop="4,2,10,10").args
     assert image.shape == (1, 2, 2, 3)
-    (image,) = ArisuLoadImage.execute(path=str(tmp_path / "anim.gif"), crop="0,0,1,1").args
+    (image,) = ArisuLoadImage.execute(path="anim.gif", root="photos", crop="0,0,1,1").args
     assert image.shape == (2, 1, 1, 3)
     with pytest.raises(ValueError):
         ArisuLoadImage.execute(path="sub/a.png", crop="6,0,1,1")
@@ -102,6 +105,28 @@ def test_load_image_decodes_like_the_stock_loader(tmp_path: Path, monkeypatch: p
     (tmp_path / "notes.txt").write_text("x")
     for bad in ["", "sub/missing.png", str(tmp_path / "notes.txt")]:
         assert isinstance(ArisuLoadImage.validate_inputs(path=bad), str), f"case={bad!r}"
+    # Direct execution, validation and cache fingerprinting all enforce containment.
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    Image.new("RGB", (2, 2)).save(outside / "secret.png")
+    (tmp_path / "input" / "escape.png").symlink_to(outside / "secret.png")
+    for bad in ["../outside/secret.png", "escape.png", str(tmp_path / "elsewhere.jpg"), "~/Pictures/a.png"]:
+        with pytest.raises(ValueError):
+            ArisuLoadImage.execute(path=bad)
+        assert isinstance(ArisuLoadImage.validate_inputs(path=bad), str), f"case={bad!r}"
+        assert ArisuLoadImage.fingerprint_inputs(path=bad) == bad
+    with pytest.raises(ValueError):
+        ArisuLoadImage.execute(path="sub/a.png", root="unknown")
+    assert ArisuLoadImage.validate_inputs(path="sub/a.png", root=None) is True
+    Image.new("RGB", (2, 2)).save(tmp_path / "input" / "document.png", format="EPS")
+
+    def refuse_interpreter(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("a document interpreter must never run")
+
+    monkeypatch.setattr(EpsImagePlugin, "Ghostscript", refuse_interpreter)
+    with pytest.raises(UnidentifiedImageError):
+        ArisuLoadImage.execute(path="document.png")
+
     # the cache key follows the file on disk
     assert ArisuLoadImage.fingerprint_inputs() is None
     before = ArisuLoadImage.fingerprint_inputs(path="sub/a.png")

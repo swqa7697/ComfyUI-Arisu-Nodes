@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Select Load Image locations only through Browse in the node UI, preserve hidden selections in workflows, and require reselection when loading legacy wired locations.
+
+### Security
+
+- Contain image loading and browsing within configured roots, preserving external libraries through a local JSON allowlist and requiring reselection of legacy absolute paths.
+- Prevent temp-preview and output-path symlink escapes, validate complete save batches before work, and create output files without overwriting existing targets.
+- Serve decoded raster previews instead of source files, reject SVG and disguised document formats, and keep internal errors and physical root paths out of HTTP responses.
+- Limit save requests to 1 MiB and 256 previews, and keep one save worker active until completion even after client cancellation.
+
 ## [1.1.0] - 2026-09-09
 
 ### Added

@@ -1,8 +1,7 @@
 # Load Image (Browse)
 
-Load one image from any path on the machine running ComfyUI, picked with the **browse** button or
-typed, and cropped with the **crop…** button if you like. Same file types as **Load Image**, one
-`image` output; nothing is uploaded or copied.
+Load an image beneath a server-configured directory using the **browse** button, and optionally
+crop it with **crop…**. The node returns one `image` output; nothing is uploaded or copied.
 
 ## Why
 
@@ -13,23 +12,40 @@ browser with thumbnails, remembers the picked path, and shows the image on the n
 
 ## Inputs
 
-| Parameter | Type   | Description                                                                                                                                                                                                                   |
-|-----------|--------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `path`    | STRING | The image file. Three forms: an absolute path (`/data/refs/a.png`), a `~` path (`~/Pictures/a.png`), or a path relative to ComfyUI's input directory (`sub/a.png`). The browse button fills it in; typing works too. |
-| `browse`  | button | Open the directory browser. It starts where `path` points, or in the input directory.                                                                                                                                       |
-| `crop…`   | button | Open the crop dialog on the picked file. The crop is kept with the workflow but shown only here and in the preview.                                                                                                        |
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `path` | hidden STRING | Image path relative to the selected root, such as `refs/a.png`. Stored by Browse; unavailable for typing or wiring in the UI. |
+| `root` | hidden COMBO | Directory ID stored by Browse; `input` by default. Select `input`, `output` or a configured external root inside the browser. |
+| `browse` | button | Open the directory browser at the selected file or root. |
+| `crop…` | button | Crop the image in a dialog. The crop is saved with the workflow. |
 
-The browser's left pane is a directory tree like a system file explorer's: its roots are your home
-directory and the mounted disks (USB drives, network shares), with **input dir** and **output dir**
-shortcuts above it. The tree opens expanded down to the current directory; click a folder to enter it,
-its chevron to expand it in place, and **collapse** to fold everything but the path you are in. The
-filesystem root and other users' homes are not listed, but a path typed into the path field (press
-Enter) opens anywhere and the tree grows a branch for it. The filter box narrows the images of the
-current directory by any part of their name; folders are never filtered. Click an image to pick it.
+The browser's tree contains only configured roots. Click a folder to enter it, its chevron to
+expand it, and **collapse** to fold everything but the current chain. The path field is relative
+to the selected root; **up** stops at that root. **input dir** and **output dir** switch roots.
+The filter narrows image names in the current directory. Click an image to select both its root
+and relative path. Nothing is uploaded or copied.
 
-**Saved** lists the directories you pinned: **+ save** adds the one you are in, a row opens it, and
-its **✕** forgets it. The list is kept in your ComfyUI user settings, so it follows you across
-browsers and reloads.
+**Saved** holds pinned `{root, path}` locations in your ComfyUI user settings. **+ save** pins a
+directory (including a root); its row opens it and **✕** forgets it. Bookmarks do not grant access.
+Legacy absolute bookmarks are not imported, and old absolute workflow paths must be reselected.
+Existing unlinked relative selections and crops remain saved with the workflow. When a workflow
+restores a wired `path` or `root`, the node disconnects those inputs, clears the selected path and
+crop, resets the root to `input`, and warns you to reselect with **browse**. Navigating directories
+alone does not change the selected image; click an image to select it.
+
+The machine owner can enable external disks or shares with `arisu_paths.json` beside the installed
+pack's root `__init__.py`, then restart ComfyUI:
+
+```json
+{"roots": {"photos": "/data/photos", "references": "/mnt/library/references"}}
+```
+
+Root IDs use lowercase letters, digits, `_` and `-`, beginning with a letter (maximum 64 characters).
+`input` and `output` are reserved. Values must be existing absolute directories, never filesystem
+roots. On Windows use paths such as `D:/Photos`. A missing file leaves only built-in roots enabled;
+an invalid file disables all external roots and logs a configuration error. This local file is not
+included in releases; keep a backup across reinstalls. Only configure image directories you intend
+clients of this ComfyUI server to access. No browser route or workflow can edit this allowlist.
 
 The crop dialog shows the picked file with a box over it. Drag on the image to draw a box, drag the
 box to move it, and pull its handles to resize it; the readout gives the box in pixels. The **ratio**
@@ -56,33 +72,26 @@ Load Image (Browse) ─▶ (first_frame) MiniMax H3 Hybrid to Video
 
 ## Notes
 
-- Accepted files are what **Load Image** accepts: any name whose type the interpreter's MIME table
-  calls an image (PNG, JPEG, WebP, GIF, BMP, TIFF, and so on). Animated files load as a batch; frames
-  of a different size than the first are skipped.
-- The run reads the file in place, so editing it on disk and queueing again loads the new pixels;
-  the node's cache key follows the file's size and modification time.
-- The crop is a hidden `crop` input, `left,top,width,height` in pixels of the upright image (after
-  the EXIF rotation, the way the preview shows it), blank for the whole image; it is saved with the
-  workflow and appears in the prompt JSON. It is cut from every frame after decoding. A box that
-  reaches past the image, say after the file was replaced by a smaller one, is cut to the image; a
-  box wholly outside it is a run error. The dialog needs the browser to decode the file itself to
-  know its size, so a format it cannot show, such as TIFF, cannot be cropped.
-- A missing file or a non-image type is reported when the prompt is validated, before anything runs.
-  When `path` is fed by a link, the linked value is used and the browse button only previews.
-- The browser and the preview are served by two routes the pack registers on ComfyUI's server,
-  `/arisu/browse` (folder and image names of a directory, with the tree roots and the chain to it)
-  and `/arisu/view` (an image file, or a thumbnail or crop of it). They can reach any directory the ComfyUI
-  process can read, which is the same trust ComfyUI already extends to whoever can reach its server;
-  hidden entries are skipped and only image-typed files are served. Mounted disks come from the
-  mount table (Linux), `/Volumes` (macOS) or the drive letters (Windows); nothing touches a mount
-  until you open it.
-- The size shown under the node's preview is the file's own: the preview loads the file itself and
-  falls back to a thumbnail only for a format the browser cannot decode, such as TIFF.
-- The buttons and the on-node preview are added by the pack's frontend script in the classic node
-  canvas. In the Vue node renderer ("Nodes 2.0") the buttons and their dialogs work but the node
-  shows no preview. If the buttons are missing, check the browser console for a failed load of
-  `load_image.js`.
-- The node has no `mask` output and its right-click menu has no **Open in MaskEditor** entry, although
-  ComfyUI adds one to every node that shows an image: the editor reads and writes through `input/` and
-  an `image` widget, neither of which fits a path read in place. To paint or load a mask, use
-  **Load Image** on a copy under `input/`.
+- Paths are resolved beneath the selected root, including symlink targets. Absolute paths, home
+  expansion, `..` components, drive/UNC paths, and escaping symlinks are rejected in both the
+  routes and node execution. Hidden entries are omitted from the browser.
+- Supported files are raster image types Pillow can decode (PNG, JPEG, WebP, GIF, TIFF, and others).
+  SVG, document formats such as EPS/WMF (even renamed), and undecodable content are refused. An animated file still loads all matching-size frames
+  into the node's output; browser previews show its first frame.
+- Full-size previews and the crop dialog receive decoded PNG pixels at the original upright size;
+  thumbnails receive bounded WebP. This also allows cropping TIFF images. Source metadata and
+  active document content are never served through the view route.
+- Editing the source file changes the node's cache key through its size and modification time.
+- The hidden `crop` input is `left,top,width,height` in pixels after EXIF rotation. It applies to
+  every frame. A crop reaching beyond an edge is clipped; one wholly outside the image is refused.
+  Picking a different file or changing roots clears the crop.
+- Browse-only selection is a UI restriction. API and workflow JSON still carry root-relative
+  values, which the server validates at execution, validation and fingerprinting. Hidden controls
+  and socket restrictions do not replace filesystem containment checks.
+- `/arisu/browse` and `/arisu/view` accept a root ID and relative path. Listings and errors do not
+  reveal physical root paths. Missing files return 404; invalid paths return 400; unsupported
+  image contents return 415. Unexpected errors stay in the server log.
+- In the classic canvas, the node shows its preview. In the Vue renderer ("Nodes 2.0"), the buttons
+  and dialogs work but the node shows no preview. Check the browser console if buttons are missing.
+- The node has no mask output or **Open in MaskEditor** menu entry. To paint a mask, use the stock
+  **Load Image** node with a copy under `input/`.

@@ -8,12 +8,14 @@ from __future__ import annotations
 
 import math
 import mimetypes
+import ntpath
 import os
 import os.path
 import posixpath
 import re
 import string
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 MAX_PATH_SEGMENTS = 16
@@ -38,19 +40,6 @@ MAX_THUMBNAIL = 4096
 # The crop widget: ``left,top,width,height`` in pixels, blank for the whole image.
 CROP_SEPARATOR = ","
 CROP_FORMAT_ERROR = "crop must be left,top,width,height in pixels"
-# The dialog's tree: the label of the home root, and what ``/proc/self/mounts``
-# entries are left out of the mounted-disk roots: kernel and desktop pseudo
-# filesystems (autofs placeholders too, since listing one triggers the mount),
-# and the mount prefixes nobody keeps images under, with the desktop's
-# removable-media directory carved back out. ``/home`` stays out because the
-# user's own home is already a root and other users are hidden.
-HOME_LABEL = "Home"
-PSEUDO_FILESYSTEMS = frozenset(
-    {"proc", "sysfs", "devtmpfs", "devpts", "tmpfs", "cgroup", "cgroup2", "squashfs", "overlay", "autofs", "nsfs", "fuse.portal"}
-)
-EXCLUDED_MOUNT_PREFIXES = ("/boot", "/dev", "/efi", "/home", "/proc", "/run", "/snap", "/sys", "/tmp", "/usr", "/var")
-USER_MEDIA_PREFIX = "/run/media"
-_MOUNT_ESCAPE = re.compile(r"\\([0-7]{3})")
 # Resize Image: the option lists its settings dialog shows (the resampling methods ComfyUI's own upscalers offer),
 # the size bounds, the ``[1, 64, 64]`` zeros ComfyUI's loaders emit for "no mask", and the pad colour forms.
 RESIZE_METHODS = ("nearest-exact", "bilinear", "area", "bicubic", "lanczos")
@@ -84,14 +73,6 @@ class SaveRequest:
 
 
 @dataclass(frozen=True)
-class TreeRoot:
-    """One top-level entry of the browse dialog's tree: its label and the directory it opens."""
-
-    label: str
-    path: str
-
-
-@dataclass(frozen=True)
 class TreeLevel:
     """One ancestor of a listed directory: its path and the subdirectory names the tree shows under it."""
 
@@ -103,9 +84,8 @@ class TreeLevel:
 class DirectoryListing:
     """One directory as the browse route reports it: its subdirectories and image files, by name.
 
-    ``ancestors`` is the chain from the tree root containing the directory (or
-    the filesystem root when none does) down to its parent, each with the
-    subdirectories the tree shows there; empty when the directory is a root.
+    All paths are relative to the selected configured root. ``ancestors``
+    stops at that root; it is empty when listing the root itself.
     """
 
     path: str
@@ -192,32 +172,66 @@ def tail_start(batch_size: int, count: int) -> int:
     return max(0, batch_size - count)
 
 
-def validate_save_path(path: Any) -> str:
-    """Check a save path is a filename prefix inside ComfyUI's output directory.
+def relative_path(value: Any, allow_empty: bool = False) -> str:
+    """Validate an untrusted path before normalization, using portable separators.
 
-    The prefix follows Save Image's ``filename_prefix`` rules (subfolders via
-    ``/``, a counter suffix added on save, ``%width%``-style placeholders). A
-    blank prefix would save as ``._00001_.png`` and an absolute or ``..`` path
-    would leave the output directory, so those are refused here, before
-    ``folder_paths.get_save_image_path`` sees them.
-
-    Args:
-        path: The value of the node's ``path`` widget.
-
-    Returns:
-        The path with surrounding whitespace removed.
-
-    Raises:
-        ValueError: If the path is not a string, is blank, is absolute, or
-            contains a ``..`` component.
+    Absolute and legacy home paths require reselection under a configured root.
+    Windows drives, device names, alternate streams and ambiguous trailing dots
+    are refused on every platform, including when a workflow crosses platforms.
     """
-    if not isinstance(path, str) or not path.strip():
+    if not isinstance(value, str):
+        raise TypeError("path must be a string")
+    value = value.strip()
+    if not value and not allow_empty:
         raise ValueError("path must not be blank")
-    path = path.strip()
-    normalized = posixpath.normpath(path.replace("\\", "/"))
-    if normalized.startswith("/") or os.path.isabs(path) or ".." in normalized.split("/"):
-        raise ValueError("path must stay inside ComfyUI's output directory: no absolute paths and no '..'")
-    return path
+    path = value.replace("\\", "/")
+    parts = path.split("/")
+    if (
+        "\x00" in path
+        or path.startswith(("/", "~"))
+        or ntpath.splitdrive(path)[0]
+        or ":" in path
+        or ".." in parts
+        or any(
+            part not in ("", ".") and (part.endswith((".", " ")) or re.fullmatch(r"(?i)(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\..*)?", part))
+            for part in parts
+        )
+    ):
+        raise ValueError("path must be relative to a configured root, without '..'; reselect legacy absolute paths with Browse")
+    normalized = posixpath.normpath(path)
+    if normalized == ".":
+        if not allow_empty:
+            raise ValueError("path must name a file")
+        return ""
+    return normalized
+
+
+def contained_path(base_dir: str, value: Any, allow_empty: bool = False) -> str:
+    """Resolve a relative path beneath a fixed base, including all symlink targets."""
+    relative = relative_path(value, allow_empty)
+    base = os.path.realpath(base_dir)
+    target = os.path.realpath(os.path.join(base, relative))
+    try:
+        inside = os.path.dirname(base) != base and os.path.commonpath((base, target)) == base
+    except ValueError:
+        inside = False
+    if not inside:
+        raise ValueError("path must stay inside its configured directory")
+    return target
+
+
+def validate_save_path(path: Any) -> str:
+    """Validate a filename prefix under ComfyUI's output directory."""
+    return relative_path(path)
+
+
+def expand_save_prefix(path: str, width: int, height: int, now: datetime) -> str:
+    """Expand stock Save Image placeholders before checking or creating directories."""
+    values = {"width": str(width), "height": str(height), "year": str(now.year)}
+    values.update({name: f"{getattr(now, name):02}" for name in ("month", "day", "hour", "minute", "second")})
+    for key, value in values.items():
+        path = path.replace(f"%{key}%", value)
+    return validate_save_path(path)
 
 
 def _preview_ref(entry: Any) -> PreviewRef:
@@ -256,6 +270,8 @@ def parse_save_request(payload: Any) -> SaveRequest:
     images = payload.get("images")
     if not isinstance(images, list) or not images:
         raise ValueError("no preview to save: run the workflow first")
+    if len(images) > 256:
+        raise ValueError("save at most 256 previews per request")
     upscale_model = payload.get("upscale_model", NO_UPSCALE)
     if not isinstance(upscale_model, str) or not upscale_model:
         raise ValueError("upscale_model must be a model name or 'none'")
@@ -267,38 +283,19 @@ def parse_save_request(payload: Any) -> SaveRequest:
 
 
 def preview_file_path(base_dir: str, ref: PreviewRef) -> str:
-    """Resolve a preview reference to a file under ``base_dir``, refusing to escape it.
-
-    Mirrors the checks of ComfyUI's ``/view`` endpoint: the filename may not be
-    absolute or contain ``..``, only its basename is used, and the subfolder
-    must resolve to a directory inside ``base_dir``.
-
-    Args:
-        base_dir: The absolute directory the folder type maps to (the temp directory).
-        ref: The preview as reported to the frontend.
-
-    Returns:
-        The absolute path of the preview file. Whether it exists is not checked here.
-
-    Raises:
-        ValueError: If the filename or subfolder would leave ``base_dir``.
-    """
-    if not ref.filename or ref.filename[0] == "/" or ".." in ref.filename:
-        raise ValueError(f"invalid preview filename {ref.filename!r}")
-    base_dir = os.path.abspath(base_dir)
-    folder = os.path.abspath(os.path.join(base_dir, ref.subfolder))
-    if os.path.commonpath((folder, base_dir)) != base_dir:
-        raise ValueError(f"invalid preview subfolder {ref.subfolder!r}")
-    return os.path.join(folder, os.path.basename(ref.filename))
+    """Resolve a temp preview, refusing traversal and file or directory symlink escapes."""
+    filename = relative_path(ref.filename)
+    if "/" in ref.filename or "\\" in ref.filename:
+        raise ValueError("preview filename must be a basename")
+    folder = relative_path(ref.subfolder, allow_empty=True)
+    return contained_path(base_dir, posixpath.join(folder, filename))
 
 
 def is_image_file(name: str) -> bool:
     """Whether ComfyUI's image loaders would list ``name``.
 
-    Mirrors ``folder_paths.filter_files_content_types(files, ["image"])`` for
-    one name: the guessed MIME type's major type is ``image``. There is no
-    fixed extension list; the interpreter's ``mimetypes`` table decides, as it
-    does for **Load Image**.
+    Uses the interpreter's MIME table, excluding active SVG content. Decoders
+    still validate file contents before pixels are loaded or served.
 
     Args:
         name: A file name or path; only the extension matters.
@@ -307,32 +304,12 @@ def is_image_file(name: str) -> bool:
         ``True`` for an image type, ``False`` for anything else or no known type.
     """
     mime_type, _ = mimetypes.guess_type(name, strict=False)
-    return mime_type is not None and mime_type.split("/")[0] == IMAGE_CONTENT_TYPE
+    return mime_type is not None and mime_type.split("/")[0] == IMAGE_CONTENT_TYPE and mime_type != "image/svg+xml"
 
 
 def resolve_image_path(value: Any, input_dir: str) -> str:
-    """Turn the ``path`` widget of **Load Image (Browse)** into an absolute file path.
-
-    Three forms are accepted: an absolute path, a ``~`` path, and a path
-    relative to ComfyUI's input directory (``sub/a.png``). Whether the file
-    exists is not checked here.
-
-    Args:
-        value: The widget value.
-        input_dir: ComfyUI's input directory, the base for relative paths.
-
-    Returns:
-        The normalized absolute path.
-
-    Raises:
-        ValueError: If the value is not a string or is blank.
-    """
-    if not isinstance(value, str) or not value.strip():
-        raise ValueError("path must not be blank")
-    path = os.path.expanduser(value.strip())
-    if not os.path.isabs(path):
-        path = os.path.join(input_dir, path)
-    return os.path.abspath(path)
+    """Resolve an image path relative to its selected, server-configured directory."""
+    return contained_path(input_dir, value)
 
 
 def parse_crop(value: Any) -> Optional[CropBox]:
@@ -394,222 +371,60 @@ def crop_box(crop: CropBox, size: Tuple[int, int]) -> Optional[Tuple[int, int, i
     return None if box == (0, 0, width, height) else box
 
 
-def is_filesystem_root(path: str) -> bool:
-    """Whether ``path`` is ``/`` or a drive root, the one directory that is its own parent."""
-    return os.path.dirname(path) == path
-
-
-def _under(path: str, prefix: str) -> bool:
-    """Whether ``path`` is ``prefix`` or inside it, by whole components (``/run`` never covers ``/runtime``)."""
-    return path == prefix or path.startswith(prefix.rstrip("/") + "/")
-
-
-def _unescape_mount(field: str) -> str:
-    """Decode the octal escapes ``/proc/self/mounts`` uses for space, tab, newline and backslash."""
-    return _MOUNT_ESCAPE.sub(lambda match: chr(int(match.group(1), 8)), field)
-
-
-def mount_points(mounts_text: str, home: str) -> Tuple[str, ...]:
-    """The mount points worth a tree root, from the content of ``/proc/self/mounts``.
-
-    Kept: every mount whose type is not a pseudo filesystem and whose point is
-    not the filesystem root, not ``home`` or one of its ancestors, and not under
-    ``EXCLUDED_MOUNT_PREFIXES`` (``USER_MEDIA_PREFIX`` excepted). Nothing here
-    touches the mount points themselves, so an unreachable share cannot block.
-
-    Args:
-        mounts_text: The file's content, one ``device point type options ...`` line per mount.
-        home: The current user's home directory.
-
-    Returns:
-        The kept mount points, deduplicated and sorted case-insensitively.
-    """
-    home = os.path.abspath(home)
-    kept = set()
-    for line in mounts_text.splitlines():
-        fields = line.split()
-        if len(fields) < 3 or fields[2] in PSEUDO_FILESYSTEMS:
-            continue
-        point = _unescape_mount(fields[1])
-        if is_filesystem_root(point) or _under(home, point):
-            continue
-        if any(_under(point, prefix) for prefix in EXCLUDED_MOUNT_PREFIXES) and not _under(point, USER_MEDIA_PREFIX):
-            continue
-        kept.add(point)
-    return tuple(sorted(kept, key=str.casefold))
-
-
-def tree_roots(home: str, mounts_text: Optional[str], volumes: Sequence[str], drives: Sequence[str]) -> Tuple[TreeRoot, ...]:
-    """Assemble the dialog's tree roots: the home directory first, then the mounted disks.
-
-    Args:
-        home: The current user's home directory.
-        mounts_text: The content of ``/proc/self/mounts`` on Linux, ``None`` elsewhere.
-        volumes: The mounted volumes on macOS (the entries of ``/Volumes`` other than the boot volume).
-        drives: The drive roots on Windows (``C:\\`` and so on).
-
-    Returns:
-        The roots; a mount or volume is labelled by its last path component, a drive by itself.
-    """
-    home = os.path.abspath(home)
-    roots = [TreeRoot(HOME_LABEL, home)]
-    disks = list(mount_points(mounts_text, home)) if mounts_text is not None else []
-    disks.extend(sorted(volumes, key=str.casefold))
-    roots.extend(TreeRoot(os.path.basename(disk) or disk, disk) for disk in disks)
-    roots.extend(TreeRoot(drive, drive) for drive in drives)
-    return tuple(roots)
-
-
-def is_restricted(path: str, roots: Sequence[str], home: str) -> bool:
-    """Whether the tree hides the subdirectories of ``path``.
-
-    Two directories are restricted: a filesystem root that is not itself a
-    tree root (``/``; Windows drives are roots), and the parent of the home
-    directory (``/home``, ``/Users``, ``C:\\Users``), which holds other users.
-
-    Args:
-        path: An absolute directory.
-        roots: The paths of the tree roots.
-        home: The current user's home directory.
-    """
-    return (is_filesystem_root(path) and path not in roots) or path == os.path.dirname(os.path.abspath(home))
-
-
-def containing_root(path: str, roots: Sequence[str]) -> Optional[str]:
-    """The deepest tree root holding ``path``, or ``None`` when no root does.
-
-    Args:
-        path: An absolute directory.
-        roots: The paths of the tree roots.
-    """
-    best: Optional[str] = None
-    for root in roots:
-        try:
-            inside = os.path.commonpath((root, path)) == os.path.normpath(root)
-        except ValueError:  # different drives on Windows
-            continue
-        if inside and (best is None or len(root) > len(best)):
-            best = root
-    return best
-
-
-def _scan(path: str) -> Tuple[List[str], List[str]]:
-    """The subdirectory and image file names of ``path``, unsorted; hidden (``.``) entries are skipped."""
+def _scan(path: str, base_dir: str) -> Tuple[List[str], List[str]]:
+    """List visible contained directories and image files, ignoring escaping links."""
     dirs: List[str] = []
     files: List[str] = []
     with os.scandir(path) as entries:
         for entry in entries:
             if entry.name.startswith("."):
                 continue
-            if entry.is_dir():
-                dirs.append(entry.name)
-            elif entry.is_file() and is_image_file(entry.name):
-                files.append(entry.name)
-    return dirs, files
+            try:
+                target = contained_path(base_dir, os.path.relpath(entry.path, base_dir))
+                if os.path.isdir(target):
+                    dirs.append(entry.name)
+                elif os.path.isfile(target) and is_image_file(entry.name):
+                    files.append(entry.name)
+            except (OSError, ValueError):
+                continue
+    return sorted(dirs, key=str.casefold), sorted(files, key=str.casefold)
 
 
-def _tree_level(path: str, child: str, restricted: bool) -> TreeLevel:
-    """The level for ``path`` with ``child``, the next directory down the chain, always present."""
-    dirs: List[str] = []
-    if not restricted:
-        try:
-            dirs, _ = _scan(path)
-        except PermissionError:
-            dirs = []
-    if child not in dirs:
-        dirs.append(child)
-    return TreeLevel(path, tuple(sorted(dirs, key=str.casefold)))
+def browse_directory(path: str, base_dir: str, with_tree: bool = True) -> DirectoryListing:
+    """List an already resolved location, stopping ancestors at its configured root.
 
-
-def _ancestors(path: str, roots: Sequence[str], home: str) -> Tuple[TreeLevel, ...]:
-    """The levels from the root containing ``path`` (or the filesystem root) down to its parent."""
-    top = containing_root(path, roots)
-    levels: List[TreeLevel] = []
-    current = path
-    while current != top and not is_filesystem_root(current):
-        parent = os.path.dirname(current)
-        levels.append(_tree_level(parent, os.path.basename(current), is_restricted(parent, roots, home)))
-        current = parent
-    return tuple(reversed(levels))
-
-
-def browse_directory(path: str, roots: Sequence[str], home: str, with_tree: bool = True) -> DirectoryListing:
-    """List the subdirectories and image files of ``path`` for the browse dialog.
-
-    A file path lists the directory holding it, so the dialog opens where the
-    widget's current value lives. Hidden entries (names starting with ``.``)
-    are skipped, only files passing ``is_image_file`` are reported, and both
-    lists are sorted case-insensitively. A restricted directory (see
-    ``is_restricted``) reports no subdirectories. With ``with_tree`` the
-    ancestor chain is scanned too; every level keeps the directory on the
-    chain even when it is hidden, restricted, or unreadable.
-
-    Args:
-        path: A directory, or a file inside the directory to list.
-        roots: The paths of the tree roots.
-        home: The current user's home directory.
-        with_tree: Whether to scan the ancestor chain; a request from the tree itself already has it.
-
-    Returns:
-        The listing; ``parent`` is ``None`` at a filesystem root.
-
-    Raises:
-        FileNotFoundError: If ``path`` does not exist.
-        NotADirectoryError: If ``path`` is neither a directory nor a file.
-        PermissionError: If the directory cannot be read.
+    Every returned path is relative to the selected root; the root itself is
+    the empty string and has no parent. A file lists its containing directory.
     """
-    path = os.path.abspath(path)
+    base = os.path.realpath(base_dir)
+    path = contained_path(base, os.path.relpath(path, base), allow_empty=True)
     if os.path.isfile(path):
         path = os.path.dirname(path)
-    dirs, files = _scan(path)
-    if is_restricted(path, roots, home):
-        dirs = []
-    parent = os.path.dirname(path)
-    return DirectoryListing(
-        path=path,
-        parent=None if parent == path else parent,
-        dirs=tuple(sorted(dirs, key=str.casefold)),
-        files=tuple(sorted(files, key=str.casefold)),
-        ancestors=_ancestors(path, roots, home) if with_tree else (),
-    )
+    dirs, files = _scan(path, base)
+    relative = os.path.relpath(path, base).replace(os.sep, "/")
+    relative = "" if relative == "." else relative
+    levels: List[TreeLevel] = []
+    current = relative
+    if with_tree:
+        while current:
+            parent = posixpath.dirname(current)
+            siblings, _ = _scan(contained_path(base, parent, allow_empty=True), base)
+            child = posixpath.basename(current)
+            if child not in siblings:
+                siblings.append(child)
+            levels.append(TreeLevel(parent, tuple(sorted(siblings, key=str.casefold))))
+            current = parent
+    return DirectoryListing(relative, posixpath.dirname(relative) if relative else None, tuple(dirs), tuple(files), tuple(reversed(levels)))
 
 
 def parse_browse_request(query: Mapping[str, str], input_dir: str) -> BrowseRequest:
-    """The directory a browse request asks for; the input directory when ``path`` is missing or blank.
-
-    Args:
-        query: The request's query parameters, ``path`` and optionally ``tree`` (``0`` skips the ancestor chain).
-        input_dir: ComfyUI's input directory, the dialog's starting point.
-
-    Returns:
-        The request, its path absolute and ``~`` expanded.
-    """
-    path = query.get("path", "").strip()
-    return BrowseRequest(
-        path=os.path.abspath(os.path.expanduser(path)) if path else os.path.abspath(input_dir),
-        with_tree=query.get("tree") != "0",
-    )
+    """Resolve a browse request under its selected root; blank means the root."""
+    return BrowseRequest(contained_path(input_dir, query.get("path", ""), allow_empty=True), query.get("tree") != "0")
 
 
-def parse_view_request(query: Mapping[str, str]) -> ViewRequest:
-    """Validate a view request: an absolute image path, an optional thumbnail bound and an optional crop.
-
-    Args:
-        query: The request's query parameters, ``path`` and optionally ``max`` and ``crop``.
-
-    Returns:
-        The request; ``max_size`` is clamped to ``[MIN_THUMBNAIL, MAX_THUMBNAIL]`` or ``None`` when absent,
-        ``crop`` is parsed by ``parse_crop``.
-
-    Raises:
-        ValueError: If ``path`` is missing, relative, or not an image type, ``max`` is not an integer,
-            or ``crop`` is malformed.
-    """
-    path = query.get("path", "").strip()
-    if not path or not os.path.isabs(path):
-        raise ValueError("path must be an absolute file path")
-    if not is_image_file(path):
-        raise ValueError(f"not an image file type: {os.path.basename(path)}")
+def parse_view_request(query: Mapping[str, str], input_dir: str) -> ViewRequest:
+    """Resolve a view request and validate its optional rendering parameters."""
+    path = resolve_image_path(query.get("path", ""), input_dir)
     crop = parse_crop(query.get("crop"))
     raw = query.get("max")
     if raw is None:

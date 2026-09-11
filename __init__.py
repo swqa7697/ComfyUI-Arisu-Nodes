@@ -8,6 +8,7 @@ from comfy_api.latest import ComfyExtension, io
 from server import PromptServer
 
 from .src.arisu_nodes.common.nodes import NODES as COMMON_NODES
+from .src.arisu_nodes.common.paths import external_roots
 from .src.arisu_nodes.common.routes import register_routes
 from .src.arisu_nodes.minimax_h3.nodes import NODES as MINIMAX_H3_NODES
 
@@ -27,6 +28,7 @@ class ArisuNodesExtension(ComfyExtension):
         ``instance`` attribute only exists once ComfyUI has built the server;
         the test lane imports the pack without one.
         """
+        external_roots()
         server = getattr(PromptServer, "instance", None)
         if server is not None:
             register_routes(server.routes)

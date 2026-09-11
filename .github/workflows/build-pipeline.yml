@@ -9,6 +9,9 @@ on:
       - main
       - dev
 
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: ${{ matrix.os }}
