@@ -112,11 +112,12 @@ function updateFilename(node) {
 function addFilename(node) {
   const label = el('div', {
     style:
-      'width: 100%; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg-color, #ddd); font-size: 13px; line-height: 24px;',
+      'width: 100%; min-width: 0; box-sizing: border-box; padding: 0 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg-color, #ddd); font-size: 13px; line-height: 24px;',
   });
   const widget = node.addDOMWidget('filename', 'arisu_filename', label, {
     serialize: false,
     socketless: true,
+    margin: 0,
     getMinHeight: () => 24,
     getMaxHeight: () => 24,
   });

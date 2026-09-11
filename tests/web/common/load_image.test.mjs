@@ -149,6 +149,11 @@ test('browse navigates configured roots, saves relative bookmarks, and selects a
   assert.equal(filenameRow(node).serialize, false);
   assert.equal(filenameRow(node).options.socketless, true);
   assert.equal(filenameRow(node).element.textContent, 'No image selected');
+  // ComfyUI subtracts the DOM widget's margin (10px by default) from both sides of its allocated height.
+  const filename = filenameRow(node);
+  const contentHeight = filename.options.getMinHeight() - 2 * (filename.options.margin ?? 10);
+  const lineHeight = Number.parseFloat(filename.element.style.match(/line-height:\s*([\d.]+)px/)[1]);
+  assert.ok(contentHeight >= lineHeight, 'the filename row must fit a full line without clipping');
   assert.ok(node.widgets.indexOf(filenameRow(node)) < node.widgets.indexOf(browseButton(node)));
   assert.equal(node.inputs.length, 0);
   assert.ok(node.widgets.slice(0, 3).every((widget) => widget.hidden && widget.options.hidden && widget.options.socketless));
