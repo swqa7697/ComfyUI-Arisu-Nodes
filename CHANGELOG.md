@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Add Codex project support with shared agent rules, a release PR skill, and a linked ComfyUI environment template.
+
 ## [1.1.1] - 2026-09-10
 
 ### Changed

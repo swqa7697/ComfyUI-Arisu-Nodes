@@ -2,6 +2,18 @@
 
 ComfyUI custom node pack on the V3 API (`comfy_entrypoint` + `io.Schema`). Python >=3.10 (developed on 3.13), uv-managed, `src` layout. ComfyUI imports the repo-root `__init__.py`. Nodes are grouped by family in `src/arisu_nodes/<family>/`: `core.py` is stdlib-only, `nodes.py` needs ComfyUI's source tree and torch. `README.md` is the human-facing guide; this file is for agents.
 
+## Agent integration
+
+Claude Code reads this file directly; Codex reads the root `AGENTS.md` symlink to it.
+Keep that symlink and edit this file for shared project rules. Codex discovers
+`.agents/skills/release-pr`, a relative symlink to `.claude/skills/release-pr`;
+edit the shared skill there. Invoke it as `/release-pr` in Claude Code or
+`$release-pr` in Codex. Both agents use the same ignored `.claude/comfyui-env.md`
+and its tracked template; do not create a second set of machine facts for Codex.
+Run development commands from this checkout. Personal Codex settings in `.codex/`
+are ignored; this project needs no model, credential, or permission overrides.
+Agent configuration and skills are excluded from the Registry archive.
+
 ## Hard boundary: the ComfyUI install at `$COMFYUI_PATH`
 
 `$COMFYUI_PATH` names a live ComfyUI install on the developer's machine, the one tree this repo must never write to. `make comfyui-path` prints the resolved path; this file never spells it out, and an unset `COMFYUI_PATH` means the live install, never "somewhere safe". Machine facts live in the untracked `.claude/comfyui-env.md` (template `.claude/comfyui-env.example.md`); read it if present, otherwise ask rather than guess. The install is an always-on user systemd unit on the only GPU (restarting it is the owner's test loop) and a uv project alive only because `uv run` syncs inexactly: one `uv sync` there removes every package, and with no `pip` in the `.venv` and a CUDA torch wheel from an index `requirements.txt` omits, a rebuild costs tens of minutes.
@@ -125,7 +137,7 @@ If you reach for an inline import for any other reason (avoiding work, hiding a 
 
 ## Git workflow and commits
 
-- Never `git add`, `git commit`, or `git push` unless explicitly asked; ask before planning one. `make release-commit`, `make tag`, and `/release-pr` all write to git, so the rule covers them.
+- Never `git add`, `git commit`, or `git push` unless explicitly asked; ask before planning one. `make release-commit`, `make tag`, and the release PR skill (`/release-pr` in Claude Code, `$release-pr` in Codex) all write to git, so the rule covers them.
 - Never commit directly to `main`: non-trivial work goes on a branch with a PR to `main`, and only the PR gate gates a merge (the ComfyUI lane workflow fires from the default branch only, never on a feature branch). Commit directly to `dev` only if the user has confirmed they are a repo admin; otherwise branch off `dev` and open a PR. `make tag` pushing `vX.Y.Z` from `main` is the one exception, and it pushes a tag, not a commit.
 - Conventional Commits: `<type>(<scope>): <summary>`, imperative, lowercase, no period, <=72 chars. Types: feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert. Scopes (optional): `nodes`, `core`, `tests`, `ci`, `docs`, `web`. Body: optional one-paragraph summary, then concise bullets, e.g. `feat(nodes): add BrightnessGate node` over `- Add mean-brightness gate with above/below modes` and `- Keep threshold clamping in core.py with unit tests`. The one exempt commit is the release commit, whose subject is fixed at `release arisu_nodes: X.Y.Z` by `release_subject` in `scripts/release_common.py`.
 
@@ -135,5 +147,5 @@ If you reach for an inline import for any other reason (avoiding work, hiding a 
 1. `git switch -c release/X.Y.Z` from an up-to-date `main`.
 2. `make bump-patch|minor|major` rewrites the version, renames `[Unreleased]` to `[X.Y.Z] - YYYY-MM-DD` with a new empty `[Unreleased]` above it, and runs `uv lock`; no git writes.
 3. `make release-commit [YES=1]` commits `release arisu_nodes: X.Y.Z` and pushes the branch; only `pyproject.toml`, `CHANGELOG.md`, and `uv.lock` may have changed.
-4. `/release-pr` opens `main <- release/X.Y.Z`; title from the commit, body from the changelog.
+4. `/release-pr` (Claude Code) or `$release-pr` (Codex) opens `main <- release/X.Y.Z`; title from the commit, body from the changelog.
 5. After the merge, on `main` at `origin/main`: `make tag` creates the annotated tag `vX.Y.Z` behind a rendered CAPTCHA and pushes it, triggering `publish_node.yml` (`REGISTRY_ACCESS_TOKEN`).

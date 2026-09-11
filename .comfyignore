@@ -14,6 +14,8 @@
 .comfyignore
 .github/
 .claude/
+.agents/
+.codex/
 .vscode/
 scripts/
 tests/

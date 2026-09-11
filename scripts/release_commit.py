@@ -1,7 +1,7 @@
 """Release commit on a release branch: commit the version bump and push.
 
 The subject is ``release arisu_nodes: X.Y.Z`` (``RELEASE_SUBJECT_RE`` in
-``release_common.py``); ``/release-pr`` validates it before opening the PR.
+``release_common.py``); the shared release PR skill validates it before opening the PR.
 
 Rejects when: on ``main``; nothing changed; anything other than ``pyproject.toml``,
 ``CHANGELOG.md``, or ``uv.lock`` changed; the version equals HEAD's; the
@@ -91,7 +91,7 @@ def main():
     git("commit", "--quiet", "-m", subject)
     git_passthrough("push", "-u", "origin", branch)
     ok(f"Pushed {git('rev-parse', '--short', 'HEAD')} to origin/{branch}: {subject}")
-    info("next: open the release PR with /release-pr")
+    info("next: open the release PR with /release-pr (Claude Code) or $release-pr (Codex)")
 
 
 if __name__ == "__main__":

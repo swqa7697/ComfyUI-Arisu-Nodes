@@ -236,6 +236,28 @@ rest: the `core.py` / `nodes.py` split every node follows, the rules that keep t
 small, the steps for adding a node, and the release flow. Release history is in
 [CHANGELOG.md](CHANGELOG.md).
 
+### Claude Code and Codex
+
+Open this checkout in either agent. Claude Code reads [CLAUDE.md](CLAUDE.md);
+Codex reads [AGENTS.md](AGENTS.md), which links to the same project rules.
+Both use the same Make targets and ComfyUI safety boundaries.
+
+For local ComfyUI checks, copy [.claude/comfyui-env.example.md](.claude/comfyui-env.example.md)
+to `.claude/comfyui-env.md` and fill in your machine facts. This ignored file is shared
+by both agents. Keep the checkout outside the live ComfyUI install; agent work must
+never modify that install or restart its service. Environments without ComfyUI can
+run `make install`, `make tidy`, `make lint test`, and `make build` in this checkout.
+
+After pushing a release branch through the documented release flow, invoke
+`/release-pr` in Claude Code or `$release-pr` in Codex to open its release PR.
+The skill requires `git` and authenticated GitHub CLI (`gh`). Codex discovers it
+through `.agents/skills/release-pr`, a symlink to the shared Claude skill; use
+`/skills` to find it, or restart Codex if it has not appeared. See the
+[official Codex skill documentation](https://learn.chatgpt.com/docs/build-skills)
+for discovery and invocation details. No project-specific Codex configuration is
+required; personal `.codex/` settings stay ignored. Agent files are excluded from
+Registry publishing.
+
 For VS Code, copy [.vscode/settings.example.jsonc](.vscode/settings.example.jsonc) to
 `.vscode/settings.json` and replace `/PATH/TO/ComfyUI` so Pylance can resolve `comfy_api` and torch;
 the Biome extension then formats the JavaScript from `biome.json`.

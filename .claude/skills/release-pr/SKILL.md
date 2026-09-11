@@ -1,9 +1,13 @@
 ---
 name: release-pr
-description: Open the `main <- release/X.Y.Z` release PR for ComfyUI-Arisu-Nodes — validates the release commit on the current branch's origin ref, writes a body from the CHANGELOG section and the diff, and opens it with gh. Use when the user says "release PR", "open the release", or "PR for the bump".
+description: Open the release PR from `release/X.Y.Z` into `main` for ComfyUI-Arisu-Nodes — validates the release commit on the current branch's origin ref, writes a body from the CHANGELOG section and the diff, and opens it with gh. Use when the user says "release PR", "open the release", or "PR for the bump".
 ---
 
 You are opening the release PR for ComfyUI-Arisu-Nodes: `main <- <current branch>`. Work only against `origin/*` refs — local branches may be stale. Never commit, push, checkout, or tag anything in this skill.
+
+Run from the repository root with `git` and an authenticated `gh` available.
+Claude Code invokes this skill as `/release-pr`; Codex invokes the same skill as
+`$release-pr` through `.agents/skills/release-pr`.
 
 ## Steps
 
@@ -49,7 +53,7 @@ git show origin/$BRANCH:CHANGELOG.md
 git log origin/main..origin/$BRANCH --no-merges --format='%h %s'
 git diff --stat origin/main origin/$BRANCH
 git diff origin/main origin/$BRANCH -- pyproject.toml
-git diff --name-status origin/main origin/$BRANCH -- __init__.py src/arisu_nodes/nodes.py web/docs
+git diff --name-status origin/main origin/$BRANCH -- __init__.py src/arisu_nodes web/docs
 ```
 
 The `## [X.Y.Z] - YYYY-MM-DD` section of the branch's `CHANGELOG.md`, where `X.Y.Z` is the version from the release commit subject, is the source of truth for the Added / Changed / Fixed bullets. Commit subjects fill gaps only.
@@ -81,7 +85,7 @@ Write the body to a scratch file (`--body-file`), following this template. Skip 
 - …
 
 ## Node changes
-- New or changed node ids (from `__init__.py` / `src/arisu_nodes/nodes.py`) and their `web/docs/<node_id>/en.md` pages, or "none".
+- New or changed node ids (from `__init__.py` / `src/arisu_nodes`) and their `web/docs/<node_id>/en.md` pages, or "none".
 - Runtime dependency changes in `pyproject.toml` `dependencies` (each needs the human-only `uv pip install` into the ComfyUI venv per CLAUDE.md), or "none".
 
 ## Release checklist

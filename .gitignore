@@ -115,6 +115,10 @@ node.zip
 .claude/*
 !.claude/skills/
 !.claude/comfyui-env.example.md
+.agents/*
+!.agents/skills/
+!.agents/comfyui-env.example.md
+.codex/
 
 # --- local additions ---
 .venv/
