@@ -15,7 +15,7 @@ classifiers = []
 dependencies = []
 
 [dependency-groups]
-dev = ["beautysh>=6.4.3", "mbake>=1.4.6", "pytest>=9.1.1", "ruff>=0.16.6", "uv-sort>=0.8.0"]
+dev = ["beautysh>=6.4.3", "mbake>=1.4.6", "pytest>=9.1.1", "ruff>=0.16.7", "uv-sort>=0.8.0"]
 
 [project.urls]
 Repository = "https://github.com/swqa7697/ComfyUI-Arisu-Nodes"

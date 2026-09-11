@@ -34,6 +34,11 @@ export function makeNode({ id, type, graph = null, widgets = [], inputs = [], ou
       this.widgets.push(widget);
       return widget;
     },
+    addDOMWidget(name, type, element, options) {
+      const widget = { name, type, element, options };
+      this.widgets.push(widget);
+      return widget;
+    },
     addCustomWidget(widget) {
       this.widgets.push(widget);
       return widget;

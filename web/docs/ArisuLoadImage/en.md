@@ -19,6 +19,9 @@ browser with thumbnails, remembers the picked path, and shows the image on the n
 | `browse` | button | Open the directory browser at the selected file or root. |
 | `crop…` | button | Crop the image in a dialog. The crop is saved with the workflow. |
 
+A read-only row above **browse** shows the selected filename, or “No image selected”. Long names
+are shortened with an ellipsis; hover to see the full filename.
+
 The browser's tree contains only configured roots. Click a folder to enter it, its chevron to
 expand it, and **collapse** to fold everything but the current chain. The path field is relative
 to the selected root; **up** stops at that root. **input dir** and **output dir** switch roots.
@@ -34,7 +37,7 @@ duplicated nodes, workflow insertion and workflow duplication clear the image an
 the root to `input`; reselect with **browse**. Matching imported IDs or filenames do not preserve
 selections, and unknown restoration contexts also reset. Saved bookmarks remain available.
 When a workflow restores a wired `path` or `root`, the node disconnects those inputs, clears the selected path and
-crop, resets the root to `input`, and warns you to reselect with **browse**. Navigating directories
+crop, and resets the root to `input`; reselect with **browse**. All selection resets are silent. Navigating directories
 alone does not change the selected image; click an image to select it.
 
 The machine owner can enable external disks or shares in `user/__arisu_nodes/config.arisu.jsonc`

@@ -97,19 +97,32 @@ const browserDialogs = new WeakMap();
 const knownWorkflows = new WeakSet();
 let loadContext;
 let loadQueue = Promise.resolve();
-let noticePending = false;
+const filenameLabels = new WeakMap();
 
-function requestReselection() {
-  if (loadContext) {
-    loadContext.cleared = true;
-    return;
-  }
-  if (noticePending) return;
-  noticePending = true;
-  queueMicrotask(() => {
-    noticePending = false;
-    toast('warn', 'Image selections were cleared. Reselect images with Browse.');
+/** Keep the informational row derived from the hidden selection, never serialized. */
+function updateFilename(node) {
+  const label = filenameLabels.get(node);
+  if (!label) return;
+  const path = pathWidget(node)?.value;
+  const filename = typeof path === 'string' ? path.trim().replaceAll('\\', '/').split('/').pop() : '';
+  label.textContent = filename || 'No image selected';
+  label.title = filename || '';
+}
+
+function addFilename(node) {
+  const label = el('div', {
+    style:
+      'width: 100%; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg-color, #ddd); font-size: 13px; line-height: 24px;',
   });
+  const widget = node.addDOMWidget('filename', 'arisu_filename', label, {
+    serialize: false,
+    socketless: true,
+    getMinHeight: () => 24,
+    getMaxHeight: () => 24,
+  });
+  widget.serialize = false;
+  filenameLabels.set(node, label);
+  updateFilename(node);
 }
 
 function invalidateSelection(node) {
@@ -120,7 +133,6 @@ function invalidateSelection(node) {
 }
 
 function clearSelection(node) {
-  const hadSelection = pathWidget(node)?.value || cropWidget(node)?.value || rootValue(node) !== 'input';
   invalidateSelection(node);
   if (pathWidget(node)) pathWidget(node).value = '';
   if (cropWidget(node)) cropWidget(node).value = '';
@@ -131,7 +143,7 @@ function clearSelection(node) {
   node.imageIndex = null;
   node.previewMediaType = undefined;
   node.setDirtyCanvas(true, true);
-  if (hadSelection) requestReselection();
+  updateFilename(node);
 }
 
 /** Sanitize a copy before the frontend can configure nodes, scan assets or construct API inputs. */
@@ -140,9 +152,6 @@ function clearImportedSelections(data) {
   function visit(value) {
     if (!value || typeof value !== 'object') return;
     if (value.type === NODE_TYPE && Array.isArray(value.widgets_values)) {
-      if (value.widgets_values[0] || value.widgets_values[1] || (value.widgets_values[2] && value.widgets_values[2] !== 'input')) {
-        requestReselection();
-      }
       value.widgets_values[0] = '';
       value.widgets_values[1] = '';
       value.widgets_values[2] = 'input';
@@ -150,7 +159,6 @@ function clearImportedSelections(data) {
       delete value.images;
     }
     if (value.class_type === NODE_TYPE && value.inputs) {
-      if (value.inputs.path || value.inputs.crop || value.inputs.root) requestReselection();
       Object.assign(value.inputs, { path: '', crop: '', root: 'input' });
     }
     for (const child of Object.values(value)) visit(child);
@@ -180,7 +188,7 @@ function installLoadGuards() {
         const workflow = method === 'loadGraphData' ? args[3] : undefined;
         const preserve = !!workflow && typeof workflow === 'object' && (workflow.isPersisted === true || knownWorkflows.has(workflow));
         invalidateGraph(app.rootGraph);
-        loadContext = { preserve, cleared: false };
+        loadContext = { preserve };
         try {
           if (!preserve && args[0]) args[0] = clearImportedSelections(args[0]);
           const result = await original.apply(this, args);
@@ -188,9 +196,7 @@ function installLoadGuards() {
           if (active && typeof active === 'object') knownWorkflows.add(active);
           return result;
         } finally {
-          const cleared = loadContext.cleared;
           loadContext = undefined;
-          if (cleared) requestReselection();
         }
       };
       // Keep provenance scoped to one load, including frontend awaits and failures.
@@ -238,7 +244,6 @@ function hideSelection(node) {
   }
   if (linked) {
     clearSelection(node);
-    requestReselection();
   }
 }
 
@@ -312,6 +317,7 @@ function loadImage(url) {
 
 /** Show the widgets' file, cropped as they say, on the node once it has loaded; a failed load leaves no stale image behind. */
 async function showPreview(node) {
+  updateFilename(node);
   const path = pathWidget(node)?.value?.trim();
   if (!path || !relativePath(path)) {
     previewTokens.set(node, {});
@@ -620,6 +626,7 @@ app.registerExtension({
     nodeType.prototype.onNodeCreated = function () {
       onNodeCreated?.apply(this, arguments);
       selectionTokens.set(this, {});
+      addFilename(this);
       addButton(this, 'browse', () => openBrowser(this));
       addButton(this, 'crop…', () => openCropper(this));
       hideSelection(this);

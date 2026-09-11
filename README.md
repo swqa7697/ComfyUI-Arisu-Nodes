@@ -98,7 +98,8 @@ roots. Absolute paths, `~`, `..` components, and symlinks leaving the selected r
 Older workflows using absolute paths must reselect their images with **Browse**; old absolute
 bookmarks are not imported.
 
-**Browse** is the only image-selection control in the node UI. The selected `root` and `path`
+**Browse** is the only image-selection control in the node UI. A read-only row above it shows
+the selected filename; hover over a shortened name to see it in full. Selection resets are silent. The selected `root` and `path`
 are hidden, saved with the workflow, and cannot be typed or wired. Loading a workflow with a
 linked `path` or `root` removes those links and clears the selection and crop; use **Browse** to
 reselect. Reopening a saved ComfyUI workflow, refreshing it, switching existing tabs, and undo/redo

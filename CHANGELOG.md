@@ -9,9 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Show the selected Load Image filename above Browse, with the full name available on hover.
+
 - Add Codex project support with shared agent rules, a release PR skill, and a linked ComfyUI environment template.
 
 ### Changed
+
+- Clear Load Image selections silently, including when removing legacy location wires.
 
 - Preserve Load Image selections when reopening saved workflows or existing tabs, and require Browse reselection after workflow imports, insertion, or node/workflow duplication.
 

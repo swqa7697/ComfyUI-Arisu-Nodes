@@ -92,6 +92,10 @@ function makeLoadNode(value, root = 'input') {
   return node;
 }
 
+function filenameRow(node) {
+  return node.widgets.find((widget) => widget.name === 'filename');
+}
+
 function browseButton(node) {
   return node.widgets.find((widget) => widget.name === 'browse');
 }
@@ -142,6 +146,10 @@ test('browse navigates configured roots, saves relative bookmarks, and selects a
   reset();
   const node = makeLoadNode('');
   assert.equal(browseButton(node).serialize, false);
+  assert.equal(filenameRow(node).serialize, false);
+  assert.equal(filenameRow(node).options.socketless, true);
+  assert.equal(filenameRow(node).element.textContent, 'No image selected');
+  assert.ok(node.widgets.indexOf(filenameRow(node)) < node.widgets.indexOf(browseButton(node)));
   assert.equal(node.inputs.length, 0);
   assert.ok(node.widgets.slice(0, 3).every((widget) => widget.hidden && widget.options.hidden && widget.options.socketless));
   api.responses.push(jsonResponse(200, listing('input', '', null, ['clips'], ['a.png'])));
@@ -209,6 +217,8 @@ test('browse navigates configured roots, saves relative bookmarks, and selects a
   node.widgets[1].value = '1,1,2,2';
   await byClass(dialog, 'arisu-browser-file')[0].onclick();
   assert.equal(node.widgets[0].value, 'refs/c.jpg');
+  assert.equal(filenameRow(node).element.textContent, 'c.jpg');
+  assert.equal(filenameRow(node).element.title, 'c.jpg');
   assert.equal(node.widgets[2].value, 'photos');
   assert.equal(node.widgets[1].value, '');
   assert.equal(openDialog(), undefined);
@@ -253,10 +263,10 @@ test('legacy paths require reselection, invalid bookmarks stay inert, and failed
       ['', '', 'input'],
     );
     assert.equal(linked.imgs, undefined);
-    assert.equal(toastSeverities().length, 1);
-    assert.equal(toastSeverities()[0], 'warn');
+    assert.deepEqual(toastSeverities(), []);
+    assert.equal(filenameRow(linked).element.textContent, 'No image selected');
     await LoadImage.prototype.onConfigure.call(linked);
-    assert.equal(toastSeverities().length, 1);
+    assert.deepEqual(toastSeverities(), []);
     reset();
   }
   settings['Arisu.LoadImage.SavedPaths'] = ['/mnt/old'];
@@ -265,7 +275,7 @@ test('legacy paths require reselection, invalid bookmarks stay inert, and failed
   node.imgs = [{}];
   await LoadImage.prototype.onConfigure.call(node);
   assert.equal(node.imgs, undefined);
-  assert.deepEqual(toastSeverities(), ['warn']);
+  assert.deepEqual(toastSeverities(), []);
   api.responses.push(jsonResponse(200, listing('input', '', null, [], [])));
   await browseButton(node).callback();
   let dialog = openDialog();
@@ -306,6 +316,7 @@ test('legacy paths require reselection, invalid bookmarks stay inert, and failed
   await byClass(dialog, 'arisu-browser-file')[0].onclick();
   assert.equal(removed.widgets[2].value, 'input');
   assert.equal(removed.imgs, undefined);
+  assert.equal(filenameRow(removed).element.textContent, 'broken.png');
   assert.equal(toastSeverities().at(-1), 'warn');
 });
 
@@ -342,8 +353,18 @@ test('workflow provenance preserves reopening and undo, while imports, paste and
     assert.ok(nodes.every((node) => node.imgs === undefined));
     assert.equal(receivedLoads.at(-1).definitions.subgraphs[0].nodes[0].widgets_values[0], '');
   }
-  assert.deepEqual(toastSeverities(), ['warn', 'warn', 'warn', 'warn']);
+  assert.deepEqual(toastSeverities(), []);
   assert.equal(source.nodes[0].widgets_values[0], 'private.png');
+  const longName = `${'image'.repeat(50)}<sample>.png`;
+  const [longNode] = await app.loadGraphData({ nodes: [serialized(`refs/${longName}`)] }, true, true, savedWorkflow);
+  assert.equal(filenameRow(longNode).element.textContent, longName);
+  assert.equal(filenameRow(longNode).element.title, longName);
+  longNode.addInput('path', 'STRING', { link: 9 });
+  await LoadImage.prototype.onConfigure.call(longNode);
+  assert.equal(longNode.inputs.length, 0);
+  assert.equal(filenameRow(longNode).element.textContent, 'No image selected');
+  assert.equal(filenameRow(longNode).element.title, '');
+  assert.deepEqual(toastSeverities(), []);
   // Concurrent requests cannot borrow a saved workflow's restoration context.
   const [retained, imported] = await Promise.all([
     app.loadGraphData(source, true, true, savedWorkflow),
