@@ -11,6 +11,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Add Codex project support with shared agent rules, a release PR skill, and a linked ComfyUI environment template.
 
+### Changed
+
+- Preserve Load Image selections when reopening saved workflows or existing tabs, and require Browse reselection after workflow imports, insertion, or node/workflow duplication.
+
+### Security
+
+- Move external image roots to protected `user/__arisu_nodes/config.arisu.jsonc`, support comments, and create an empty template on first startup without overwriting existing files; require manual migration from the old pack-local allowlist.
+- Clear imported image selections before previewing and prevent delayed previews or dialog results from restoring stale paths.
+
 ## [1.1.1] - 2026-09-10
 
 ### Changed

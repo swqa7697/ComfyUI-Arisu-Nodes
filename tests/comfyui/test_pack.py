@@ -16,6 +16,7 @@ from pathlib import Path
 from types import ModuleType
 from urllib.parse import urljoin, urlsplit
 
+import folder_paths
 import pytest
 from comfy_api.latest import ComfyExtension
 
@@ -54,9 +55,19 @@ def pack() -> ModuleType:
     return module
 
 
-def test_pack_loads_like_comfyui(pack: ModuleType):
+def test_pack_loads_like_comfyui(pack: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     extension = asyncio.run(pack.comfy_entrypoint())
     assert isinstance(extension, ComfyExtension)
+    # Startup must honor the configured user directory without touching the live install.
+    monkeypatch.setattr(folder_paths, "user_directory", str(tmp_path))
+    monkeypatch.setattr(pack.PromptServer, "instance", None, raising=False)
+    monkeypatch.setattr(sys.modules[pack.initialize_roots.__module__], "_roots", None)
+    asyncio.run(extension.on_load())
+    config = tmp_path / "__arisu_nodes" / "config.arisu.jsonc"
+    assert config.is_file()
+    original = config.read_bytes()
+    asyncio.run(extension.on_load())
+    assert config.read_bytes() == original
 
     nodes = asyncio.run(extension.get_node_list())
     # GET_SCHEMA is what ComfyUI calls at startup: it checks that define_schema

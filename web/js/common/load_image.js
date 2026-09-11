@@ -91,6 +91,115 @@ const STYLE = `
 const previewTokens = new WeakMap();
 /** The aspect ratio the crop dialog last showed, per node, as `{ path, ratio }` with the file it was chosen for; dropped when the node's file changes. */
 const cropRatios = new WeakMap();
+/** Dialog work belongs to one selection generation, never to a restored node. */
+const selectionTokens = new WeakMap();
+const browserDialogs = new WeakMap();
+const knownWorkflows = new WeakSet();
+let loadContext;
+let loadQueue = Promise.resolve();
+let noticePending = false;
+
+function requestReselection() {
+  if (loadContext) {
+    loadContext.cleared = true;
+    return;
+  }
+  if (noticePending) return;
+  noticePending = true;
+  queueMicrotask(() => {
+    noticePending = false;
+    toast('warn', 'Image selections were cleared. Reselect images with Browse.');
+  });
+}
+
+function invalidateSelection(node) {
+  selectionTokens.set(node, {});
+  previewTokens.set(node, {});
+  browserDialogs.get(node)?.close();
+  browserDialogs.delete(node);
+}
+
+function clearSelection(node) {
+  const hadSelection = pathWidget(node)?.value || cropWidget(node)?.value || rootValue(node) !== 'input';
+  invalidateSelection(node);
+  if (pathWidget(node)) pathWidget(node).value = '';
+  if (cropWidget(node)) cropWidget(node).value = '';
+  if (rootWidget(node)) rootWidget(node).value = 'input';
+  cropRatios.delete(node);
+  node.imgs = undefined;
+  node.images = undefined;
+  node.imageIndex = null;
+  node.previewMediaType = undefined;
+  node.setDirtyCanvas(true, true);
+  if (hadSelection) requestReselection();
+}
+
+/** Sanitize a copy before the frontend can configure nodes, scan assets or construct API inputs. */
+function clearImportedSelections(data) {
+  const copy = structuredClone(data);
+  function visit(value) {
+    if (!value || typeof value !== 'object') return;
+    if (value.type === NODE_TYPE && Array.isArray(value.widgets_values)) {
+      if (value.widgets_values[0] || value.widgets_values[1] || (value.widgets_values[2] && value.widgets_values[2] !== 'input')) {
+        requestReselection();
+      }
+      value.widgets_values[0] = '';
+      value.widgets_values[1] = '';
+      value.widgets_values[2] = 'input';
+      delete value.imgs;
+      delete value.images;
+    }
+    if (value.class_type === NODE_TYPE && value.inputs) {
+      if (value.inputs.path || value.inputs.crop || value.inputs.root) requestReselection();
+      Object.assign(value.inputs, { path: '', crop: '', root: 'input' });
+    }
+    for (const child of Object.values(value)) visit(child);
+  }
+  visit(copy);
+  return copy;
+}
+
+function invalidateGraph(graph, visited = new Set()) {
+  if (!graph || visited.has(graph)) return;
+  visited.add(graph);
+  for (const node of graph.nodes ?? graph._nodes ?? []) {
+    if (node.type === NODE_TYPE) invalidateSelection(node);
+  }
+  for (const subgraph of graph.subgraphs?.values() ?? []) invalidateGraph(subgraph, visited);
+}
+
+/** Load provenance comes from frontend-owned workflow objects, not serialized IDs or filenames. */
+function installLoadGuards() {
+  for (const method of ['loadGraphData', 'loadApiJson']) {
+    const original = app[method];
+    if (!original) continue;
+    app[method] = function (...args) {
+      const run = async () => {
+        const current = app.extensionManager?.workflow?.activeWorkflow;
+        if (current && typeof current === 'object') knownWorkflows.add(current);
+        const workflow = method === 'loadGraphData' ? args[3] : undefined;
+        const preserve = !!workflow && typeof workflow === 'object' && (workflow.isPersisted === true || knownWorkflows.has(workflow));
+        invalidateGraph(app.rootGraph);
+        loadContext = { preserve, cleared: false };
+        try {
+          if (!preserve && args[0]) args[0] = clearImportedSelections(args[0]);
+          const result = await original.apply(this, args);
+          const active = app.extensionManager?.workflow?.activeWorkflow;
+          if (active && typeof active === 'object') knownWorkflows.add(active);
+          return result;
+        } finally {
+          const cleared = loadContext.cleared;
+          loadContext = undefined;
+          if (cleared) requestReselection();
+        }
+      };
+      // Keep provenance scoped to one load, including frontend awaits and failures.
+      const result = loadQueue.then(run);
+      loadQueue = result.catch(() => {});
+      return result;
+    };
+  }
+}
 
 function toast(severity, detail) {
   app.extensionManager?.toast?.add?.({ severity, summary: 'Load Image (Browse)', detail, life: 8000 });
@@ -118,7 +227,7 @@ function formatCrop(rect, img) {
   return whole ? '' : [rect.x, rect.y, rect.w, rect.h].join(',');
 }
 
-/** Persist dialog-owned values without editable widgets or sockets; linked legacy locations need reselection. */
+/** Keep dialog-owned values socketless; linked legacy locations always require reselection. */
 function hideSelection(node) {
   const linked = node.inputs?.some((input) => [PATH_WIDGET, 'root'].includes(input.widget?.name ?? input.name) && input.link != null);
   for (const widget of [pathWidget(node), cropWidget(node), rootWidget(node)]) {
@@ -128,11 +237,8 @@ function hideSelection(node) {
     hideWidget(node, widget);
   }
   if (linked) {
-    pathWidget(node).value = '';
-    if (cropWidget(node)) cropWidget(node).value = '';
-    if (rootWidget(node)) rootWidget(node).value = 'input';
-    cropRatios.delete(node);
-    toast('warn', 'Linked image locations are no longer supported in the UI. Reselect this image with Browse.');
+    clearSelection(node);
+    requestReselection();
   }
 }
 
@@ -219,8 +325,9 @@ async function showPreview(node) {
   const token = {};
   previewTokens.set(node, token);
   // Full-resolution raster pixels preserve the caption size; a failed render gets a bounded retry.
-  const img =
-    (await loadImage(viewUrl(path, undefined, true, crop, root))) ?? (await loadImage(viewUrl(path, PREVIEW_MAX, true, crop, root)));
+  let img = await loadImage(viewUrl(path, undefined, true, crop, root));
+  if (previewTokens.get(node) !== token) return;
+  if (!img) img = await loadImage(viewUrl(path, PREVIEW_MAX, true, crop, root));
   if (previewTokens.get(node) !== token) return;
   if (img) {
     node.imgs = [img];
@@ -237,6 +344,7 @@ async function showPreview(node) {
 function pick(node, path, root) {
   const widget = pathWidget(node);
   if (!widget) return undefined;
+  invalidateSelection(node);
   const crop = cropWidget(node);
   if (widget.value !== path || rootValue(node) !== root) {
     if (crop) crop.value = '';
@@ -250,6 +358,7 @@ function pick(node, path, root) {
 
 /** Open the crop dialog on the picked file and keep its result in the hidden crop widget, and its ratio for next time. */
 async function openCropper(node) {
+  const selection = selectionTokens.get(node);
   const path = pathWidget(node)?.value?.trim();
   const crop = cropWidget(node);
   if (!path || !relativePath(path) || !crop) {
@@ -259,6 +368,7 @@ async function openCropper(node) {
   // Full-resolution raster pixels keep crop coordinates aligned with node execution.
   const root = rootValue(node);
   const img = await loadImage(viewUrl(path, undefined, true, '', root));
+  if (selectionTokens.get(node) !== selection) return;
   if (!img) {
     toast('warn', `Cannot crop ${path}: the browser cannot decode this file.`);
     return;
@@ -267,6 +377,7 @@ async function openCropper(node) {
   const remembered = cropRatios.get(node);
   if (remembered && (remembered.path !== path || remembered.root !== root)) cropRatios.delete(node);
   const { rect, ratio } = await cropImage(img, { rect: parseCrop(crop.value), ratio: cropRatios.get(node)?.ratio ?? '' });
+  if (selectionTokens.get(node) !== selection) return;
   cropRatios.set(node, { root, path, ratio });
   if (!rect || pathWidget(node)?.value?.trim() !== path || rootValue(node) !== root) return;
   setWidget(node, crop, formatCrop(rect, img));
@@ -274,6 +385,9 @@ async function openCropper(node) {
 }
 
 async function openBrowser(node) {
+  browserDialogs.get(node)?.close();
+  const selection = selectionTokens.get(node);
+  const isCurrent = () => selectionTokens.get(node) === selection && dialog.open;
   let listing = { root: rootValue(node), path: '', parent: null, dirs: [], files: [], ancestors: [] };
   let loaded = false;
   let navigation = 0;
@@ -316,6 +430,7 @@ async function openBrowser(node) {
     panes,
   ]);
   closeOnBackdropClick(dialog);
+  browserDialogs.set(node, dialog);
 
   function treeNode(root, path) {
     const key = locationKey(root, path);
@@ -427,6 +542,7 @@ async function openBrowser(node) {
           title: locationLabel(root, path),
           ariaCurrent: root === rootValue(node) && path === pathWidget(node)?.value?.trim() ? 'true' : null,
           onclick: () => {
+            if (!isCurrent()) return;
             dialog.close();
             return pick(node, path, root);
           },
@@ -439,12 +555,12 @@ async function openBrowser(node) {
   }
 
   async function navigate(root, path, withTree = true) {
-    if (path == null) return;
+    if (path == null || !isCurrent()) return;
     const token = ++navigation;
     panes.ariaBusy = 'true';
     try {
       const data = await fetchListing(root, path, withTree);
-      if (token !== navigation || !dialog.open) return;
+      if (token !== navigation || !isCurrent()) return;
       listing = data;
       loaded = true;
       absorb(data);
@@ -455,19 +571,22 @@ async function openBrowser(node) {
       renderSaved();
       renderTree();
     } catch (error) {
-      if (token === navigation) toast('error', `Cannot open directory: ${error.message}`);
+      if (token === navigation && isCurrent()) toast('error', `Cannot open directory: ${error.message}`);
     } finally {
       if (token === navigation) panes.ariaBusy = 'false';
     }
   }
 
   async function expand(root, path) {
+    if (!isCurrent()) return;
     const state = treeNode(root, path);
     if (!state.expanded && state.dirs == null) {
       try {
-        state.dirs = (await fetchListing(root, path, false)).dirs;
+        const data = await fetchListing(root, path, false);
+        if (!isCurrent()) return;
+        state.dirs = data.dirs;
       } catch (error) {
-        toast('error', `Cannot open directory: ${error.message}`);
+        if (isCurrent()) toast('error', `Cannot open directory: ${error.message}`);
         return;
       }
     }
@@ -491,6 +610,7 @@ async function openBrowser(node) {
 
 app.registerExtension({
   name: 'Arisu.Common.LoadImage',
+  init: installLoadGuards,
   // hidden: edited from the browse dialog, persisted per ComfyUI user by the frontend's settings store
   settings: [{ id: SAVED_PATHS_SETTING, name: 'Load Image (Browse): saved browse paths', type: 'hidden', defaultValue: [] }],
   beforeRegisterNodeDef(nodeType, nodeData) {
@@ -499,17 +619,29 @@ app.registerExtension({
     const onNodeCreated = nodeType.prototype.onNodeCreated;
     nodeType.prototype.onNodeCreated = function () {
       onNodeCreated?.apply(this, arguments);
+      selectionTokens.set(this, {});
       addButton(this, 'browse', () => openBrowser(this));
       addButton(this, 'crop…', () => openCropper(this));
       hideSelection(this);
     };
 
-    // configure() has restored the widget values, and the saved sockets, by the time it calls this: show the saved file again
+    // Only a full restoration of a known workflow may reuse serialized selections.
     const onConfigure = nodeType.prototype.onConfigure;
     nodeType.prototype.onConfigure = function () {
       onConfigure?.apply(this, arguments);
+      invalidateSelection(this);
       hideSelection(this);
+      if (!loadContext?.preserve || !app.configuringGraph) {
+        clearSelection(this);
+        return;
+      }
       return showPreview(this);
+    };
+
+    const onRemoved = nodeType.prototype.onRemoved;
+    nodeType.prototype.onRemoved = function () {
+      invalidateSelection(this);
+      return onRemoved?.apply(this, arguments);
     };
 
     // The frontend installs getExtraMenuOptions on every node class before extensions see it, and

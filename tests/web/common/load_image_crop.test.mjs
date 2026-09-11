@@ -235,4 +235,21 @@ test('the crop button opens a box over the picked file; drags, a ratio, apply an
   await cropButton(makeLoadNode('broken.png')).callback();
   assert.equal(openDialog(), undefined);
   assert.deepEqual(toastSeverities(), ['warn', 'warn']);
+  // An outstanding crop dialog cannot restore a selection or its remembered ratio after a paste/reset.
+  applied = cropButton(node).callback();
+  await settle();
+  dialog = openDialog();
+  chooseRatio(dialog, '1:1');
+  await LoadImage.prototype.onConfigure.call(node);
+  button(dialog, 'apply').onclick();
+  await applied;
+  assert.equal(node.widgets[0].value, '');
+  assert.equal(cropWidget(node).value, '');
+  assert.equal(node.imgs, undefined);
+  // Reset while the full-size crop image is loading must not open a dialog later.
+  node.widgets[0].value = 'c.png';
+  applied = cropButton(node).callback();
+  await LoadImage.prototype.onConfigure.call(node);
+  await applied;
+  assert.equal(openDialog(), undefined);
 });

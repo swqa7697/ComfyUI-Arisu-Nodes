@@ -28,24 +28,38 @@ and relative path. Nothing is uploaded or copied.
 **Saved** holds pinned `{root, path}` locations in your ComfyUI user settings. **+ save** pins a
 directory (including a root); its row opens it and **✕** forgets it. Bookmarks do not grant access.
 Legacy absolute bookmarks are not imported, and old absolute workflow paths must be reselected.
-Existing unlinked relative selections and crops remain saved with the workflow. When a workflow
-restores a wired `path` or `root`, the node disconnects those inputs, clears the selected path and
+Reopening a saved ComfyUI workflow, refreshing it, switching existing tabs, and undo/redo within
+that workflow preserve selections and crops. Imported JSON/PNG/API-format workflows, pasted or
+duplicated nodes, workflow insertion and workflow duplication clear the image and crop and reset
+the root to `input`; reselect with **browse**. Matching imported IDs or filenames do not preserve
+selections, and unknown restoration contexts also reset. Saved bookmarks remain available.
+When a workflow restores a wired `path` or `root`, the node disconnects those inputs, clears the selected path and
 crop, resets the root to `input`, and warns you to reselect with **browse**. Navigating directories
 alone does not change the selected image; click an image to select it.
 
-The machine owner can enable external disks or shares with `arisu_paths.json` beside the installed
-pack's root `__init__.py`, then restart ComfyUI:
+The machine owner can enable external disks or shares in `user/__arisu_nodes/config.arisu.jsonc`
+under ComfyUI's configured user directory, then restart ComfyUI. On first startup the pack creates
+a commented template with empty roots, without overwriting any existing file:
 
-```json
-{"roots": {"photos": "/data/photos", "references": "/mnt/library/references"}}
+```jsonc
+{
+  // Shared image libraries; use existing absolute directories.
+  "roots": {"photos": "/data/photos", "references": "/mnt/library/references"}
+}
 ```
+
+Both `//` and `/* ... */` comments are supported; trailing commas are not. Ordinary JSON also works.
+The old pack-local `arisu_paths.json` is ignored. Manually copy its root entries into the new
+template and restart; there is no automatic migration.
 
 Root IDs use lowercase letters, digits, `_` and `-`, beginning with a letter (maximum 64 characters).
 `input` and `output` are reserved. Values must be existing absolute directories, never filesystem
-roots. On Windows use paths such as `D:/Photos`. A missing file leaves only built-in roots enabled;
-an invalid file disables all external roots and logs a configuration error. This local file is not
-included in releases; keep a backup across reinstalls. Only configure image directories you intend
-clients of this ComfyUI server to access. No browser route or workflow can edit this allowlist.
+roots. On Windows use paths such as `D:/Photos`. A missing file becomes an empty template;
+creation/read errors, invalid configuration and symlinked configuration destinations disable
+external roots and log an error. The file survives pack reinstalls; keep a backup. Only configure
+image directories you intend clients of this ComfyUI server to access. The protected system-user
+directory is excluded from ComfyUI's public user-data API; workflows and browser settings cannot
+edit this allowlist.
 
 The crop dialog shows the picked file with a box over it. Drag on the image to draw a box, drag the
 box to move it, and pull its handles to resize it; the readout gives the box in pixels. The **ratio**

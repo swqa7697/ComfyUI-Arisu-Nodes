@@ -127,3 +127,4 @@ node.zip
 
 # Administrator-only image roots; never share machine paths
 /arisu_paths.json
+/config.arisu.jsonc

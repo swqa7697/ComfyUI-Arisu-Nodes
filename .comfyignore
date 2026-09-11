@@ -34,4 +34,5 @@ CLAUDE.md
 
 # Local authorization and security-review artifacts
 /arisu_paths.json
+/config.arisu.jsonc
 .tmp/

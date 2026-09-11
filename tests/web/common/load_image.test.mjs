@@ -22,6 +22,54 @@ extensionNamed('Arisu.Common.LoadImage').beforeRegisterNodeDef(LoadImage, { name
 
 const ROOTS = ['input', 'output', 'photos'].map((id) => ({ id, label: id }));
 const SAVED_SETTING = 'Arisu.LoadImage.SavedLocations';
+const receivedLoads = [];
+
+/** The frontend loads a serialized graph, configures nodes synchronously, then activates its workflow. */
+async function configureWorkflow(data, workflow) {
+  receivedLoads.push(data);
+  if (data.fail) throw new Error('load failed');
+  app.graph = app.rootGraph = makeGraph();
+  const nodes = [];
+  const previews = [];
+  function configure(graphData, graph) {
+    for (const saved of graphData.nodes ?? []) {
+      if (saved.type !== 'ArisuLoadImage') continue;
+      const node = makeLoadNode(saved.widgets_values[0], saved.widgets_values[2]);
+      node.graph = graph;
+      node.widgets[1].value = saved.widgets_values[1];
+      app.configuringGraph = true;
+      try {
+        previews.push(LoadImage.prototype.onConfigure.call(node));
+      } finally {
+        app.configuringGraph = false;
+      }
+      nodes.push(node);
+    }
+    for (const saved of graphData.definitions?.subgraphs ?? []) {
+      const subgraph = makeGraph(saved.id);
+      graph.subgraphs ??= new Map();
+      graph.subgraphs.set(saved.id, subgraph);
+      configure(saved, subgraph);
+    }
+  }
+  configure(data, app.graph);
+  await Promise.all(previews);
+  app.extensionManager.workflow.activeWorkflow = typeof workflow === 'object' && workflow ? workflow : { isPersisted: false };
+  return nodes;
+}
+app.loadGraphData = (data, _clean, _restoreView, workflow) => configureWorkflow(data, workflow);
+app.loadApiJson = (data) =>
+  configureWorkflow({
+    nodes: Object.values(data).map(({ class_type, inputs }) => ({
+      type: class_type,
+      widgets_values: [inputs.path, inputs.crop, inputs.root],
+    })),
+  });
+extensionNamed('Arisu.Common.LoadImage').init();
+
+function serialized(path = 'private.png', crop = '1,1,2,2', root = 'photos') {
+  return { type: 'ArisuLoadImage', id: 3, widgets_values: [path, crop, root] };
+}
 
 function listing(root, path, parent, dirs, files, ancestors = []) {
   return { root, path, parent, dirs, files, ancestors, roots: ROOTS };
@@ -87,6 +135,7 @@ function reset() {
   resetApp(makeGraph());
   resetApi();
   resetDom();
+  receivedLoads.length = 0;
 }
 
 test('browse navigates configured roots, saves relative bookmarks, and selects and previews an external image', async () => {
@@ -175,14 +224,11 @@ test('browse navigates configured roots, saves relative bookmarks, and selects a
   // Hidden values remain serialized in their original order and restore with no sockets.
   const values = node.widgets.filter((widget) => widget.serialize !== false).map((widget) => widget.value);
   assert.deepEqual(values, ['refs/c.jpg', '', 'photos']);
-  const restored = makeLoadNode(values[0], values[2]);
-  restored.widgets[1].value = '1,1,2,2';
-  await LoadImage.prototype.onConfigure.call(restored);
+  const [restored] = await app.loadGraphData({ nodes: [serialized(values[0], '1,1,2,2', values[2])] }, true, true, { isPersisted: true });
   assert.deepEqual(restored.inputs, []);
   assert.equal(query(restored.imgs[0].src).crop, '1,1,2,2');
-  // Reloading a workflow preserves root selection and all formats arrive as raster pixels.
-  const saved = makeLoadNode('scan.tif', 'photos');
-  await LoadImage.prototype.onConfigure.call(saved);
+  // Reopening a saved workflow preserves root selection and all formats arrive as raster pixels.
+  const [saved] = await app.loadGraphData({ nodes: [serialized('scan.tif', '', 'photos')] }, true, true, { isPersisted: true });
   assert.equal(query(saved.imgs[0].src).root, 'photos');
   assert.equal(query(saved.imgs[0].src).max, undefined);
   assert.deepEqual(toastSeverities(), []);
@@ -261,4 +307,123 @@ test('legacy paths require reselection, invalid bookmarks stay inert, and failed
   assert.equal(removed.widgets[2].value, 'input');
   assert.equal(removed.imgs, undefined);
   assert.equal(toastSeverities().at(-1), 'warn');
+});
+
+test('workflow provenance preserves reopening and undo, while imports, paste and stale async work require reselection', async () => {
+  reset();
+  const savedWorkflow = { isPersisted: true, path: 'mine.json' };
+  const source = {
+    id: 'same-workflow-id',
+    nodes: [serialized()],
+    definitions: { subgraphs: [{ id: 'nested', nodes: [serialized('nested.png')] }] },
+  };
+  // Saved reopening, tab switching, refresh and undo/redo all carry workflow objects.
+  for (const clean of [true, false, true]) {
+    const nodes = await app.loadGraphData(source, clean, true, savedWorkflow);
+    assert.deepEqual(
+      nodes.map((node) => node.widgets[0].value),
+      ['private.png', 'nested.png'],
+    );
+    assert.ok(nodes.every((node) => node.imgs?.length === 1));
+    assert.equal(nodes[0].widgets[1].value, '1,1,2,2');
+  }
+  // An unsaved tab is recognized by its frontend-owned object after it has been active.
+  const existingTab = { isPersisted: false };
+  app.extensionManager.workflow.activeWorkflow = existingTab;
+  await app.loadGraphData(source, true, true, savedWorkflow);
+  const [tab] = await app.loadGraphData(source, true, true, existingTab);
+  assert.equal(tab.widgets[0].value, 'private.png');
+  assert.deepEqual(toastSeverities(), []);
+
+  // Imported filenames/IDs (even an existing name), unknown objects and new duplicates grant no restoration context.
+  for (const identity of ['mine.json', 'image.png', null, { isPersisted: false, path: 'mine.json' }]) {
+    const nodes = await app.loadGraphData(source, true, true, identity);
+    assert.ok(nodes.every((node) => node.widgets[0].value === '' && node.widgets[1].value === '' && node.widgets[2].value === 'input'));
+    assert.ok(nodes.every((node) => node.imgs === undefined));
+    assert.equal(receivedLoads.at(-1).definitions.subgraphs[0].nodes[0].widgets_values[0], '');
+  }
+  assert.deepEqual(toastSeverities(), ['warn', 'warn', 'warn', 'warn']);
+  assert.equal(source.nodes[0].widgets_values[0], 'private.png');
+  // Concurrent requests cannot borrow a saved workflow's restoration context.
+  const [retained, imported] = await Promise.all([
+    app.loadGraphData(source, true, true, savedWorkflow),
+    app.loadGraphData(source, true, true, 'mine.json'),
+  ]);
+  assert.equal(retained[0].widgets[0].value, 'private.png');
+  assert.equal(imported[0].widgets[0].value, '');
+  assert.equal(imported[0].imgs, undefined);
+
+  // API-format imports also clear literal or linked inputs before the frontend builds any nodes.
+  const apiSource = { 3: { class_type: 'ArisuLoadImage', inputs: { path: ['4', 0], crop: '1,1,2,2', root: 'photos' } } };
+  const [apiNode] = await app.loadApiJson(apiSource);
+  assert.deepEqual(
+    apiNode.widgets.slice(0, 3).map((widget) => widget.value),
+    ['', '', 'input'],
+  );
+  assert.equal(apiNode.imgs, undefined);
+  assert.deepEqual(apiSource[3].inputs.path, ['4', 0]);
+  // A failed load must not leave restoration permission active for a later paste.
+  await assert.rejects(app.loadGraphData({ fail: true }, true, true, savedWorkflow), /load failed/);
+  const copied = makeLoadNode('private.png', 'photos');
+  copied.widgets[1].value = '1,1,2,2';
+  copied.imgs = [{}];
+  await LoadImage.prototype.onConfigure.call(copied);
+  assert.deepEqual(
+    copied.widgets.slice(0, 3).map((widget) => widget.value),
+    ['', '', 'input'],
+  );
+  assert.equal(copied.imgs, undefined);
+  const [reopened] = await app.loadGraphData(source, true, true, savedWorkflow);
+  assert.equal(reopened.widgets[0].value, 'private.png');
+
+  // Reset invalidates an already-open Browse dialog, including a retained click handler.
+  api.responses.push(jsonResponse(200, listing('photos', '', null, [], ['old.png'])));
+  await browseButton(reopened).callback();
+  const oldDialog = openDialog();
+  const click = byClass(oldDialog, 'arisu-browser-file')[0].onclick;
+  await LoadImage.prototype.onConfigure.call(reopened);
+  await click();
+  assert.equal(oldDialog.open, false);
+  assert.equal(reopened.widgets[0].value, '');
+  assert.equal(reopened.imgs, undefined);
+  // A late listing response must not start thumbnail loads or restore the previous selection.
+  let answer;
+  api.responses.push(
+    () =>
+      new Promise((resolve) => {
+        answer = resolve;
+      }),
+  );
+  const browsing = browseButton(reopened).callback();
+  await LoadImage.prototype.onConfigure.call(reopened);
+  answer(jsonResponse(200, listing('photos', '', null, [], ['old.png'])));
+  await browsing;
+  assert.equal(openDialog(), undefined);
+  assert.equal(reopened.widgets[0].value, '');
+
+  // A preview already loading at reset cannot return pixels or start a fallback request.
+  const OriginalImage = globalThis.Image;
+  const pending = [];
+  globalThis.Image = class {
+    set src(url) {
+      this.url = url;
+      pending.push(this);
+    }
+  };
+  try {
+    const loading = app.loadGraphData({ nodes: [serialized()] }, true, true, savedWorkflow);
+    await new Promise((resolve) => setImmediate(resolve));
+    const node = app.graph.nodes[0];
+    await LoadImage.prototype.onConfigure.call(node);
+    pending[0].onerror();
+    await loading;
+    assert.equal(pending.length, 1);
+    assert.equal(node.imgs, undefined);
+    assert.equal(node.widgets[0].value, '');
+    const before = pending.length;
+    await app.loadGraphData(source, true, true, 'mine.json');
+    assert.equal(pending.length, before);
+  } finally {
+    globalThis.Image = OriginalImage;
+  }
 });

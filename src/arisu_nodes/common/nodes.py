@@ -436,7 +436,7 @@ class ArisuLoadImage(io.ComfyNode):
                     default="input",
                     optional=True,
                     socketless=True,
-                    tooltip="The image directory selected inside Browse. External roots are set in arisu_paths.json.",
+                    tooltip="The image directory selected inside Browse. External roots are set in config.arisu.jsonc.",
                 ),
             ],
             outputs=[io.Image.Output("image", tooltip="The image, or every frame of an animated file as a batch.")],
