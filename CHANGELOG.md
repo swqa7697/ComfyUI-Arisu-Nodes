@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-09-10
+
 ### Changed
 
 - Select Load Image locations only through Browse in the node UI, preserve hidden selections in workflows, and require reselection when loading legacy wired locations.
