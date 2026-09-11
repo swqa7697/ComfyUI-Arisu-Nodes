@@ -17,6 +17,7 @@ const THUMBNAIL_MAX = 256;
 const SAVED_PATHS_SETTING = 'Arisu.LoadImage.SavedLocations';
 const DEFAULT_ROOT_SETTING = {
   id: 'Arisu.LoadImage.DefaultRoot',
+  category: ['Arisu Nodes', 'LoadImage'],
   name: 'Load Image (Browse): default location',
   type: 'combo',
   defaultValue: 'input',
@@ -142,7 +143,7 @@ function updateFilename(node) {
 function addFilename(node) {
   const label = el('div', {
     style:
-      'width: 100%; min-width: 0; box-sizing: border-box; padding: 0 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg-color, #ddd); font-size: 13px; line-height: 24px;',
+      'width: 100%; min-width: 0; box-sizing: border-box; padding: 0 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: center; color: var(--fg-color, #ddd); font-size: 13px; line-height: 24px;',
   });
   const widget = node.addDOMWidget('filename', 'arisu_filename', label, {
     serialize: false,

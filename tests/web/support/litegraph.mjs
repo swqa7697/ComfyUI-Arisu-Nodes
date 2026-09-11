@@ -52,7 +52,10 @@ export function makeNode({ id, type, graph = null, widgets = [], inputs = [], ou
     disconnectInput(index) {
       this.inputs[index].link = null;
     },
-    setSize() {},
+    setSize(size) {
+      this.size = size;
+      this.onResize?.(size);
+    },
     computeSize() {
       return this.size;
     },

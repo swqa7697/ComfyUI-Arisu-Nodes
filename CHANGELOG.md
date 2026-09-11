@@ -18,7 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Fix the selected Load Image filename being clipped above Browse.
+- Restore each Arisu node's saved dimensions when reopening a workflow, including manually minimized nodes.
 
 ## [1.1.2] - 2026-09-11
 

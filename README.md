@@ -112,7 +112,7 @@ The browser's path display is read-only; navigate with the tree, **up**, the **i
 directory; use its pencil button to rename it, or **✕** to remove it. Names are optional, and
 existing bookmarks remain available.
 
-In **ComfyUI Settings → Arisu → LoadImage**, **Load Image (Browse): default location** chooses
+In **ComfyUI Settings → Arisu Nodes → LoadImage**, **Load Image (Browse): default location** chooses
 where Browse starts when no image is selected. Choose `input` (the default), `output`, or a
 configured root; saved bookmarks are not choices. A selected image keeps its existing location,
 and an unavailable default falls back to `input`. Direct API execution
