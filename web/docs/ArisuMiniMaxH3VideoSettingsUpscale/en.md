@@ -21,6 +21,7 @@ Everything from **MiniMax H3 Video Settings** plus:
 | `upscale_factor` | FLOAT | The factor, for a latent upscaler's multiplier input.     |
 | `target_width`   | INT   | Upscaled width, a multiple of 32.                         |
 | `target_height`  | INT   | Upscaled height, a multiple of 32.                        |
+| `aspect_ratio` | COMBO | Exact ratio label, appended at output index 6. |
 
 ## Wiring
 
@@ -42,3 +43,7 @@ Video Settings (Upscale) ─ width / height / length ─▶ (width / height / le
   `target_width` / `target_height` into it.
 - Advertising and its limits are the same as for **MiniMax H3 Video Settings**: root graph only,
   one advertiser per graph, greyed widgets refuse links.
+
+## Resource Studio integration
+
+The appended `aspect_ratio` combo output connects to **MiniMax H3 Resource Studio**; existing output indexes are unchanged. Advertising also owns Studio's aspect selector, dropping its wire and applying the effective ratio. Keyframes are auto-cropped when that ratio changes. API exports include the same dependencies as queueing; a missing active source rejects the prompt instead of falling back to local values. Advertising is root-graph only; use explicit wires in subgraphs.

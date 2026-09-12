@@ -70,3 +70,9 @@ sure its multiplier lands on them after its 32-pixel alignment.
   crop in the second pass.
 - Keyframes added later by **Add Guide for MiniMax H3** or a motion-context node are not covered;
   add them against the latent of the pass they belong to.
+
+## Resource Studio input
+
+Connect the optional `resources` input from **MiniMax H3 Resource Studio**, or enable Studio's root-graph advertising. Bundle ownership hides and disconnects individual keyframe/reference inputs. While advertising, `resources` remains visible but disabled and disconnected. Releasing ownership restores empty sockets; Undo can restore the previous wires. Direct API calls cannot combine a bundle with populated individual resource inputs.
+
+An empty bundle intentionally supplies no resources. Hybrid validates source revisions, reads original cropped pixels, and performs consumer-specific resizing. It samples selected videos at 24 fps, caps them to generation length, and aligns down to `17k+5`; paired audio follows the effective video interval. Standalone audio keeps its own selection. Muted sources are excluded, and an audio VAE is needed only when active resources emit audio. The Advanced variant derives each distinct canvas directly from original cropped pixels.

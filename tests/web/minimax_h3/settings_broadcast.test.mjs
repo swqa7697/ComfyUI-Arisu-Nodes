@@ -19,11 +19,14 @@ const TARGET_KEYS = ['target_width', 'target_height'];
 
 const extension = extensionNamed('Arisu.MiniMaxH3.SettingsBroadcast');
 const prototypes = {};
-for (const name of [SETTINGS, SETTINGS_UPSCALE, HYBRID, HYBRID_ADVANCED]) {
+for (const name of [SETTINGS, SETTINGS_UPSCALE, HYBRID, HYBRID_ADVANCED, 'ArisuMiniMaxH3ResourceStudio']) {
   const nodeType = { prototype: {} };
   extension.beforeRegisterNodeDef(nodeType, { name });
   prototypes[name] = nodeType.prototype;
 }
+app.graphToPrompt = async function () {
+  return structuredClone(this.promptForTest);
+};
 extension.setup();
 
 function keysOf(type) {
@@ -107,13 +110,17 @@ test('one settings node advertises at a time: a later switch wins, a pasted one 
   app.configuringGraph = true;
   const kept = addSettings(loaded, 1, SETTINGS_UPSCALE, true);
   const demoted = addSettings(loaded, 2, SETTINGS, true);
-  const advanced = addHybrid(loaded, 3, HYBRID_ADVANCED);
+  const advanced = addHybrid(loaded, 3, HYBRID_ADVANCED, ['width']);
+  // Do not mutate partially configured workflow links before restoration finishes.
+  assert.deepEqual(linkedInputs(advanced), ['width']);
+  assert.deepEqual(disabledWidgets(advanced), []);
   assert.equal(advertiseWidget(demoted).value, true);
   app.configuringGraph = false;
   extension.afterConfigureGraph();
   assert.equal(advertiseWidget(kept).value, true);
   assert.equal(advertiseWidget(demoted).value, false);
   assert.deepEqual(disabledWidgets(advanced), [...SIZE_KEYS, ...TARGET_KEYS]);
+  assert.deepEqual(linkedInputs(advanced), []);
 });
 
 test('the handed-over widgets are the keys both nodes carry: greyed, unlinked, and released when the advertiser leaves', async () => {
@@ -175,7 +182,7 @@ test("a link into a handed-over widget is refused, and chained hooks keep either
   assert.equal(allowing.prototype.onConnectInput.call(plain, inputIndex(plain, 'width')), true);
 });
 
-test("queueing a prompt points the handed-over widgets at the advertiser's outputs, or warns when it is not in the run", async () => {
+test("queueing a prompt points the handed-over widgets at the advertiser's outputs, and rejects a missing source", async () => {
   const graph = makeGraph();
   resetApp(graph);
   resetApi();
@@ -212,11 +219,76 @@ test("queueing a prompt points the handed-over widgets at the advertiser's outpu
   assert.equal(api.queued[0].prompt.output, output);
   // the advertiser is not in the run (muted or bypassed): nothing is injected, one warning
   const without = { [hybrid.id]: entry({ width: 1 }), [advanced.id]: entry({ width: 1 }) };
-  await api.queuePrompt(0, { output: without });
+  await assert.rejects(api.queuePrompt(0, { output: without }), /absent/);
   assert.deepEqual(without[hybrid.id].inputs, { width: 1 });
   assert.deepEqual(without[advanced.id].inputs, { width: 1 });
-  assert.deepEqual(toastSeverities(), ['warn']);
+  assert.deepEqual(toastSeverities(), []);
   // a call without a prompt passes straight through
   await api.queuePrompt(0, undefined);
-  assert.equal(api.queued.length, 3);
+  assert.equal(api.queued.length, 2);
+  // Both ownership categories coexist, and API exports contain real dependencies.
+  resetApp(makeGraph());
+  resetApi();
+  const root = app.graph;
+  const studio = makeNode({
+    id: 10,
+    type: 'ArisuMiniMaxH3ResourceStudio',
+    graph: root,
+    widgets: [
+      { name: 'advertise', value: false },
+      { name: 'aspect_ratio', value: '16:9 (Widescreen)' },
+    ],
+    outputs: ['resources'],
+  });
+  const studioHooks = prototypes[studio.type];
+  studioHooks.onAdded.call(studio);
+  const consumer = makeNode({
+    id: 11,
+    type: HYBRID,
+    graph: root,
+    widgets: SIZE_KEYS.map((name) => ({ name, value: 64 })),
+    inputs: [
+      { name: 'clip', link: 90 },
+      { name: 'first_frame', link: 91 },
+      { name: 'ref_images.ref_image_0', link: 92 },
+      { name: 'resources' },
+    ],
+  });
+  prototypes[HYBRID].onAdded.call(consumer);
+  flip(studio, true);
+  assert.equal(consumer.inputs.find((input) => input.name === 'resources').disabled, true);
+  assert.equal(prototypes[HYBRID].onConnectInput.call(consumer, inputIndex(consumer, 'resources')), false);
+  app.promptForTest = {
+    workflow: { links: [] },
+    output: {
+      10: { class_type: studio.type, inputs: {} },
+      11: { class_type: HYBRID, inputs: { clip: ['90', 0], 'ref_images.ref_image_0': ['92', 0] } },
+    },
+  };
+  const exported = await app.graphToPrompt();
+  assert.deepEqual(exported.output[11].inputs, { clip: ['90', 0], resources: ['10', 0] });
+  assert.deepEqual(exported.workflow.links, []);
+  assert.deepEqual(
+    consumer.inputs.map((input) => input.name),
+    ['clip', 'resources'],
+  );
+  await api.queuePrompt(0, exported);
+  assert.deepEqual(exported.output[11].inputs.resources, ['10', 0]);
+  studio.mode = 2;
+  assert.equal(consumer.inputs.find((input) => input.name === 'resources').disabled, false);
+  assert(consumer.inputs.some((input) => input.name === 'first_frame' && input.link === null));
+  assert.equal(consumer.inputs.find((input) => input.name === 'clip').link, 90);
+  studio.mode = 0;
+  await app.graphToPrompt();
+  flip(studio, false);
+  assert(consumer.inputs.some((input) => input.name === 'ref_images.ref_image_0'));
+  // An explicit source pruned by the serializer is an error, never an empty bundle.
+  root.links = { 100: { origin_id: 10 } };
+  consumer.inputs.find((input) => input.name === 'resources').link = 100;
+  app.promptForTest = { workflow: { links: [] }, output: { 11: { class_type: HYBRID, inputs: {} } } };
+  await assert.rejects(app.graphToPrompt(), /explicitly connected/);
+  consumer.inputs.find((input) => input.name === 'resources').link = null;
+  flip(studio, true);
+  app.promptForTest = { workflow: { links: [] }, output: { 10: { inputs: { upstream: ['11', 0] } }, 11: { inputs: {} } } };
+  await assert.rejects(app.graphToPrompt(), /cycle/);
 });

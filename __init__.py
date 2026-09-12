@@ -14,6 +14,7 @@ from .src.arisu_nodes.common.nodes import NODES as COMMON_NODES
 from .src.arisu_nodes.common.paths import initialize_roots
 from .src.arisu_nodes.common.routes import register_routes
 from .src.arisu_nodes.minimax_h3.nodes import NODES as MINIMAX_H3_NODES
+from .src.arisu_nodes.minimax_h3.routes import register_routes as register_resource_routes
 
 __all__ = ["WEB_DIRECTORY", "comfy_entrypoint"]
 
@@ -35,6 +36,7 @@ class ArisuNodesExtension(ComfyExtension):
         server = getattr(PromptServer, "instance", None)
         if server is not None:
             register_routes(server.routes)
+            register_resource_routes(server.routes, getattr(server, "app", None))
 
     async def get_node_list(self) -> List[Type[io.ComfyNode]]:
         """List every node class in the pack.

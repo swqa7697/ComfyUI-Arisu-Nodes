@@ -155,7 +155,7 @@ function ratioChoice(text) {
  * the whole image) with the aspect ratio `initial.ratio` (a `w:h` text, blank for free); resolves to `{ rect, ratio }`,
  * `rect` being the applied box or `null` when the dialog is cancelled, and `ratio` the text the bar ended on.
  */
-export function cropImage(img, initial) {
+export function cropImage(img, initial, options = {}) {
   const bounds = { w: img.naturalWidth, h: img.naturalHeight };
   let rect = initial.rect ? clampRect(initial.rect, bounds) : fullRect(bounds);
   let ratioText = initial.ratio ?? '';
@@ -200,6 +200,22 @@ export function cropImage(img, initial) {
       ratioParts[1],
       readout,
       el('button', { textContent: 'reset', title: 'the whole image at a free ratio: no crop', onclick: reset }),
+      ...(options.aspectRatio
+        ? [
+            el('button', {
+              textContent: 'auto-crop',
+              onclick: () => {
+                const [rw, rh] = options.aspectRatio.split(' ')[0].split(':').map(Number);
+                const w = Math.max(1, Math.min(bounds.w, Math.floor((bounds.h * rw) / rh)));
+                const h = Math.max(1, Math.min(bounds.h, Math.floor((bounds.w * rh) / rw)));
+                ratioText = `${rw}:${rh}`;
+                ratio = rw / rh;
+                showRatio();
+                show({ x: Math.floor((bounds.w - w) / 2), y: Math.floor((bounds.h - h) / 2), w, h });
+              },
+            }),
+          ]
+        : []),
       el('button', { textContent: 'cancel', onclick: () => dialog.close() }),
       el('button', { className: 'arisu-cropper-apply', textContent: 'apply', onclick: apply }),
     ]),
@@ -294,6 +310,7 @@ export function cropImage(img, initial) {
     };
     document.body.append(dialog);
     dialog.showModal();
+    options.signal?.addEventListener('abort', () => dialog.close(), { once: true });
     showRatio();
     show(rect);
   });

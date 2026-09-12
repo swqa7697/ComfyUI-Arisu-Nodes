@@ -12,6 +12,11 @@ export class FakeElement {
     this.children = [];
     this.parent = null;
     this.open = false;
+    this.style = {};
+    this.dataset = {};
+    this.listeners = new Map();
+    this.currentTime = 0;
+    this.paused = true;
     // a form control's value is an empty string until something is typed, never undefined
     if (this.tagName === 'INPUT') this.value = '';
   }
@@ -29,6 +34,23 @@ export class FakeElement {
     if (this.parent) this.parent.children = this.parent.children.filter((child) => child !== this);
     this.parent = null;
   }
+  get lastChild() {
+    return this.children.at(-1);
+  }
+  addEventListener(name, callback) {
+    this.listeners.set(name, [...(this.listeners.get(name) ?? []), callback]);
+  }
+  removeAttribute(name) {
+    delete this[name];
+  }
+  pause() {
+    this.paused = true;
+  }
+  async play() {
+    this.paused = false;
+    this.onplay?.();
+  }
+  load() {}
   setAttribute(name, value) {
     this[name] = value;
   }

@@ -7,13 +7,18 @@ without loading any model. Run via ``scripts/test-comfyui.sh``.
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import Any, Dict, Tuple
 
 import pytest
 import torch
 from comfy_api.latest import io
+from PIL import Image
 
-from src.arisu_nodes.minimax_h3.core import video_latent_t
+from src.arisu_nodes.minimax_h3 import nodes as h3
+from src.arisu_nodes.minimax_h3.core import EMPTY_RESOURCES, video_latent_t
+from src.arisu_nodes.minimax_h3.media import StaleResource
 from src.arisu_nodes.minimax_h3.nodes import ArisuMiniMaxH3HybridToVideo, ArisuMiniMaxH3HybridToVideoAdvanced
 from tests.support.comfy import StubAudioVae, StubClip, StubVae, audio_input, image
 
@@ -186,3 +191,53 @@ def test_advanced_sizes_a_large_reference_per_canvas_under_match_and_shares_it_u
     positive, _latent, upscaled = result
     assert positive[0][1]["minimax_refs"][0] is upscaled[0][1]["minimax_refs"][0]
     assert len(kwargs["vae"].encoded) == 1
+
+
+def test_studio_bundles_originals_and_rejects_invalid_or_conflicting_resources(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(h3, "_resource_roots", lambda: {"input": str(tmp_path)})
+    Image.new("RGB", (81, 61), "red").save(tmp_path / "frame.png")
+    state = json.loads(EMPTY_RESOURCES)
+    first = {"id": "first", "kind": "image", "root": "input", "path": "frame.png", "muted": False, "crop": None, "crop_basis_ratio": None}
+    state["keyframes"]["first"] = first
+    state["references"] = [
+        {"id": "missing", "kind": "image", "root": "input", "path": "missing.png", "muted": True, "crop": None},
+        {"id": "ref", "kind": "image", "root": "input", "path": "frame.png", "muted": False, "crop": None},
+    ]
+    studio = h3.ArisuMiniMaxH3ResourceStudio
+    text = json.dumps(state)
+    result = studio.execute("16:9 (Widescreen)", False, text)
+    bundle = result[0]
+    assert bundle.first.crop == (0, 8, 81, 45)
+    assert [item.id for item in bundle.images] == ["ref"]
+    assert not hasattr(bundle.first, "tensor")
+    clip, output = _run(resources=bundle, width=64, height=64)
+    assert len(_cond_values(output)["minimax_refs"]) == 1
+    assert len(clip.tokenize_kwargs["minimax_ref_items"]) == 2
+    with pytest.raises(ValueError, match="combined"):
+        _run(resources=bundle, first_frame=image(32, 32))
+    # Ratio changes replace manual crops; repeating a ratio retains them.
+    first.update(crop={"left": 1, "top": 2, "width": 10, "height": 9}, crop_basis_ratio="16:9 (Widescreen)")
+    assert studio.execute("16:9 (Widescreen)", False, json.dumps(state))[0].first.crop == (1, 2, 10, 9)
+    assert studio.execute("1:1 (Square)", False, json.dumps(state))[0].first.crop == (10, 0, 61, 61)
+    for label, expected in (("2:3 (Portrait Photo)", (20, 0, 40, 61)), ("21:9 (Ultrawide)", (0, 13, 81, 34))):
+        assert studio.execute(label, False, json.dumps(state))[0].first.crop == expected
+    # Muted contents do not participate in filesystem fingerprinting.
+    before = studio.fingerprint_inputs(text, "16:9 (Widescreen)")
+    (tmp_path / "missing.png").write_bytes(b"not an image")
+    assert studio.fingerprint_inputs(text, "16:9 (Widescreen)") == before
+    Image.new("RGB", (81, 61), "blue").save(tmp_path / "frame.png")
+    assert studio.fingerprint_inputs(text, "16:9 (Widescreen)") != before
+    with pytest.raises(StaleResource):
+        _run(resources=bundle)
+    empty = studio.execute("16:9 (Widescreen)", False, EMPTY_RESOURCES)[0]
+    assert not empty.sources()
+    assert "minimax_refs" not in _cond_values(_run(resources=empty)[1])
+    # Persisted version, duplicate identity, path syntax and active capacities are validated independently.
+    for invalid in (
+        {**state, "version": 2},
+        {**state, "references": [state["references"][1]] * 10},
+        {**state, "references": [{**state["references"][1], "path": "../outside.png"}]},
+        {**state, "references": [{**state["references"][1], "id": str(i)} for i in range(10)]},
+    ):
+        with pytest.raises(ValueError):
+            studio.execute("16:9 (Widescreen)", False, json.dumps(invalid))

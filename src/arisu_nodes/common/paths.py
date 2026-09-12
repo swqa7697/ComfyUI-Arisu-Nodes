@@ -18,7 +18,7 @@ from typing import Any, Dict, List, Mapping, Optional, Tuple
 logger = logging.getLogger(__name__)
 CONFIG_NAME = "config.arisu.jsonc"
 CONFIG_TEMPLATE = """{
-  // Add existing absolute image directories, for example "photos": "/data/photos".
+  // Add existing absolute image/media directories, for example "photos": "/data/photos".
   // Only allow directories you intend clients of this server to access.
   // Restart ComfyUI after editing this file. Trailing commas are not supported.
   "roots": {}

@@ -9,8 +9,12 @@ multiple, and the reference sizing rules.
 
 from __future__ import annotations
 
+import json
 import math
-from typing import List, Sequence, Tuple, TypeVar
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple, TypeVar
+
+from ..common.core import relative_path
 
 T = TypeVar("T")
 
@@ -368,3 +372,183 @@ def frames_for_duration(seconds: float) -> int:
         The aligned frame count, at least 5; 5.0 s gives 124, the stock default.
     """
     return align_frame_count(max(MIN_CLIP_FRAMES, round(seconds * FPS)))
+
+
+@dataclass(frozen=True)
+class Resource:
+    """Immutable source description; locations are relative and never capabilities."""
+
+    id: str
+    kind: str
+    root: str
+    path: str
+    muted: bool = False
+    crop: Optional[Tuple[int, int, int, int]] = None
+    crop_basis_ratio: Optional[str] = None
+    clip: Optional[Tuple[float, float]] = None
+    include_audio: bool = False
+    revision: str = ""
+
+
+@dataclass(frozen=True)
+class ResourceBundle:
+    """Validated active resources grouped in H3 presentation order."""
+
+    first: Optional[Resource] = None
+    last: Optional[Resource] = None
+    images: Tuple[Resource, ...] = ()
+    videos: Tuple[Resource, ...] = ()
+    audios: Tuple[Resource, ...] = ()
+    version: int = 1
+
+    def sources(self) -> Tuple[Resource, ...]:
+        """Return active sources, including optional keyframes."""
+        return tuple(item for item in (self.first, self.last) if item is not None) + self.images + self.videos + self.audios
+
+
+EMPTY_RESOURCES = '{"version":1,"keyframes":{"first":null,"last":null},"references":[]}'
+RESOURCE_LIMITS = {"image": 9, "video": 3, "audio": 3}
+
+
+def auto_crop(width: int, height: int, aspect_ratio: str) -> Tuple[int, int, int, int]:
+    """Find the largest centered integer crop using the exact named ratio."""
+    if width < 1 or height < 1:
+        raise ValueError("image dimensions must be positive")
+    ratio = next(((w, h) for label, w, h in ASPECT_RATIOS if label == aspect_ratio), None)
+    if ratio is None:
+        raise ValueError("unknown aspect_ratio")
+    rw, rh = ratio
+    cw, ch = (min(width, height * rw // rh), height) if width * rh >= height * rw else (width, min(height, width * rh // rw))
+    cw, ch = max(1, cw), max(1, ch)
+    return ((width - cw) // 2, (height - ch) // 2, cw, ch)
+
+
+def clip_interval(value: Any, duration: Optional[float] = None) -> Tuple[float, float]:
+    """Validate a finite half-open source-relative selection."""
+    if not isinstance(value, dict) or set(value) != {"start", "end"}:
+        raise ValueError("clip needs start and end")
+    start, end = value["start"], value["end"]
+    if any(type(v) not in (int, float) or not math.isfinite(v) for v in (start, end)) or not 0 <= start < end:
+        raise ValueError("invalid clip interval")
+    if duration is not None and end > duration + 1e-9:
+        raise ValueError("clip exceeds source duration; reselect the resource")
+    return float(start), float(end)
+
+
+def _resource(value: Any, keyframe: bool = False) -> Resource:
+    if not isinstance(value, dict):
+        raise TypeError("resource must be an object")
+    common = {"id", "kind", "root", "path", "muted"}
+    kind = value.get("kind")
+    allowed = common | ({"crop", "crop_basis_ratio"} if keyframe else {"crop"}) if kind == "image" else common | {"clip"}
+    if kind == "video":
+        allowed |= {"include_audio"}
+    if kind not in RESOURCE_LIMITS or (keyframe and kind != "image") or set(value) - allowed or not common <= set(value):
+        raise ValueError("invalid resource fields or kind")
+    if not isinstance(value["id"], str) or not 0 < len(value["id"]) <= 128:
+        raise ValueError("invalid resource ID")
+    if not isinstance(value["root"], str) or not value["root"] or type(value["muted"]) is not bool:
+        raise ValueError("invalid resource root or mute state")
+    path = relative_path(value["path"])
+    crop = value.get("crop")
+    if crop is not None:
+        if not isinstance(crop, dict) or set(crop) != {"left", "top", "width", "height"}:
+            raise ValueError("invalid crop")
+        crop = tuple(crop[key] for key in ("left", "top", "width", "height"))
+        if any(type(v) is not int for v in crop) or min(crop[:2]) < 0 or min(crop[2:]) < 1:
+            raise ValueError("invalid crop pixels")
+    basis = value.get("crop_basis_ratio")
+    if basis is not None and basis not in ASPECT_RATIO_LABELS:
+        raise ValueError("invalid crop basis ratio")
+    include_audio = value.get("include_audio", kind == "video")
+    if type(include_audio) is not bool:
+        raise ValueError("invalid Include Audio value")
+    return Resource(
+        value["id"],
+        kind,
+        value["root"],
+        path,
+        value["muted"],
+        crop,
+        basis,
+        clip_interval(value.get("clip")) if kind != "image" else None,
+        include_audio,
+    )
+
+
+def parse_resources(text: str) -> Tuple[Optional[Resource], Optional[Resource], Tuple[Resource, ...]]:
+    """Parse stored editing state without inspecting any filesystem sources."""
+    if not isinstance(text, str) or len(text.encode("utf-8")) > 1024 * 1024:
+        raise ValueError("resource state exceeds 1 MiB")
+
+    def unique(pairs: List[Tuple[str, Any]]) -> Dict[str, Any]:
+        result: Dict[str, Any] = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("duplicate resource state key")
+            result[key] = value
+        return result
+
+    data = json.loads(text, object_pairs_hook=unique)
+    if (
+        not isinstance(data, dict)
+        or set(data) != {"version", "keyframes", "references"}
+        or type(data["version"]) is not int
+        or data["version"] != 1
+    ):
+        raise ValueError("unsupported resource state version or shape")
+    keys, refs = data["keyframes"], data["references"]
+    if not isinstance(keys, dict) or set(keys) != {"first", "last"} or not isinstance(refs, list) or len(refs) > 256:
+        raise ValueError("invalid keyframes or more than 256 reference cards")
+    first, last = (_resource(keys[key], True) if keys[key] is not None else None for key in ("first", "last"))
+    references = tuple(_resource(value) for value in refs)
+    all_items = tuple(item for item in (first, last) if item is not None) + references
+    if len({item.id for item in all_items}) != len(all_items):
+        raise ValueError("resource IDs must be unique")
+    for kind, limit in RESOURCE_LIMITS.items():
+        if sum(item.kind == kind and not item.muted for item in references) > limit:
+            raise ValueError(f"too many active {kind} references (maximum {limit})")
+    return first, last, references
+
+
+def validate_bundle(bundle: ResourceBundle):
+    """Validate custom-socket values independently of their producing node."""
+    if not isinstance(bundle, ResourceBundle) or type(bundle.version) is not int or bundle.version != 1:
+        raise ValueError("unsupported resources bundle")
+    ids: Set[str] = set()
+    for expected, values, keyframe, limit in (
+        ("image", (bundle.first, bundle.last), True, 2),
+        ("image", bundle.images, False, 9),
+        ("video", bundle.videos, False, 3),
+        ("audio", bundle.audios, False, 3),
+    ):
+        if not isinstance(values, tuple) or len(values) > limit:
+            raise ValueError("resources exceed active reference capacities")
+        for item in values:
+            if item is None and keyframe:
+                continue
+            if (
+                not isinstance(item, Resource)
+                or item.kind != expected
+                or item.muted
+                or not isinstance(item.revision, str)
+                or not item.revision
+            ):
+                raise ValueError("invalid active resource descriptor")
+            data: Dict[str, Any] = {"id": item.id, "kind": item.kind, "root": item.root, "path": item.path, "muted": item.muted}
+            if expected == "image":
+                if item.crop is not None and (not isinstance(item.crop, tuple) or len(item.crop) != 4):
+                    raise ValueError("invalid crop")
+                data["crop"] = dict(zip(("left", "top", "width", "height"), item.crop)) if item.crop else None
+                if keyframe:
+                    data["crop_basis_ratio"] = item.crop_basis_ratio
+            else:
+                if not isinstance(item.clip, tuple) or len(item.clip) != 2:
+                    raise ValueError("invalid clip")
+                data["clip"] = dict(zip(("start", "end"), item.clip))
+                if expected == "video":
+                    data["include_audio"] = item.include_audio
+            _resource(data, keyframe)
+            if item.id in ids:
+                raise ValueError("resource IDs must be unique")
+            ids.add(item.id)

@@ -10,25 +10,30 @@ the pack at import time.
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Sequence, Tuple, Type
+from dataclasses import asdict
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Type, Union
 
 import comfy.model_management
 import comfy.nested_tensor
 import comfy.sd
 import comfy.utils
+import folder_paths
 import node_helpers
 import torch
 import torchaudio
 from comfy_api.latest import io
 from nodes import MAX_RESOLUTION
 
+from ..common.paths import image_roots
 from .core import (
     ASPECT_RATIO_LABELS,
     AUDIO_CHANNELS,
     AUDIO_LATENT_CHANNELS,
+    EMPTY_RESOURCES,
     FRAME_TAG_MODES,
     REF_IMAGE_SIZE_MODES,
     VIDEO_LATENT_CHANNELS,
+    ResourceBundle,
     align_clip_frames,
     canvas_from_megapixels,
     frame_needs_resize,
@@ -36,6 +41,7 @@ from .core import (
     keyframe_canvases,
     latent_size,
     order_picture_items,
+    parse_resources,
     qwen_sample_indices,
     qwen_timestamps,
     ref_image_canvas,
@@ -43,7 +49,9 @@ from .core import (
     scaled_canvas,
     soundtrack_key,
     temporal_shape,
+    validate_bundle,
 )
+from .media import build_bundle, read_audio, read_image, read_video, source_fingerprint, validate_source
 
 RefItem = Dict[str, Any]
 RefBlock = Dict[str, Any]
@@ -156,7 +164,7 @@ def _encode_ref_images(
             size = ref_image_canvas(img.shape[2], img.shape[1], canvas_w, canvas_h, ref_image_size)
             block = encoded.get(size)
             if block is None:
-                resized = resize_frames(img[:1], size[0], size[1], "disabled")
+                resized = fit_frames(img[:1], size[0], size[1], "disabled")
                 if not encoded:
                     # the text encoder sees the reference at the generation canvas only
                     items.append({"type": "image", "data": resized})
@@ -183,7 +191,7 @@ def _encode_ref_videos(
         soundtrack = ref_video_audios.get(soundtrack_key(name))
         canvas_w, canvas_h = ref_video_canvas(video_frames.shape[2], video_frames.shape[1])
         n_frames = align_clip_frames(video_frames.shape[0], frame_count)
-        frames = resize_frames(video_frames[:n_frames], canvas_w, canvas_h, "disabled")
+        frames = fit_frames(video_frames[:n_frames], canvas_w, canvas_h, "disabled")
         z = vae.encode(frames)
         audio_latent: Optional[torch.Tensor] = None
         ref_audio_t = 0
@@ -404,6 +412,7 @@ def _hybrid_inputs_tail() -> List[io.Input]:
                 max=3,
             ),
         ),
+        io.Custom("ARISU_MINIMAX_H3_RESOURCES").Input("resources", optional=True),
     ]
 
 
@@ -454,6 +463,7 @@ class ArisuMiniMaxH3HybridToVideo(io.ComfyNode):
         ref_videos: Optional[Dict[str, Optional[torch.Tensor]]] = None,
         ref_video_audios: Optional[Dict[str, Optional[Dict[str, Any]]]] = None,
         ref_audios: Optional[Dict[str, Optional[Dict[str, Any]]]] = None,
+        resources: Optional[ResourceBundle] = None,
     ) -> io.NodeOutput:
         """Encode the hybrid conditioning and build the matching AV latent.
 
@@ -478,6 +488,10 @@ class ArisuMiniMaxH3HybridToVideo(io.ComfyNode):
             ``(positive, latent)``: the conditioning for the generation canvas and
             the empty AV latent built for it.
         """
+        if resources is not None:
+            first_frame, last_frame, ref_images, ref_videos, ref_video_audios, ref_audios = _consume_resources(
+                resources, length, first_frame, last_frame, ref_images, ref_videos, ref_video_audios, ref_audios, audio_vae
+            )
         conds, latent = encode_hybrid(
             clip,
             vae,
@@ -575,6 +589,7 @@ class ArisuMiniMaxH3HybridToVideoAdvanced(io.ComfyNode):
         ref_videos: Optional[Dict[str, Optional[torch.Tensor]]] = None,
         ref_video_audios: Optional[Dict[str, Optional[Dict[str, Any]]]] = None,
         ref_audios: Optional[Dict[str, Optional[Dict[str, Any]]]] = None,
+        resources: Optional[ResourceBundle] = None,
     ) -> io.NodeOutput:
         """Encode one conditioning per keyframe canvas and build the AV latent.
 
@@ -603,6 +618,10 @@ class ArisuMiniMaxH3HybridToVideoAdvanced(io.ComfyNode):
             whose keyframes are encoded at the target size. When the target size
             equals the generation size both conditionings are the same object.
         """
+        if resources is not None:
+            first_frame, last_frame, ref_images, ref_videos, ref_video_audios, ref_audios = _consume_resources(
+                resources, length, first_frame, last_frame, ref_images, ref_videos, ref_video_audios, ref_audios, audio_vae
+            )
         conds, latent = encode_hybrid(
             clip,
             vae,
@@ -700,7 +719,7 @@ class ArisuMiniMaxH3VideoSettings(io.ComfyNode):
                 "MiniMax H3 Hybrid to Video node in this graph takes them automatically."
             ),
             inputs=[*_settings_inputs_head(), *_settings_inputs_tail()],
-            outputs=_settings_outputs_head(),
+            outputs=[*_settings_outputs_head(), io.Combo.Output("aspect_ratio", options=list(ASPECT_RATIO_LABELS))],
         )
 
     @classmethod
@@ -717,7 +736,7 @@ class ArisuMiniMaxH3VideoSettings(io.ComfyNode):
             ``(width, height, length)``.
         """
         width, height = canvas_from_megapixels(aspect_ratio, megapixels)
-        return io.NodeOutput(width, height, frames_for_duration(duration))
+        return io.NodeOutput(width, height, frames_for_duration(duration), aspect_ratio)
 
 
 class ArisuMiniMaxH3VideoSettingsUpscale(io.ComfyNode):
@@ -756,6 +775,7 @@ class ArisuMiniMaxH3VideoSettingsUpscale(io.ComfyNode):
                 io.Float.Output("upscale_factor", tooltip="The factor, for a latent upscaler's multiplier input."),
                 io.Int.Output("target_width", tooltip="Upscaled width in pixels, a multiple of 32."),
                 io.Int.Output("target_height", tooltip="Upscaled height in pixels, a multiple of 32."),
+                io.Combo.Output("aspect_ratio", options=list(ASPECT_RATIO_LABELS)),
             ],
         )
 
@@ -775,10 +795,98 @@ class ArisuMiniMaxH3VideoSettingsUpscale(io.ComfyNode):
         """
         width, height = canvas_from_megapixels(aspect_ratio, megapixels)
         target_width, target_height = scaled_canvas(width, height, upscale_factor)
-        return io.NodeOutput(width, height, frames_for_duration(duration), upscale_factor, target_width, target_height)
+        return io.NodeOutput(width, height, frames_for_duration(duration), upscale_factor, target_width, target_height, aspect_ratio)
+
+
+def _resource_roots() -> Dict[str, str]:
+    return image_roots(folder_paths.get_input_directory(), folder_paths.get_output_directory())
+
+
+def _consume_resources(
+    resources: ResourceBundle, length: int, first: Any, last: Any, images: Any, videos: Any, soundtracks: Any, audios: Any, audio_vae: Any
+) -> Tuple[Any, ...]:
+    validate_bundle(resources)
+    if (
+        first is not None
+        or last is not None
+        or any(value is not None for group in (images, videos, soundtracks, audios) for value in (group or {}).values())
+    ):
+        raise ValueError("resources cannot be combined with individual resource inputs")
+    roots = _resource_roots()
+    # Validate the entire bundle before decoding or calling any model encoder.
+    if len(resources.images) > 9 or len(resources.videos) > 3 or len(resources.audios) > 3:
+        raise ValueError("resources exceed active reference capacities")
+    for item in resources.sources():
+        if item.muted or not item.revision:
+            raise ValueError("invalid active resource descriptor")
+        validate_source(roots, item)
+    if resources.audios or any(item.include_audio for item in resources.videos):
+        _require_audio_vae(audio_vae)
+    first = torch.from_numpy(read_image(roots, resources.first)) if resources.first else None
+    last = torch.from_numpy(read_image(roots, resources.last)) if resources.last else None
+    images = {f"ref_image_{i}": torch.from_numpy(read_image(roots, item)) for i, item in enumerate(resources.images)}
+    videos, soundtracks = {}, {}
+    for i, item in enumerate(resources.videos):
+        frames, audio = read_video(roots, item, temporal_shape(length)[0])
+        videos[f"ref_video_{i}"] = torch.from_numpy(frames)
+        if audio is not None:
+            soundtracks[f"ref_video_audio_{i}"] = {"waveform": torch.from_numpy(audio[0]), "sample_rate": audio[1]}
+    audios = {}
+    for i, item in enumerate(resources.audios):
+        waveform, rate = read_audio(roots, item)
+        audios[f"ref_audio_{i}"] = {"waveform": torch.from_numpy(waveform), "sample_rate": rate}
+    return first, last, images, videos, soundtracks, audios
+
+
+class ArisuMiniMaxH3ResourceStudio(io.ComfyNode):
+    """Prepare immutable source descriptions for the MiniMax H3 Hybrid nodes."""
+
+    @classmethod
+    def define_schema(cls) -> io.Schema:
+        """Declare native controls and a hidden, socketless editing-state widget."""
+        return io.Schema(
+            node_id="ArisuMiniMaxH3ResourceStudio",
+            display_name="MiniMax H3 Resource Studio",
+            category="Arisu Nodes/MiniMax H3",
+            inputs=[
+                io.Combo.Input("aspect_ratio", options=list(ASPECT_RATIO_LABELS), default="16:9 (Widescreen)"),
+                io.Boolean.Input("advertise", default=False),
+                io.String.Input("resources_json", default=EMPTY_RESOURCES, socketless=True),
+            ],
+            outputs=[io.Custom("ARISU_MINIMAX_H3_RESOURCES").Output("resources")],
+        )
+
+    @classmethod
+    def execute(cls, aspect_ratio: str, advertise: bool, resources_json: str) -> io.NodeOutput:
+        """Validate active originals and emit a description bundle, without resizing."""
+        if aspect_ratio not in ASPECT_RATIO_LABELS:
+            raise ValueError("unknown aspect_ratio")
+        bundle = build_bundle(_resource_roots(), resources_json, aspect_ratio)
+        feedback = {
+            "state": resources_json,
+            "aspect_ratio": aspect_ratio,
+            "keyframes": {key: asdict(item) if item else None for key, item in (("first", bundle.first), ("last", bundle.last))},
+        }
+        return io.NodeOutput(bundle, ui={"arisu_resources": [feedback]})
+
+    @classmethod
+    def validate_inputs(cls, resources_json: Optional[str] = None) -> Union[bool, str]:
+        """Reject malformed persisted state before executing the workflow."""
+        try:
+            if resources_json is not None:
+                parse_resources(resources_json)
+            return True
+        except (TypeError, ValueError):
+            return "invalid resource state; reselect resources"
+
+    @classmethod
+    def fingerprint_inputs(cls, resources_json: str, aspect_ratio: Optional[str] = None, **kwargs: Any) -> str:
+        """Invalidate output when an active original changes on disk."""
+        return source_fingerprint(_resource_roots(), resources_json, aspect_ratio)
 
 
 NODES: List[Type[io.ComfyNode]] = [
+    ArisuMiniMaxH3ResourceStudio,
     ArisuMiniMaxH3HybridToVideo,
     ArisuMiniMaxH3HybridToVideoAdvanced,
     ArisuMiniMaxH3VideoSettings,

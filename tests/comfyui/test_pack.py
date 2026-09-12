@@ -24,6 +24,7 @@ pytestmark = pytest.mark.comfyui
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 EXPECTED_NODE_IDS = [
+    "ArisuMiniMaxH3ResourceStudio",
     "ArisuMiniMaxH3HybridToVideo",
     "ArisuMiniMaxH3HybridToVideoAdvanced",
     "ArisuMiniMaxH3VideoSettings",

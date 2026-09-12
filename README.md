@@ -24,8 +24,7 @@ Nodes that take the friction out of building and running ComfyUI workflows: fewe
 wire, fewer numbers to keep in sync by hand, fewer runs queued just to save one image. Some are
 general-purpose utilities, others belong to a model family — today MiniMax H3, with more to come.
 
-- **Zero runtime dependencies.** Nothing is downloaded, built, or `pip install`ed on your behalf —
-  the pack only uses APIs ComfyUI already ships.
+- **No runtime installers.** Pillow and PyAV are declared installation dependencies; nodes never download tools or install packages while running.
 - **In-app help.** Right-click a node and open its help for the full input reference; the same
   pages live under [`web/docs/`](web/docs).
 - **No `NODE_CLASS_MAPPINGS`, no monkey-patching.** Pure V3 (`comfy_entrypoint` + `io.Schema`)
@@ -59,9 +58,9 @@ Restart ComfyUI. There is no requirements step — nothing to install into Comfy
 After the restart the nodes appear under **Add Node → Arisu Nodes**. If they do not, check
 ComfyUI's console for an import error at startup.
 
-### External image directories
+### External image and media directories
 
-**Load Image (Browse)** reads from the built-in `input` and `output` roots. To keep images on
+**Load Image (Browse)** and **MiniMax H3 Resource Studio** read from the built-in `input` and `output` roots. Studio also reads supported video/audio files from these roots. To keep resources on
 another disk or network share, edit `user/__arisu_nodes/config.arisu.jsonc` under ComfyUI.
 On its first startup after installation, the pack creates a commented template with empty `roots`;
 existing files are never overwritten. A custom ComfyUI user-directory setting relocates this folder.
@@ -69,7 +68,7 @@ The protected `__arisu_nodes` system directory is outside the public user-data A
 
 ```jsonc
 {
-  // Image libraries shared with clients of this ComfyUI server.
+  // Image and media libraries shared with clients of this ComfyUI server.
   "roots": {
     "photos": "/data/photos",
     "references": "/mnt/library/references"
@@ -141,6 +140,7 @@ ComfyUI serves the same page in-app from a node's right-click **Help**.
 | [Preview & Save Image (Upscale)](web/docs/ArisuPreviewSaveImageUpscale/en.md) | Common | The same, upscaling the images with the selected model as they are saved. |
 | [Load Image (Browse)](web/docs/ArisuLoadImage/en.md) | Common | Browse images in configured directories, including external disks or shares, and optionally crop them; nothing is uploaded. |
 | [Resize Image](web/docs/ArisuResizeImage/en.md) | Common | Crop, pad, fit or stretch an image batch to a size on a pixel grid, with the options in a dialog and the result previewed on the node. |
+| [MiniMax H3 Resource Studio](web/docs/ArisuMiniMaxH3ResourceStudio/en.md) | MiniMax H3 | Browse, crop, trim, mute, and arrange keyframes and mixed references in one resource bundle. |
 | [MiniMax H3 Hybrid to Video](web/docs/ArisuMiniMaxH3HybridToVideo/en.md) | MiniMax H3 | Keyframes and image/video/audio references in one conditioning, plus the AV latent. |
 | [MiniMax H3 Hybrid to Video (Advanced)](web/docs/ArisuMiniMaxH3HybridToVideoAdvanced/en.md) | MiniMax H3 | The same, plus a `positive (upscaled)` conditioning for two-sampler latent upscaling. |
 | [MiniMax H3 Video Settings](web/docs/ArisuMiniMaxH3VideoSettings/en.md) | MiniMax H3 | Canvas from an aspect ratio and a megapixel budget, length from a duration in seconds. |
@@ -157,17 +157,23 @@ Categories are `Arisu Nodes/Common` and `Arisu Nodes/MiniMax H3`.
 | ComfyUI | >= 0.30.0 | The release that added MiniMax H3 support. Developed against 0.34.5. |
 | MiniMax H3 models | — | For the MiniMax H3 nodes only: the same checkpoint, CLIP, video VAE, and audio VAE the stock H3 nodes need. |
 | Python | >= 3.10 | The nodes run on ComfyUI's own interpreter; this is the floor for the dev tooling. |
-| [Pillow](https://python-pillow.org/) | any (AVIF needs >= 11.2) | The pack's one dependency, already installed by ComfyUI; nothing to add. `make install` puts it in the dev venv for the unit lane. |
+| [Pillow](https://python-pillow.org/) | any (AVIF needs >= 11.2) | Declared image dependency; AVIF decoding depends on the installed Pillow version. |
+| [PyAV](https://pyav.org/) | supplied by ComfyUI | Declared media dependency without an additional version constraint. Uses its bundled codecs; no FFmpeg command-line executable is needed. |
 | [uv](https://docs.astral.sh/uv/) | any | Development only. `make install` installs it if missing. |
 | [pnpm](https://pnpm.io/) | any | Development only: runs the JavaScript formatter and linter. `make install` installs it if missing. |
 | [Node.js](https://nodejs.org/) | >= 22.15 | Development only: the web test lane. `make install` installs it (via pnpm) if missing. |
 | GNU make | any | Development only. |
 
-The pack itself declares no Python dependencies.
+Resource Studio targets the legacy node renderer (Nodes 2.0 disabled), against ComfyUI frontend 1.51.10. Browser compatibility and available encoders depend on the installation.
 
 ---
 
 ## Usage
+
+**Resource Studio:** select optional first/last keyframes and browse a mixed reference list. Keyframes auto-crop to the effective aspect ratio; clicking a card opens its crop or clip editor. Apply commits edits, while Mute retains them without sending the resource to Hybrid. Connect `resources` to either Hybrid variant or enable root-graph advertising. Video Settings can advertise its aspect ratio to Studio too. Taking ownership drops competing wires; releasing ownership restores empty sockets, and Undo can restore the earlier graph.
+
+Studio stores source descriptions. Hybrid decodes originals and performs generation resizing; video selections are sampled at 24 fps and aligned down to H3's frame grid. Playback uses originals when possible and on-demand VP9/Opus proxies otherwise, with one conversion worker, a 2 GiB cache, a ten-minute deadline, and thirty-minute idle expiry. Proxies retain display dimensions and never become generation inputs. Saved workflows retain selections; imports and duplicates require reselection.
+
 
 A MiniMax H3 workflow with the pack in it:
 

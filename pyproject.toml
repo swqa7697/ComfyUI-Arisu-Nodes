@@ -12,7 +12,7 @@ license = "GPL-3.0-only"
 license-files = ["LICENSE"]
 requires-python = ">=3.10"
 classifiers = []
-dependencies = ["pillow"]
+dependencies = ["av", "pillow"]
 
 [dependency-groups]
 dev = ["beautysh>=6.4.3", "mbake>=1.4.6", "pytest>=9.1.1", "ruff>=0.16.7", "uv-sort>=0.8.0"]

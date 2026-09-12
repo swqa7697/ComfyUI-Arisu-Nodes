@@ -32,6 +32,7 @@ nodes.
 | `width`    | INT  | Canvas width, a multiple of 32.       |
 | `height`   | INT  | Canvas height, a multiple of 32.      |
 | `length`   | INT  | Frame count on the 17k+5 grid.        |
+| `aspect_ratio` | COMBO | Exact ratio label, appended at output index 3. |
 
 The outputs are always available, whether or not the node advertises.
 
@@ -55,9 +56,12 @@ Video Settings (advertise on)   ...   Hybrid to Video           no link: the val
 - Greyed widgets keep their old numbers but they are not used; the advertised values always win. A
   link into a greyed widget is refused, and one that was already there is removed with a notice.
 - The greying updates when the switch flips, when a node is added or removed, and when a workflow
-  loads.
-- A muted or bypassed settings node does not advertise, but muting has no frontend event: its
-  widgets update on the next change above. When a run executes only part of the graph and the
-  settings node is not in it, the hybrid nodes fall back to their widgets with a warning.
+  loads, and immediately when a source is muted or bypassed.
+- A muted or bypassed source retains its advertising switch but releases owned controls. A partial
+  prompt missing an active source is rejected; it does not fall back to local widget values.
 - For a two-sampler latent-upscale workflow use **MiniMax H3 Video Settings (Upscale)**, which adds
   the target size.
+
+## Resource Studio integration
+
+The appended `aspect_ratio` combo output connects to **MiniMax H3 Resource Studio**; existing output indexes are unchanged. Advertising also owns Studio's aspect selector, dropping its wire and applying the effective ratio. Keyframes are auto-cropped when that ratio changes. API exports include the same dependencies as queueing; a missing active source rejects the prompt instead of falling back to local values. Advertising is root-graph only; use explicit wires in subgraphs.

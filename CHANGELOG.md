@@ -9,10 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Add MiniMax H3 Resource Studio with keyframe cropping, mixed references, clip editing, and original-source Hybrid processing.
+- Add aspect-ratio outputs to both MiniMax H3 Video Settings nodes.
+
 - Add inline names and renaming for saved Load Image browse paths.
 - Add a ComfyUI setting for the default Load Image browse root when no image is selected.
 
 ### Changed
+
+- Coordinate MiniMax H3 settings and resource advertising across queueing and API exports, rejecting missing sources and conflicting resource inputs.
 
 - Move the Load Image input and output directory shortcuts beside up in the browse toolbar to free sidebar space.
 
