@@ -33,6 +33,15 @@ const STYLE = `
 .arisu-studio .status{display:block;min-height:16px;white-space:normal;color:var(--descrip-text,#aaa);}.arisu-studio .detail{color:var(--descrip-text,#aaa);font-variant-numeric:tabular-nums;}
 @media(prefers-color-scheme:light){.arisu-studio{--image:#267c6b;--video:#986600;--audio:#7950aa;}}
 `;
+function resourceId() {
+  if (typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+  // randomUUID requires a secure context; getRandomValues also works over HTTP.
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
 function widget(node, name) {
   return node.widgets?.find((widget) => widget.name === name);
 }
@@ -183,7 +192,7 @@ async function browse(node, slot = null, replacing = null) {
     isCurrent: task.current,
     onPick: async (path, root) => {
       try {
-        const item = { id: replacing?.id ?? crypto.randomUUID(), kind: 'image', root, path, muted: replacing?.muted ?? false };
+        const item = { id: replacing?.id ?? resourceId(), kind: 'image', root, path, muted: replacing?.muted ?? false };
         const info = await probe(item, task.signal);
         if (!task.current()) return;
         item.kind = info.kind;

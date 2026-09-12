@@ -23,6 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Fix Resource Studio keyframe and reference creation in browsers without `crypto.randomUUID`, including HTTP connections.
+
 - Restore each Arisu node's saved dimensions when reopening a workflow, including manually minimized nodes.
 
 ## [1.1.2] - 2026-09-11

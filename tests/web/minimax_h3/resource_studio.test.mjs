@@ -44,7 +44,28 @@ function card(id, kind = 'image', muted = false) {
   };
 }
 
-test('Studio edits and reorders independent cards, counts only active references, and discards imported locations', async () => {
+async function pick(control, path) {
+  api.responses.push(
+    jsonResponse(200, {
+      root: 'input',
+      path: '',
+      parent: null,
+      dirs: [],
+      files: [path],
+      ancestors: [],
+      roots: [{ id: 'input', label: 'Input' }],
+      kinds: { [path]: 'image' },
+    }),
+  );
+  await control.onclick();
+  const dialog = body.children.find((element) => element.tagName === 'DIALOG' && element.open);
+  const file = descendants(dialog).find((element) => element.className === 'arisu-browser-file');
+  assert(file);
+  api.responses.push(jsonResponse(200, { kind: 'image', width: 800, height: 600, revision: 'r' }));
+  await file.onclick();
+}
+
+test('Studio edits and reorders independent cards, counts only active references, and discards imported locations', async (t) => {
   resetApp(makeGraph());
   resetApi();
   resetDom();
@@ -53,6 +74,41 @@ test('Studio edits and reorders independent cards, counts only active references
     descendants(panel(node)).some((element) => element.textContent?.startsWith('Images ')),
     false,
   );
+  // HTTP origins lack randomUUID; new cards must still persist independent identities.
+  const descriptor = Object.getOwnPropertyDescriptor(globalThis.crypto, 'randomUUID');
+  const restoreUUID = () => {
+    if (descriptor) Object.defineProperty(globalThis.crypto, 'randomUUID', descriptor);
+    else delete globalThis.crypto.randomUUID;
+  };
+  t.after(restoreUUID);
+  Object.defineProperty(globalThis.crypto, 'randomUUID', { configurable: true, value: undefined });
+  api.responses.push(jsonResponse(200, { roots: [{ id: 'input', label: 'Input' }] }));
+  for (const slot of ['first', 'last']) {
+    await pick(button(panel(node), `${slot} frame`), `${slot}.png`);
+    assert.equal(state(node).keyframes[slot]?.path, `${slot}.png`);
+  }
+  for (const path of ['one.png', 'two.png']) await pick(button(panel(node), 'Browse resources…'), path);
+  const selected = state(node);
+  assert.deepEqual(
+    selected.references.map((item) => item.path),
+    ['one.png', 'two.png'],
+  );
+  const ids = [selected.keyframes.first, selected.keyframes.last, ...selected.references].map((item) => item.id);
+  assert.equal(new Set(ids).size, 4);
+  for (const id of ids) assert.match(id, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+  await pick(button(panel(node), 'Replace'), 'replacement.png');
+  assert.equal(state(node).keyframes.first.id, ids[0]);
+  assert.equal(state(node).keyframes.first.path, 'replacement.png');
+  const referenceRow = descendants(panel(node)).find((element) => element.dataset.cardId === ids[2]);
+  await pick(button(referenceRow, 'Replace'), 'reference-replacement.png');
+  assert.equal(state(node).references[0].id, ids[2]);
+  assert.equal(state(node).references[0].path, 'reference-replacement.png');
+  restoreUUID();
+  await pick(button(panel(node), 'Browse resources…'), 'native.png');
+  assert.equal(state(node).references[2].path, 'native.png');
+  assert(!ids.includes(state(node).references[2].id));
+  assert(!toastSeverities().includes('error'));
+  resetApi();
   const data = empty();
   data.references = [card('picture'), card('video', 'video'), card('sound', 'audio', true)];
   widget(node, 'resources_json').value = JSON.stringify(data);
