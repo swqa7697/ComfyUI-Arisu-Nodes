@@ -173,10 +173,23 @@ function reset(node) {
   }
   render(node);
 }
+// A wired ratio reads the origin's widget of the output's name unless that widget is itself linked; otherwise execution resolves it.
+function upstreamRatio(node) {
+  const input = node.inputs?.find((entry) => (entry.widget?.name ?? entry.name) === 'aspect_ratio' && entry.link != null);
+  if (!input) return undefined;
+  const links = node.graph?.links;
+  const link = links?.get?.(input.link) ?? links?.[input.link];
+  const origin = link ? (node.graph?.nodes ?? node.graph?._nodes ?? []).find((entry) => String(entry.id) === String(link.origin_id)) : null;
+  const name = origin?.outputs?.[link.origin_slot]?.name;
+  const control = name ? widget(origin, name) : null;
+  const linked = origin?.inputs?.some((entry) => (entry.widget?.name ?? entry.name) === name && entry.link != null);
+  const value = control && !linked ? control.value : null;
+  return { origin, value: typeof value === 'string' && /^\d+:\d+\b/.test(value) ? value : null };
+}
 function ratio(node) {
   if (node.arisuEffectiveAspect !== undefined) return node.arisuEffectiveAspect;
-  if (node.inputs?.some((input) => input.name === 'aspect_ratio' && input.link != null)) return null;
-  return widget(node, 'aspect_ratio')?.value;
+  const upstream = upstreamRatio(node);
+  return upstream ? upstream.value : widget(node, 'aspect_ratio')?.value;
 }
 function cropFor(info, label) {
   const [w, h] = label.split(' ')[0].split(':').map(Number);
@@ -323,7 +336,6 @@ async function refreshRatio(node, resolvedRatio) {
     render(node);
     return;
   }
-  const previous = state.ratio;
   state.ratio = effective;
   if (!effective) {
     render(node);
@@ -344,10 +356,8 @@ async function refreshRatio(node, resolvedRatio) {
       card.crop_basis_ratio = effective;
       changed = true;
     }
-    if (changed) {
-      commit(node, data);
-      if (previous) toast('Aspect ratio changed; keyframes were auto-cropped.', 'info');
-    } else render(node);
+    if (changed) commit(node, data);
+    else render(node);
   } catch (error) {
     if (state.generation === generation) toast(error.message, 'error');
   }
@@ -573,11 +583,9 @@ function render(node) {
   const counts = Object.keys(LIMITS)
     .map((kind) => [kind, data.references.filter((card) => card.kind === kind && !card.muted).length])
     .filter(([, count]) => count > 0);
-  const status = ratio(node)
-    ? node.arisuAspectSource
-      ? `Aspect ratio from ${node.arisuAspectSource}`
-      : ''
-    : 'Aspect ratio will resolve during execution';
+  const upstream = upstreamRatio(node)?.origin;
+  const origin = node.arisuAspectSource ?? (upstream ? `#${upstream.id}` : null);
+  const status = ratio(node) ? (origin ? `Aspect ratio from ${origin}` : '') : 'Aspect ratio will resolve during execution';
   const section = el('div', { className: 'section' }, [
     el('div', { className: 'heading' }, [
       el('span', { className: 'label', textContent: 'Media references' }),
@@ -604,7 +612,7 @@ function render(node) {
 registerSelectionOwner(TYPE, {
   fields: [
     ['resources_json', 2, EMPTY],
-    ['advertise', 1, false],
+    ['advertise_resources', 1, false],
   ],
   invalidate,
 });

@@ -1,6 +1,6 @@
 # MiniMax H3 Resource Studio
 
-Prepare optional first/last keyframes and image, video, and audio references for either MiniMax H3 Hybrid node. Connect **resources**, or enable **Advertise** in the root graph. Advertising replaces competing resource wires; turning it off restores empty sockets. Explicit connections work in subgraphs.
+Prepare optional first/last keyframes and image, video, and audio references for either MiniMax H3 Hybrid node. Connect **resources**, or switch `advertise_resources` on in the root graph. Advertising replaces competing resource wires; turning it off restores empty sockets. Explicit connections work in subgraphs.
 
 Choose an aspect ratio, or inherit it from an advertising Video Settings node. New keyframes receive a centered Auto-crop. Click a frame canvas to choose or replace its image; use the dedicated crop icon to edit its crop and Reset to use the full image. Changing the effective ratio reapplies Auto-crop to both frames, including muted frames. Reference images start uncropped and do not follow aspect changes. For both keyframes and image references, the crop dialog opens with the saved crop’s ratio selected, using Custom with width and height fields when no preset matches, or Free when uncropped.
 

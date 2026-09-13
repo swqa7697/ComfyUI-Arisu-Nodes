@@ -675,7 +675,7 @@ def _settings_inputs_tail() -> List[io.Input]:
             tooltip="Clip length in seconds at 24 fps, snapped up to the model's 17k+5 frame grid (5.0 s = 124 frames).",
         ),
         io.Boolean.Input(
-            "advertise",
+            "advertise_settings",
             default=False,
             tooltip=(
                 "Drive every MiniMax H3 Hybrid to Video node in this graph: their size and length widgets grey out at once, "
@@ -697,7 +697,7 @@ class ArisuMiniMaxH3VideoSettings(io.ComfyNode):
     """One place for the canvas and the clip length of a MiniMax H3 workflow.
 
     Replaces the aspect-ratio / megapixel / duration helper chains workflows
-    build from generic math nodes, and with ``advertise`` on hands the result
+    build from generic math nodes, and with ``advertise_settings`` on hands the result
     to the hybrid nodes without a link.
     """
 
@@ -715,7 +715,7 @@ class ArisuMiniMaxH3VideoSettings(io.ComfyNode):
             category="Arisu Nodes/MiniMax H3",
             description=(
                 "Canvas size from an aspect ratio and a megapixel budget, and frame count from a duration in seconds, "
-                "on MiniMax H3's grids. Wire the outputs into the hybrid nodes, or switch advertise on and every "
+                "on MiniMax H3's grids. Wire the outputs into the hybrid nodes, or switch advertise_settings on and every "
                 "MiniMax H3 Hybrid to Video node in this graph takes them automatically."
             ),
             inputs=[*_settings_inputs_head(), *_settings_inputs_tail()],
@@ -723,14 +723,14 @@ class ArisuMiniMaxH3VideoSettings(io.ComfyNode):
         )
 
     @classmethod
-    def execute(cls, aspect_ratio: str, megapixels: float, duration: float, advertise: bool) -> io.NodeOutput:
+    def execute(cls, aspect_ratio: str, megapixels: float, duration: float, advertise_settings: bool) -> io.NodeOutput:
         """Derive the canvas and frame count.
 
         Args:
             aspect_ratio: One of ``ASPECT_RATIO_LABELS``.
             megapixels: Pixel budget in units of 1024 x 1024.
             duration: Clip length in seconds.
-            advertise: Frontend-only flag; the backend does not read it.
+            advertise_settings: Frontend-only flag; the backend does not read it.
 
         Returns:
             ``(width, height, length)``.
@@ -780,7 +780,9 @@ class ArisuMiniMaxH3VideoSettingsUpscale(io.ComfyNode):
         )
 
     @classmethod
-    def execute(cls, aspect_ratio: str, megapixels: float, upscale_factor: float, duration: float, advertise: bool) -> io.NodeOutput:
+    def execute(
+        cls, aspect_ratio: str, megapixels: float, upscale_factor: float, duration: float, advertise_settings: bool
+    ) -> io.NodeOutput:
         """Derive the canvas, the upscaled target and the frame count.
 
         Args:
@@ -788,7 +790,7 @@ class ArisuMiniMaxH3VideoSettingsUpscale(io.ComfyNode):
             megapixels: Pixel budget in units of 1024 x 1024.
             upscale_factor: Factor of the latent upscale pass.
             duration: Clip length in seconds.
-            advertise: Frontend-only flag; the backend does not read it.
+            advertise_settings: Frontend-only flag; the backend does not read it.
 
         Returns:
             ``(width, height, length, upscale_factor, target_width, target_height)``.
@@ -850,14 +852,21 @@ class ArisuMiniMaxH3ResourceStudio(io.ComfyNode):
             category="Arisu Nodes/MiniMax H3",
             inputs=[
                 io.Combo.Input("aspect_ratio", options=list(ASPECT_RATIO_LABELS), default="16:9 (Widescreen)"),
-                io.Boolean.Input("advertise", default=False),
+                io.Boolean.Input(
+                    "advertise_resources",
+                    default=False,
+                    tooltip=(
+                        "Hand this bundle to every MiniMax H3 Hybrid to Video node in the root graph without a link; "
+                        "their resources socket greys out. Off by default. Read by the frontend."
+                    ),
+                ),
                 io.String.Input("resources_json", default=EMPTY_RESOURCES, socketless=True),
             ],
             outputs=[io.Custom("ARISU_MINIMAX_H3_RESOURCES").Output("resources")],
         )
 
     @classmethod
-    def execute(cls, aspect_ratio: str, advertise: bool, resources_json: str) -> io.NodeOutput:
+    def execute(cls, aspect_ratio: str, advertise_resources: bool, resources_json: str) -> io.NodeOutput:
         """Validate active originals and emit a description bundle, without resizing."""
         if aspect_ratio not in ASPECT_RATIO_LABELS:
             raise ValueError("unknown aspect_ratio")

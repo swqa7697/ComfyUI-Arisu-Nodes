@@ -178,7 +178,7 @@ Studio stores source descriptions. Hybrid decodes originals and performs generat
 A MiniMax H3 workflow with the pack in it:
 
 1. Drop in **MiniMax H3 Video Settings** and set the aspect ratio, megapixels, and duration; switch
-   `advertise` on so the hybrid nodes take them.
+   `advertise_settings` on so the hybrid nodes take them.
 2. Replace the stock conditioning node with **MiniMax H3 Hybrid to Video**. Feed it `clip` and
    `vae` from your H3 loaders, plus `audio_vae` if any audio reference is connected.
 3. Connect keyframes (`first_frame` / `last_frame`) and references (`ref_image_*`, `ref_video_*`,

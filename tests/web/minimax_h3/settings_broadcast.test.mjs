@@ -35,7 +35,7 @@ function keysOf(type) {
 
 /** A settings node LiteGraph just added to `graph`, its switch already at `advertise` (a duplicate restores widgets first). */
 function addSettings(graph, id, type = SETTINGS, advertise = false) {
-  const node = makeNode({ id, type, graph, widgets: [{ name: 'advertise', value: advertise }], outputs: keysOf(type) });
+  const node = makeNode({ id, type, graph, widgets: [{ name: 'advertise_settings', value: advertise }], outputs: keysOf(type) });
   prototypes[type].onAdded.call(node);
   return node;
 }
@@ -54,8 +54,10 @@ function addHybrid(graph, id, type = HYBRID, links = []) {
   return node;
 }
 
+/** The node's advertising switch: `advertise_resources` on the Studio, `advertise_settings` on a settings node. */
 function advertiseWidget(node) {
-  return node.widgets.find((widget) => widget.name === 'advertise');
+  const name = node.type === 'ArisuMiniMaxH3ResourceStudio' ? 'advertise_resources' : 'advertise_settings';
+  return node.widgets.find((widget) => widget.name === name);
 }
 
 /** The user flips the switch: the widget takes the value, then its callback runs. */
@@ -235,7 +237,7 @@ test("queueing a prompt points the handed-over widgets at the advertiser's outpu
     type: 'ArisuMiniMaxH3ResourceStudio',
     graph: root,
     widgets: [
-      { name: 'advertise', value: false },
+      { name: 'advertise_resources', value: false },
       { name: 'aspect_ratio', value: '16:9 (Widescreen)' },
     ],
     outputs: ['resources'],

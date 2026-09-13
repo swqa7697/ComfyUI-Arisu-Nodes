@@ -33,6 +33,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Move the Load Image input and output directory shortcuts beside up in the browse toolbar to free sidebar space.
 
+- Rename the MiniMax H3 Video Settings `advertise` switch to `advertise_settings` and the Resource Studio switch to `advertise_resources`; saved workflows keep the flag by position, API-format exports must use the new key.
+
+- Auto-crop Resource Studio keyframes from a wired aspect ratio when the upstream Video Settings selector is readable, and drop the auto-crop notification.
+
 ### Fixed
 
 - Show the saved crop ratio when opening Resource Studio crop dialogs, with custom width and height fields when needed and Free for uncropped images.

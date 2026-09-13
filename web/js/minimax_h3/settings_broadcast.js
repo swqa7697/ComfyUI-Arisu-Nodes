@@ -13,6 +13,7 @@ const HYBRID_WIDGETS = {
   ArisuMiniMaxH3HybridToVideoAdvanced: ['width', 'height', 'length', 'target_width', 'target_height'],
 };
 const RESOURCE_NAMES = ['first_frame', 'last_frame', 'ref_images', 'ref_videos', 'ref_video_audios', 'ref_audios'];
+const ADVERTISE = { settings: 'advertise_settings', resources: 'advertise_resources' };
 const states = new WeakMap();
 const pending = new Set();
 const promptOwnership = new WeakMap();
@@ -35,8 +36,11 @@ function category(node) {
 function widget(node, name) {
   return node.widgets?.find((value) => value.name === name);
 }
+function switchOf(node) {
+  return widget(node, ADVERTISE[category(node)]);
+}
 function on(node) {
-  return widget(node, 'advertise')?.value === true;
+  return switchOf(node)?.value === true;
 }
 function active(node) {
   return node.mode === 0;
@@ -72,7 +76,7 @@ function exclusive(keep) {
   if (keep.graph !== rootGraph()) return;
   const demoted = (rootGraph()?.nodes ?? []).filter((node) => node !== keep && category(node) === category(keep) && on(node));
   for (const node of demoted) {
-    widget(node, 'advertise').value = false;
+    switchOf(node).value = false;
     node.setDirtyCanvas(true, true);
   }
   if (demoted.length) toast('warn', 'Only one source in each category advertises; the latest switch wins.');
@@ -205,7 +209,7 @@ function refresh(force) {
 }
 function arrive(node) {
   if (!app.configuringGraph && on(node)) {
-    widget(node, 'advertise').value = false;
+    switchOf(node).value = false;
     toast('info', 'Advertising is off on pasted or duplicated nodes.');
   }
 }
@@ -312,7 +316,7 @@ for (const [type, position] of [
   ['ArisuMiniMaxH3VideoSettings', 3],
   ['ArisuMiniMaxH3VideoSettingsUpscale', 4],
 ])
-  registerSelectionOwner(type, { fields: [['advertise', position, false]] });
+  registerSelectionOwner(type, { fields: [[ADVERTISE.settings, position, false]] });
 app.registerExtension({
   name: 'Arisu.MiniMaxH3.SettingsBroadcast',
   init: installSelectionGuards,
@@ -348,7 +352,7 @@ app.registerExtension({
         watchMode(this);
       }
       if (category(this)) {
-        const control = widget(this, 'advertise');
+        const control = switchOf(this);
         if (control && !control.arisuWrapped) {
           control.arisuWrapped = true;
           const original = control.callback;

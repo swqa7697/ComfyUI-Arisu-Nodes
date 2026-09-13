@@ -18,7 +18,7 @@ pytestmark = pytest.mark.comfyui
 def test_settings_nodes_derive_canvas_frames_and_upscale_targets():
     # the workflow's Resolution Configs + Duration Setter: 3:4 at 0.5 MP, x2, 5 s
     width, height, length, factor, target_width, target_height, aspect = ArisuMiniMaxH3VideoSettingsUpscale.execute(
-        aspect_ratio="3:4 (Portrait Standard)", megapixels=0.5, upscale_factor=2.0, duration=5.0, advertise=True
+        aspect_ratio="3:4 (Portrait Standard)", megapixels=0.5, upscale_factor=2.0, duration=5.0, advertise_settings=True
     )
     assert (width, height, length) == (640, 832, 124)
     assert aspect == "3:4 (Portrait Standard)"
@@ -26,13 +26,13 @@ def test_settings_nodes_derive_canvas_frames_and_upscale_targets():
 
     # the plain variant carries no target; the duration snaps up to the 17k+5 grid
     width, height, length, aspect = ArisuMiniMaxH3VideoSettings.execute(
-        aspect_ratio="16:9 (Widescreen)", megapixels=1.0, duration=10.0, advertise=False
+        aspect_ratio="16:9 (Widescreen)", megapixels=1.0, duration=10.0, advertise_settings=False
     )
     assert (width, height, length) == (1376, 768, 243)
     assert aspect == "16:9 (Widescreen)"
 
     # a fractional factor still lands the target on the 32 grid
     result = ArisuMiniMaxH3VideoSettingsUpscale.execute(
-        aspect_ratio="16:9 (Widescreen)", megapixels=1.0, upscale_factor=1.25, duration=5.0, advertise=True
+        aspect_ratio="16:9 (Widescreen)", megapixels=1.0, upscale_factor=1.25, duration=5.0, advertise_settings=True
     )
     assert (result[4], result[5]) == (1728, 960)

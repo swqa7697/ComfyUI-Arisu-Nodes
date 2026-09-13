@@ -30,7 +30,7 @@ function create(data = empty()) {
     graph: app.graph,
     widgets: [
       { name: 'aspect_ratio', value: '16:9 (Widescreen)' },
-      { name: 'advertise', value: false },
+      { name: 'advertise_resources', value: false },
       { name: 'resources_json', value: JSON.stringify(data) },
     ],
     outputs: ['resources'],
@@ -348,7 +348,31 @@ test('Studio keyframes auto-crop on effective ratio changes and preserve manual 
   const before = widget(node, 'resources_json').value;
   definition.prototype.onExecuted.call(node, { arisu_resources: [{ state: 'obsolete', keyframes: {} }] });
   assert.equal(widget(node, 'resources_json').value, before);
+  // A wired ratio reads the upstream settings selector and follows its changes; a selector that is itself wired defers to execution.
+  const status = () => descendants(panel(node)).find((element) => element.tagName === 'OUTPUT').textContent;
+  const settings = makeNode({
+    id: 2,
+    type: 'ArisuMiniMaxH3VideoSettings',
+    graph: app.graph,
+    widgets: [{ name: 'aspect_ratio', value: '1:1 (Square)' }],
+    outputs: ['width', 'height', 'length', 'aspect_ratio'],
+  });
+  app.graph.links = { 7: { origin_id: 2, origin_slot: 3 } };
+  node.inputs.push({ name: 'aspect_ratio', link: 7, widget: { name: 'aspect_ratio' } });
+  definition.prototype.onConnectionsChange.call(node);
+  await settle();
+  assert.deepEqual(state(node).keyframes.first.crop, { left: 100, top: 0, width: 600, height: 600 });
+  assert.equal(status(), 'Aspect ratio from #2');
+  widget(settings, 'aspect_ratio').value = '16:9 (Widescreen)';
+  node.arisuRefreshAspect();
+  await settle();
+  assert.deepEqual(state(node).keyframes.first.crop, { left: 0, top: 75, width: 800, height: 450 });
+  settings.inputs.push({ name: 'aspect_ratio', link: 8 });
+  definition.prototype.onConnectionsChange.call(node);
+  await settle();
+  assert.deepEqual(state(node).keyframes.first.crop, { left: 0, top: 75, width: 800, height: 450 });
+  assert.equal(status(), 'Aspect ratio will resolve during execution');
   definition.prototype.onRemoved.call(node);
   assert(!body.children.some((element) => element.open));
-  assert(!toastSeverities().includes('error'));
+  assert(!toastSeverities().some((severity) => severity === 'error' || severity === 'info'));
 });

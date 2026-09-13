@@ -5,7 +5,7 @@ megapixel budget to get `width` and `height` on the model's 32-pixel grid, and a
 to get `length` on its 17k+5 frame grid. Wire the outputs into the **MiniMax H3 Hybrid to Video**
 nodes' inputs of the same name, or let the node advertise them.
 
-Turn `advertise` on (it is off by default) and every hybrid node in the same graph takes these
+Turn `advertise_settings` on (it is off by default) and every hybrid node in the same graph takes these
 values automatically: its own `width` / `height` / `length` widgets grey out the moment the switch
 flips, refuse links, and a hybrid node added later arrives greyed.
 
@@ -23,7 +23,7 @@ nodes.
 | `aspect_ratio` | COMBO   | The eight ratios of ComfyUI's **Resolution Selector**, same labels (default `16:9 (Widescreen)`).     |
 | `megapixels`   | FLOAT   | Pixel budget in megapixels of 1024 x 1024 (default 1.0). The stock 1344 x 768 canvas is about 0.98 MP. |
 | `duration`     | FLOAT   | Clip length in seconds at 24 fps (default 5.0 = 124 frames). Snapped up to the 17k+5 grid.            |
-| `advertise`    | BOOLEAN | Drive every hybrid node in this graph (default off); their widgets grey out at once and refuse links. Read by the frontend only. |
+| `advertise_settings` | BOOLEAN | Drive every hybrid node in this graph (default off); their widgets grey out at once and refuse links. Read by the frontend only. |
 
 ## Outputs
 
@@ -43,7 +43,7 @@ Video Settings ─ width ─────▶ (width) Hybrid to Video           ex
                ├ height ────▶ (height) Hybrid to Video
                └ length ────▶ (length) Hybrid to Video, or any INT input
 
-Video Settings (advertise on)   ...   Hybrid to Video           no link: the values are injected at queue time
+Video Settings (advertise_settings on)   ...   Hybrid to Video           no link: the values are injected at queue time
 ```
 
 ## Notes
