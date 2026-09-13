@@ -21,6 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Move Resource Studio’s Browse beside the Media references heading, hide zero counters, and show clip-start stills for video references and a waveform marker for audio.
 
+- Stack Resource Studio keyframes in a left column beside the media reference list, with taller reference rows and larger thumbnails.
+
 - Coordinate MiniMax H3 settings and resource advertising across queueing and API exports, rejecting missing sources and conflicting resource inputs.
 
 - Move the Load Image input and output directory shortcuts beside up in the browse toolbar to free sidebar space.
