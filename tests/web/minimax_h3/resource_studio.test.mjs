@@ -15,6 +15,11 @@ const empty = () => ({ version: 1, keyframes: { first: null, last: null }, refer
 const widget = (node, name) => node.widgets.find((widget) => widget.name === name);
 const state = (node) => JSON.parse(widget(node, 'resources_json').value);
 const panel = (node) => widget(node, 'studio').element;
+// The per-type counters, absent while the reference list is empty.
+const counts = (node) =>
+  descendants(panel(node))
+    .find((element) => element.className === 'counts')
+    ?.children.map((element) => element.textContent);
 const button = (root, name) =>
   descendants(root).find((element) => element.tagName === 'BUTTON' && (element.textContent === name || element.ariaLabel === name));
 const settle = () => new Promise((resolve) => setImmediate(resolve));
@@ -70,10 +75,7 @@ test('Studio edits and reorders independent cards, counts only active references
   resetApi();
   resetDom();
   const node = create();
-  assert.equal(
-    descendants(panel(node)).some((element) => element.textContent?.startsWith('Images ')),
-    false,
-  );
+  assert.equal(counts(node), undefined);
   // HTTP origins lack randomUUID; new cards must still persist independent identities.
   const descriptor = Object.getOwnPropertyDescriptor(globalThis.crypto, 'randomUUID');
   const restoreUUID = () => {
@@ -114,7 +116,7 @@ test('Studio edits and reorders independent cards, counts only active references
   widget(node, 'resources_json').value = JSON.stringify(data);
   widget(node, 'aspect_ratio').callback();
   await settle();
-  assert(descendants(panel(node)).some((element) => element.textContent === 'Images 1 · Videos 1 · Audio 0'));
+  assert.deepEqual(counts(node), ['image 1', 'video 1', 'audio 0']);
   assert.equal(
     descendants(panel(node)).some((element) => ['VIDEO', 'AUDIO'].includes(element.tagName)),
     false,
@@ -122,7 +124,7 @@ test('Studio edits and reorders independent cards, counts only active references
   let rows = descendants(panel(node)).filter((element) => element.dataset.cardId);
   button(rows[0], 'Mute').onclick();
   assert.equal(state(node).references[0].muted, true);
-  assert(descendants(panel(node)).some((element) => element.textContent === 'Images 0 · Videos 1 · Audio 0'));
+  assert.deepEqual(counts(node), ['image 0', 'video 1', 'audio 0']);
   rows = descendants(panel(node)).filter((element) => element.dataset.cardId);
   button(rows[2], 'Move up').onclick();
   assert.deepEqual(
@@ -131,7 +133,7 @@ test('Studio edits and reorders independent cards, counts only active references
   );
   rows = descendants(panel(node)).filter((element) => element.dataset.cardId);
   button(rows[1], 'Unmute').onclick();
-  assert(descendants(panel(node)).some((element) => element.textContent === 'Images 0 · Videos 1 · Audio 1'));
+  assert.deepEqual(counts(node), ['image 0', 'video 1', 'audio 1']);
   // Existing card edits are drafts; Cancel and node removal cannot write stale selections.
   api.responses.push(jsonResponse(200, { kind: 'audio', duration: 12, has_audio: true, revision: 'a' }));
   rows = descendants(panel(node)).filter((element) => element.dataset.cardId);

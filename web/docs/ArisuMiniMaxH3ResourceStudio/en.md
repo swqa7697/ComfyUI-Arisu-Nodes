@@ -6,7 +6,7 @@ Choose an aspect ratio, or inherit it from an advertising Video Settings node. N
 
 Browse resources adds images immediately; videos and audio open a clip editor first. Apply commits the selection; Cancel changes nothing. Edit source-relative start/end times, snap to seconds or tenths (or use free precision), select a fixed duration, and loop or stop playback at the selection end. Videos include their soundtrack by default when one exists.
 
-Drag the hover handle or use keyboard Move up/Move down to reorder references. Mute keeps edits while excluding a resource from execution. Images, Videos, and Audio counters show active references only; keyframes and video soundtracks do not count. Limits: nine images, three videos, three standalone audios, and 256 stored cards. Additions beyond an active limit arrive muted.
+Drag the hover handle or use keyboard Move up/Move down to reorder references. Mute keeps edits while excluding a resource from execution. The colored image, video, and audio counters show active references only; keyframes and video soundtracks do not count. Limits: nine images, three videos, three standalone audios, and 256 stored cards. Additions beyond an active limit arrive muted.
 
 Studio retains source descriptions, not resized assets. Hybrid reads originals, applies crops, and resizes for its consumer canvas. Video selections are sampled at 24 fps, capped to generation length, and aligned down to H3's 17k+5 frame grid: a five-second selection supplies 107 usable frames, while a five-second generation setting produces 124. Paired audio follows that effective video interval. An audio VAE is needed only for active emitted audio.
 

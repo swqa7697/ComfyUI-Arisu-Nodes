@@ -14,25 +14,59 @@ const LIMITS = { image: 9, video: 3, audio: 3 };
 const nodes = new WeakMap();
 let activeEditor;
 const STYLE = `
-.arisu-studio{box-sizing:border-box; width:100%; height:100%; overflow:hidden; padding:10px; font:12px system-ui;
- --image:#7fd1c1;--video:#dfa83d;--audio:#b08af0;color:var(--fg-color,#ddd);background:var(--comfy-menu-bg,#303030);}
-.arisu-studio *{box-sizing:border-box;}.arisu-studio .keyframes{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
-.arisu-studio button{font:inherit;color:inherit;background:var(--comfy-input-bg,#383838);border:1px solid var(--border-color,#555);border-radius:4px;cursor:pointer;min-height:28px;}
-.arisu-studio :focus-visible{outline:2px solid var(--p-primary-color,var(--image));outline-offset:2px;}
-.arisu-studio .picture{width:100%;height:125px;display:flex;align-items:center;justify-content:center;padding:0;overflow:hidden;}
-.arisu-studio img{width:100%;height:100%;object-fit:contain;}.arisu-studio .actions{display:flex;gap:4px;flex-wrap:wrap;margin:4px 0;}
-.arisu-studio .actions button{padding:3px 6px;}.arisu-studio .filename{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin:4px 0;}
-.arisu-studio .muted{opacity:.55;}.arisu-studio .heading{display:flex;justify-content:space-between;gap:6px;flex-wrap:wrap;margin:12px 0 6px;}
-.arisu-studio .references{overflow:auto;max-height:310px;min-height:60px;scrollbar-width:thin;}
-.arisu-studio .reference{display:flex;align-items:center;gap:6px;min-height:62px;padding:6px;margin-bottom:5px;border-left:4px solid var(--image);background:var(--comfy-input-bg,#383838);}
-.arisu-studio .reference.video{border-color:var(--video);}.arisu-studio .reference.audio{border-color:var(--audio);}
-.arisu-studio .reference .thumbnail{width:40px;height:40px;object-fit:contain;}.arisu-studio .reference .edit{flex:1;min-width:0;text-align:left;border:0;background:transparent;}.arisu-studio .reference .edit span{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-.arisu-studio .handle{opacity:0;cursor:grab;}.arisu-studio .reference:hover .handle{opacity:1;}
+.arisu-studio{box-sizing:border-box;width:100%;height:100%;overflow:hidden;display:flex;flex-direction:column;gap:10px;padding:6px 10px 10px;
+ font:11px/1.3 Arial,system-ui,sans-serif;--image:#7fd1c1;--video:#d9a441;--audio:#b89be0;
+ --surface:var(--comfy-input-bg,#2a2a2a);--row:var(--comfy-menu-bg,#333);--line:var(--border-color,#444);
+ --label:var(--descrip-text,#999);--text:var(--input-text,#ccc);--dim:#777;--strong:var(--fg-color,#fff);
+ --hover:color-mix(in srgb,var(--row),var(--strong) 8%);color:var(--text);}
+.arisu-studio *{box-sizing:border-box;}
+.arisu-studio button{font:inherit;color:inherit;background:none;border:0;border-radius:2px;padding:0;cursor:pointer;}
+.arisu-studio :focus-visible{outline:2px solid var(--image);outline-offset:1px;}
+.arisu-studio .status{font-size:10px;color:var(--dim);text-align:right;}
+.arisu-studio .label{color:var(--label);}
+.arisu-studio .heading{display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:16px;}
+.arisu-studio .icons{display:flex;align-items:center;gap:4px;}
+.arisu-studio .icon{width:16px;height:16px;display:inline-flex;align-items:center;justify-content:center;color:var(--label);font-size:13px;line-height:1;}
+.arisu-studio .icon svg{width:11px;height:11px;}
+.arisu-studio .icon.dot{font-size:10px;color:var(--image);}.arisu-studio .icon.off{color:var(--dim);}
+.arisu-studio .icon:hover{color:var(--strong);background:var(--hover);}
+.arisu-studio .keyframes{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
+.arisu-studio .keyframe{display:flex;flex-direction:column;gap:4px;min-width:0;}
+.arisu-studio .picture{width:100%;aspect-ratio:1;max-height:180px;display:flex;align-items:center;justify-content:center;overflow:hidden;
+ background:var(--surface);border:1px solid var(--line);border-radius:0;color:var(--dim);}
+.arisu-studio .picture:hover{border-color:var(--image);color:var(--text);}
+.arisu-studio .picture img{width:100%;height:100%;object-fit:contain;}
+.arisu-studio .filename{font-size:10px;color:var(--label);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.arisu-studio .filename.none{color:var(--dim);}
+.arisu-studio .detail{font-size:9.5px;color:var(--dim);font-variant-numeric:tabular-nums;}
+.arisu-studio .muted{opacity:.5;}.arisu-studio .muted .filename,.arisu-studio .muted .name{text-decoration:line-through;}
+.arisu-studio .section{display:flex;flex-direction:column;gap:4px;flex:1;min-height:0;}
+.arisu-studio .counts{display:flex;gap:8px;font-size:10px;}
+.arisu-studio .counts .image{color:var(--image);}.arisu-studio .counts .video{color:var(--video);}.arisu-studio .counts .audio{color:var(--audio);}
+.arisu-studio .box{flex:1;min-height:0;display:flex;flex-direction:column;gap:4px;padding:6px;background:var(--surface);border:1px solid var(--line);}
+.arisu-studio .box.empty{align-items:center;justify-content:center;gap:8px;padding:14px 10px;text-align:center;color:var(--dim);line-height:1.5;}
+.arisu-studio .references{flex:1;min-height:0;overflow:auto;display:flex;flex-direction:column;gap:4px;scrollbar-width:thin;}
+.arisu-studio .reference{--kind:var(--image);display:flex;align-items:center;gap:7px;padding:5px 5px 5px 3px;background:var(--row);border-left:3px solid var(--kind);}
+.arisu-studio .reference.video{--kind:var(--video);}.arisu-studio .reference.audio{--kind:var(--audio);}
+.arisu-studio .reference.muted{border-left-color:rgba(120,126,132,.6);}
+.arisu-studio .reference:hover{background:var(--hover);}
+.arisu-studio .handle{width:12px;text-align:center;color:var(--dim);font-size:10px;cursor:grab;opacity:0;transition:opacity .12s;}
+.arisu-studio .reference:hover .handle{opacity:1;}.arisu-studio .handle:hover{color:var(--text);}
+.arisu-studio .thumb{width:36px;height:24px;flex:none;object-fit:contain;background:color-mix(in srgb,var(--kind) 12%,transparent);border:1px solid color-mix(in srgb,var(--kind) 30%,transparent);}
+.arisu-studio .edit{flex:1;min-width:0;text-align:left;}
+.arisu-studio .edit span{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.arisu-studio .name{color:var(--text);}
 .arisu-studio .move{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);}
-.arisu-studio .move:focus{position:static;width:auto;height:auto;clip-path:none;}.arisu-studio .browse{width:100%;min-height:36px;margin-top:6px;}
-.arisu-studio .status{display:block;min-height:16px;white-space:normal;color:var(--descrip-text,#aaa);}.arisu-studio .detail{color:var(--descrip-text,#aaa);font-variant-numeric:tabular-nums;}
-@media(prefers-color-scheme:light){.arisu-studio{--image:#267c6b;--video:#986600;--audio:#7950aa;}}
+.arisu-studio .move:focus{position:static;width:auto;height:auto;clip-path:none;}
+.arisu-studio .browse{display:flex;align-items:center;justify-content:center;gap:6px;height:28px;padding:0 12px;flex:none;border-radius:4px;
+ background:var(--row);border:1px solid var(--line);color:var(--text);font-size:11.5px;}
+.arisu-studio .browse::before{content:'+';font-size:13px;line-height:1;margin-top:-1px;}
+.arisu-studio .browse:hover{background:var(--hover);border-color:var(--label);color:var(--strong);}
+@media(prefers-color-scheme:light){.arisu-studio{--image:#267c6b;--video:#986600;--audio:#7950aa;--dim:#666;}}
 `;
+const CROP_ICON =
+  '<svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.2" aria-hidden="true">' +
+  '<path d="M4 1.5H1.5V4"/><path d="M8 1.5h2.5V4"/><path d="M4 10.5H1.5V8"/><path d="M8 10.5h2.5V8"/><rect x="3.5" y="3.5" width="5" height="5"/></svg>';
 function resourceId() {
   if (typeof crypto.randomUUID === 'function') return crypto.randomUUID();
   // randomUUID requires a secure context; getRandomValues also works over HTTP.
@@ -247,6 +281,9 @@ async function refreshRatio(node, resolvedRatio) {
     if (state.generation === generation) toast(error.message, 'error');
   }
 }
+function cropParam(card) {
+  return card.crop ? ['left', 'top', 'width', 'height'].map((key) => card.crop[key]).join(',') : '';
+}
 function render(node) {
   const state = nodes.get(node);
   if (!state) return;
@@ -257,8 +294,9 @@ function render(node) {
     state.body.replaceChildren(el('span', { textContent: error.message }));
     return;
   }
-  const button = (text, action, title = text) =>
+  const button = (text, action, title = text, className = 'icon') =>
     el('button', {
+      className,
       textContent: text,
       title,
       ariaLabel: title,
@@ -267,6 +305,8 @@ function render(node) {
         return action();
       },
     });
+  const muteButton = (card, action) =>
+    button(card.muted ? '⦸' : '●', action, card.muted ? 'Unmute' : 'Mute', `icon dot${card.muted ? ' off' : ''}`);
   const mutate = (action) => {
     const next = read(node);
     action(next);
@@ -287,13 +327,15 @@ function render(node) {
     });
   const details = (card) => {
     const info = state.info.get(card.id);
-    return card.kind === 'image'
-      ? card.crop
-        ? `${card.crop.width} × ${card.crop.height}`
-        : info
-          ? `${info.width} × ${info.height}`
-          : 'Original crop'
-      : `${card.clip?.start.toFixed(3)}–${card.clip?.end.toFixed(3)}s`;
+    const size =
+      card.kind === 'image'
+        ? card.crop
+          ? `${card.crop.width} × ${card.crop.height}`
+          : info
+            ? `${info.width} × ${info.height}`
+            : 'Original crop'
+        : `${card.clip?.start.toFixed(3)}–${card.clip?.end.toFixed(3)}s`;
+    return `${size}${card.muted ? ' · Muted' : ''}`;
   };
   const keyframes = el(
     'div',
@@ -306,29 +348,33 @@ function render(node) {
         ariaLabel: `${key} frame`,
         onclick: () => (card ? edit(node, card, key) : browse(node, key)),
       });
+      const actions = [];
       if (card) {
-        const crop = card.crop ? ['left', 'top', 'width', 'height'].map((key) => card.crop[key]).join(',') : '';
-        picture.append(el('img', { src: viewUrl(card.path, undefined, false, crop, card.root), alt: `${key} frame` }));
+        picture.append(el('img', { src: viewUrl(card.path, undefined, false, cropParam(card), card.root), alt: `${key} frame` }));
+        const crop = button('', () => edit(node, card, key), 'Crop');
+        crop.innerHTML = CROP_ICON;
+        actions.push(
+          crop,
+          button('↻', () => browse(node, key, card), 'Replace'),
+          muteButton(card, () => toggle(card, key)),
+          button(
+            '×',
+            () =>
+              mutate((next) => {
+                next.keyframes[key] = null;
+              }),
+            'Clear',
+          ),
+        );
       }
-      return el('div', { className: card?.muted ? 'muted' : '' }, [
-        el('div', { textContent: `${key.toUpperCase()} FRAME` }),
+      return el('div', { className: `keyframe${card?.muted ? ' muted' : ''}` }, [
+        el('div', { className: 'heading' }, [
+          el('span', { className: 'label', textContent: `${key === 'first' ? 'First' : 'Last'} frame` }),
+          ...(card ? [el('div', { className: 'icons' }, actions)] : []),
+        ]),
         picture,
-        el('div', { className: 'filename', textContent: card?.path.split('/').at(-1) ?? '— no file —' }),
-        ...(card
-          ? [
-              el('div', { className: 'detail', textContent: details(card) }),
-              el('div', { className: 'actions' }, [
-                button('Replace', () => browse(node, key, card)),
-                button(card.muted ? 'Unmute' : 'Mute', () => toggle(card, key)),
-                button('Clear', () =>
-                  mutate((next) => {
-                    next.keyframes[key] = null;
-                  }),
-                ),
-              ]),
-              ...(card.muted ? [el('span', { textContent: 'Muted' })] : []),
-            ]
-          : []),
+        el('div', { className: `filename${card ? '' : ' none'}`, textContent: card?.path.split('/').at(-1) ?? '— no file —' }),
+        ...(card ? [el('div', { className: 'detail', textContent: details(card) })] : []),
       ]);
     }),
   );
@@ -357,6 +403,15 @@ function render(node) {
           event.dataTransfer?.setData('text/plain', card.id);
         },
       });
+      const thumb =
+        card.kind === 'image'
+          ? el('img', {
+              className: 'thumb',
+              alt: '',
+              loading: 'lazy',
+              src: viewUrl(card.path, undefined, false, cropParam(card), card.root),
+            })
+          : el('span', { className: 'thumb', ariaHidden: 'true' });
       const row = el(
         'div',
         {
@@ -373,28 +428,13 @@ function render(node) {
         },
         [
           handle,
-          ...(card.kind === 'image'
-            ? [
-                el('img', {
-                  className: 'thumbnail',
-                  alt: '',
-                  loading: 'lazy',
-                  src: viewUrl(
-                    card.path,
-                    undefined,
-                    false,
-                    card.crop ? ['left', 'top', 'width', 'height'].map((key) => card.crop[key]).join(',') : '',
-                    card.root,
-                  ),
-                }),
-              ]
-            : []),
+          thumb,
           el('button', { className: 'edit', ariaLabel: `Edit ${card.kind} ${card.path}`, onclick: () => edit(node, card, null) }, [
-            el('span', { textContent: card.path.split('/').at(-1) }),
-            el('span', { className: 'detail', textContent: `${details(card)}${card.muted ? ' · Muted' : ''}` }),
+            el('span', { className: 'name', textContent: card.path.split('/').at(-1) }),
+            el('span', { className: 'detail', textContent: details(card) }),
           ]),
           button('↻', () => browse(node, null, card), 'Replace'),
-          button(card.muted ? '○' : '●', () => toggle(card, null), card.muted ? 'Unmute' : 'Mute'),
+          muteButton(card, () => toggle(card, null)),
           button(
             '×',
             () =>
@@ -403,38 +443,51 @@ function render(node) {
               }),
             'Remove',
           ),
-          ...[-1, 1].map((delta) => {
-            const control = button(delta < 0 ? 'Move up' : 'Move down', () => move(card.id, delta));
-            control.className = 'move';
-            return control;
-          }),
+          ...[-1, 1].map((delta) => button(delta < 0 ? 'Move up' : 'Move down', () => move(card.id, delta), undefined, 'move')),
         ],
       );
       row.dataset.cardId = card.id;
       return row;
     }),
   );
-  const counts = Object.keys(LIMITS).map((kind) => data.references.filter((card) => card.kind === kind && !card.muted).length);
+  const browseAll = button('Browse resources…', () => browse(node), undefined, 'browse');
+  const box = data.references.length
+    ? el('div', { className: 'box' }, [references, browseAll])
+    : el('div', { className: 'box empty' }, [
+        el('div', { textContent: 'no references yet' }),
+        el('div', { textContent: 'image · video · audio' }),
+        browseAll,
+      ]);
+  const status = ratio(node)
+    ? node.arisuAspectSource
+      ? `Aspect ratio from ${node.arisuAspectSource}`
+      : ''
+    : 'Aspect ratio will resolve during execution';
   state.body.replaceChildren(
     el('style', { textContent: STYLE }),
-    el('output', {
-      className: 'status',
-      ariaLive: 'polite',
-      textContent: ratio(node)
-        ? node.arisuAspectSource
-          ? `Aspect ratio from ${node.arisuAspectSource}`
-          : ''
-        : 'Aspect ratio will resolve during execution',
-    }),
+    el('output', { className: 'status', ariaLive: 'polite', hidden: !status, textContent: status }),
     keyframes,
-    el('div', { className: 'heading' }, [
-      el('span', { textContent: 'MEDIA REFERENCES' }),
-      ...(data.references.length ? [el('span', { textContent: `Images ${counts[0]} · Videos ${counts[1]} · Audio ${counts[2]}` })] : []),
+    el('div', { className: 'section' }, [
+      el('div', { className: 'heading' }, [
+        el('span', { className: 'label', textContent: 'Media references' }),
+        ...(data.references.length
+          ? [
+              el(
+                'span',
+                { className: 'counts' },
+                Object.keys(LIMITS).map((kind) =>
+                  el('span', {
+                    className: kind,
+                    textContent: `${kind} ${data.references.filter((card) => card.kind === kind && !card.muted).length}`,
+                  }),
+                ),
+              ),
+            ]
+          : []),
+      ]),
+      box,
     ]),
-    references,
-    button('Browse resources…', () => browse(node)),
   );
-  state.body.lastChild.className = 'browse';
 }
 registerSelectionOwner(TYPE, {
   fields: [
