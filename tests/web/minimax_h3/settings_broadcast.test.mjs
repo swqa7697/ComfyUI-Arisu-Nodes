@@ -256,7 +256,18 @@ test("queueing a prompt points the handed-over widgets at the advertiser's outpu
       { name: 'resources' },
     ],
   });
-  prototypes[HYBRID].onAdded.call(consumer);
+  const advancedConsumer = makeNode({
+    id: 12,
+    type: HYBRID_ADVANCED,
+    graph: root,
+    inputs: [{ name: 'clip' }, { name: 'first_frame' }, { name: 'ref_images.ref_image_0' }, { name: 'resources' }],
+  });
+  const consumers = [consumer, advancedConsumer];
+  for (const [index, node] of consumers.entries()) {
+    node.computeSize = () => [300, 140 + 20 * node.inputs.length];
+    node.setSize([470 + index * 40, 800]);
+    prototypes[node.type].onAdded.call(node);
+  }
   flip(studio, true);
   assert.equal(consumer.inputs.find((input) => input.name === 'resources').disabled, true);
   assert.equal(prototypes[HYBRID].onConnectInput.call(consumer, inputIndex(consumer, 'resources')), false);
@@ -274,22 +285,37 @@ test("queueing a prompt points the handed-over widgets at the advertiser's outpu
     consumer.inputs.map((input) => input.name),
     ['clip', 'resources'],
   );
+  // Each hybrid fits its remaining content and retains the user's width.
+  for (const [index, node] of consumers.entries()) {
+    assert.deepEqual(node.size, [470 + index * 40, 180]);
+    node.setSize([node.size[0], 900]);
+  }
   await api.queuePrompt(0, exported);
+  // Refreshing unchanged ownership must preserve a subsequent manual resize.
+  for (const node of consumers) assert.equal(node.size[1], 900);
   assert.deepEqual(exported.output[11].inputs.resources, ['10', 0]);
   studio.mode = 2;
   assert.equal(consumer.inputs.find((input) => input.name === 'resources').disabled, false);
   assert(consumer.inputs.some((input) => input.name === 'first_frame' && input.link === null));
   assert.equal(consumer.inputs.find((input) => input.name === 'clip').link, 90);
+  for (const [index, node] of consumers.entries()) assert.deepEqual(node.size, [470 + index * 40, 220]);
   studio.mode = 0;
   await app.graphToPrompt();
+  for (const [index, node] of consumers.entries()) assert.deepEqual(node.size, [470 + index * 40, 180]);
   flip(studio, false);
+  for (const [index, node] of consumers.entries()) assert.deepEqual(node.size, [470 + index * 40, 220]);
   assert(consumer.inputs.some((input) => input.name === 'ref_images.ref_image_0'));
   // An explicit source pruned by the serializer is an error, never an empty bundle.
   root.links = { 100: { origin_id: 10 } };
   consumer.inputs.find((input) => input.name === 'resources').link = 100;
+  prototypes[HYBRID].onConnectionsChange.call(consumer);
   app.promptForTest = { workflow: { links: [] }, output: { 11: { class_type: HYBRID, inputs: {} } } };
   await assert.rejects(app.graphToPrompt(), /explicitly connected/);
+  assert.deepEqual(consumer.size, [470, 180]);
+  assert.deepEqual(advancedConsumer.size, [510, 220]);
   consumer.inputs.find((input) => input.name === 'resources').link = null;
+  prototypes[HYBRID].onConnectionsChange.call(consumer);
+  assert.deepEqual(consumer.size, [470, 220]);
   flip(studio, true);
   app.promptForTest = { workflow: { links: [] }, output: { 10: { inputs: { upstream: ['11', 0] } }, 11: { inputs: {} } } };
   await assert.rejects(app.graphToPrompt(), /cycle/);

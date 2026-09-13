@@ -128,8 +128,7 @@ function seedSlots(node) {
 function scheduleSockets(node, owned) {
   const state = states.get(node);
   if (!state) return;
-  if (state.owned === owned && !state.transition) return;
-  if (state.owned === owned && state.transition) return;
+  if (state.owned === owned) return;
   state.owned = owned;
   state.generation++;
   const generation = state.generation;
@@ -138,6 +137,7 @@ function scheduleSockets(node, owned) {
       if (!node.inputs?.some((input) => group(input.name) === group(seed.name)))
         node.addInput(seed.name, seed.type, { ...seed, link: null });
     }
+    node.setSize([node.size[0], node.computeSize()[1]]);
     node.setDirtyCanvas(true, true);
     return;
   }
@@ -146,12 +146,15 @@ function scheduleSockets(node, owned) {
   const tick = () =>
     new Promise((resolve) => (typeof requestAnimationFrame === 'function' ? requestAnimationFrame(resolve) : setTimeout(resolve, 0)));
   const graph = node.graph;
+  const root = rootGraph();
   graph?.beforeChange?.();
   const task = (async () => {
     await tick();
     await tick();
-    if (states.get(node) !== state || generation !== state.generation || !state.owned) return;
+    if (rootGraph() !== root || node.graph !== graph || states.get(node) !== state || generation !== state.generation || !state.owned)
+      return;
     for (let i = node.inputs.length - 1; i >= 0; i--) if (individual(node.inputs[i])) node.removeInput(i);
+    node.setSize([node.size[0], node.computeSize()[1]]);
     node.setDirtyCanvas(true, true);
   })();
   state.transition = task;
@@ -412,11 +415,29 @@ app.registerExtension({
       setTimeout(refresh, 0);
     });
   },
-  afterConfigureGraph() {
+  async afterConfigureGraph() {
+    const root = rootGraph();
+    // loadedGraphNode has restored saved sizes, but canvas draws can expand them
+    // while the resource sockets are still waiting for their two-frame cleanup.
+    const sizes = allNodes(root)
+      .filter((node) => node.type in HYBRID_WIDGETS)
+      .map((node) => ({ node, graph: node.graph, size: [...node.size] }));
     for (const kind of ['settings', 'resources']) {
       const first = (rootGraph()?.nodes ?? []).find((node) => category(node) === kind && on(node));
       if (first) exclusive(first);
     }
     refresh(true);
+    await Promise.all(
+      sizes.map(async ({ node, graph, size }) => {
+        const state = states.get(node);
+        if (!state?.owned || !state.transition) return;
+        const generation = state.generation;
+        await state.transition;
+        if (rootGraph() !== root || node.graph !== graph || states.get(node) !== state || state.generation !== generation || !state.owned)
+          return;
+        node.setSize(size);
+        node.setDirtyCanvas(true, true);
+      }),
+    );
   },
 });
