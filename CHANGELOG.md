@@ -31,6 +31,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Highlight every reference already in the list when browsing Resource Studio references, and show poster stills for videos and waveform tiles for audio in mixed Browse, outlined in their kind colour.
 - Show a loading indicator on Browse tiles until their thumbnail or poster arrives, keep loaded tiles while filtering, and queue media requests behind the busy workers instead of refusing them.
 - Center-crop the first keyframe of the MiniMax H3 Hybrid nodes to the canvas by default instead of stretching it; API-format exports must supply the eight `first_frame_*` / `last_frame_*` keys.
+- Enlarge Resource Studio icon buttons and reference-row text, and colour each mute button in its resource kind.
+- Show an insertion line while dragging a Resource Studio reference and drop it above or below the row under the pointer.
 
 ### Fixed
 

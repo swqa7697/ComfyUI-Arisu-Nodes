@@ -28,9 +28,9 @@ const STYLE = `
 .arisu-studio .label{color:var(--label);line-height:20px;}
 .arisu-studio .heading{display:flex;align-items:center;justify-content:space-between;gap:8px;height:20px;}
 .arisu-studio .icons{display:flex;align-items:center;gap:4px;}
-.arisu-studio .icon{width:16px;height:16px;display:inline-flex;align-items:center;justify-content:center;color:var(--label);font-size:13px;line-height:1;}
-.arisu-studio .icon svg{width:11px;height:11px;}
-.arisu-studio .icon.dot{font-size:10px;color:var(--image);}.arisu-studio .icon.off{color:var(--dim);}
+.arisu-studio .icon{width:20px;height:20px;display:inline-flex;align-items:center;justify-content:center;color:var(--label);font-size:15px;line-height:1;}
+.arisu-studio .icon svg{width:13px;height:13px;}
+.arisu-studio .icon.dot{font-size:12px;color:var(--kind,var(--image));}.arisu-studio .icon.off{color:var(--dim);}
 .arisu-studio .icon:hover{color:var(--strong);background:var(--hover);}
 .arisu-studio .layout{flex:1;min-height:0;display:grid;grid-template-columns:170px minmax(0,1fr);grid-template-rows:minmax(0,1fr);gap:10px;}
 .arisu-studio .keyframes{display:flex;flex-direction:column;justify-content:space-between;gap:8px;}
@@ -41,7 +41,7 @@ const STYLE = `
 .arisu-studio .picture img{width:100%;height:100%;object-fit:contain;}
 .arisu-studio .filename{height:14px;line-height:14px;font-size:10px;color:var(--label);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .arisu-studio .filename.none{color:var(--dim);}
-.arisu-studio .detail{font-size:10px;line-height:13px;color:var(--dim);font-variant-numeric:tabular-nums;}
+.arisu-studio .detail{font-size:11px;line-height:14px;color:var(--dim);font-variant-numeric:tabular-nums;}
 .arisu-studio .muted{opacity:.5;}.arisu-studio .muted .filename,.arisu-studio .muted .name{text-decoration:line-through;}
 .arisu-studio .section{display:flex;flex-direction:column;gap:4px;min-width:0;min-height:0;}
 .arisu-studio .counts{display:flex;gap:8px;margin-left:auto;font-size:10px;line-height:20px;font-variant-numeric:tabular-nums;}
@@ -53,7 +53,10 @@ const STYLE = `
 .arisu-studio .reference.video{--kind:var(--video);}.arisu-studio .reference.audio{--kind:var(--audio);}
 .arisu-studio .reference.muted{border-left-color:rgba(120,126,132,.6);}
 .arisu-studio .reference:hover{background:var(--hover);}
-.arisu-studio .handle{width:12px;text-align:center;color:var(--dim);font-size:10px;cursor:grab;opacity:0;transition:opacity .12s;}
+.arisu-studio .reference[data-dragging]{opacity:.4;}
+.arisu-studio .reference[data-drop=before]{box-shadow:0 -4px 0 -1px var(--strong);}
+.arisu-studio .reference[data-drop=after]{box-shadow:0 4px 0 -1px var(--strong);}
+.arisu-studio .handle{width:14px;text-align:center;color:var(--dim);font-size:12px;cursor:grab;opacity:0;transition:opacity .12s;}
 .arisu-studio .reference:hover .handle{opacity:1;}.arisu-studio .handle:hover{color:var(--text);}
 .arisu-studio .thumb{width:58px;height:40px;flex:none;display:flex;align-items:center;justify-content:center;object-fit:contain;color:var(--kind);
  background:color-mix(in srgb,var(--kind) 12%,transparent);border:1px solid color-mix(in srgb,var(--kind) 30%,transparent);}
@@ -61,7 +64,7 @@ const STYLE = `
 .arisu-studio .reference.muted .thumb{background:var(--surface);}
 .arisu-studio .edit{flex:1;min-width:0;text-align:left;}
 .arisu-studio .edit > span{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-.arisu-studio .name{color:var(--text);line-height:14px;}.arisu-studio .detail .lead{color:var(--text);}
+.arisu-studio .name{color:var(--text);font-size:12px;line-height:16px;}.arisu-studio .detail .lead{color:var(--text);}
 .arisu-studio .move{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);}
 .arisu-studio .move:focus{position:static;width:auto;height:auto;clip-path:none;}
 .arisu-studio .browse{display:flex;align-items:center;justify-content:center;gap:5px;height:20px;padding:0 9px;flex:none;border-radius:3px;
@@ -508,20 +511,22 @@ function render(node) {
       ?.querySelector('.edit')
       ?.focus();
   };
+  // Drag feedback lives on the rendered rows as data attributes; a drop or a cancelled drag clears both markers.
+  const clearDrop = () => {
+    if (state.dropRow) delete state.dropRow.dataset.drop;
+    state.dropRow = null;
+  };
+  const endDrag = () => {
+    clearDrop();
+    if (state.dragRow) delete state.dragRow.dataset.dragging;
+    state.dragRow = null;
+    state.drag = null;
+  };
   const references = el(
     'div',
     { className: 'references', onwheel: keepScrollWheel },
     data.references.map((card) => {
-      const handle = el('span', {
-        className: 'handle',
-        textContent: '⠿',
-        draggable: true,
-        ariaHidden: 'true',
-        ondragstart: (event) => {
-          state.drag = card.id;
-          event.dataTransfer?.setData('text/plain', card.id);
-        },
-      });
+      const handle = el('span', { className: 'handle', textContent: '⠿', draggable: true, ariaHidden: 'true' });
       const icon = (markup) => {
         const span = el('span', { className: 'thumb', ariaHidden: 'true' });
         span.innerHTML = markup;
@@ -562,14 +567,28 @@ function render(node) {
         'div',
         {
           className: `reference ${card.kind}${card.muted ? ' muted' : ''}`,
-          ondragover: (event) => event.preventDefault(),
+          // The pointer half of the hovered row decides whether the dragged card lands above or below it.
+          ondragover: (event) => {
+            event.preventDefault();
+            if (!state.drag || state.drag === card.id) {
+              clearDrop();
+              return;
+            }
+            const rect = row.getBoundingClientRect();
+            if (state.dropRow !== row) clearDrop();
+            row.dataset.drop = event.clientY < rect.top + rect.height / 2 ? 'before' : 'after';
+            state.dropRow = row;
+          },
           ondrop: (event) => {
             event.preventDefault();
-            if (!state.drag) return;
-            const from = data.references.findIndex((item) => item.id === state.drag);
+            const side = row.dataset.drop ?? 'after';
+            const id = state.drag;
+            const from = data.references.findIndex((item) => item.id === id);
             const to = data.references.findIndex((item) => item.id === card.id);
-            if (from >= 0) move(state.drag, to - from);
-            state.drag = null;
+            endDrag();
+            if (from < 0 || from === to) return;
+            const insert = (side === 'before' ? to : to + 1) - (from < to ? 1 : 0);
+            if (insert !== from) move(id, insert - from);
           },
         },
         [
@@ -592,6 +611,16 @@ function render(node) {
         ],
       );
       row.dataset.cardId = card.id;
+      handle.ondragstart = (event) => {
+        state.drag = card.id;
+        state.dragRow = row;
+        row.dataset.dragging = '';
+        if (event.dataTransfer) {
+          event.dataTransfer.effectAllowed = 'move';
+          event.dataTransfer.setData('text/plain', card.id);
+        }
+      };
+      handle.ondragend = endDrag;
       return row;
     }),
   );

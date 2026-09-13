@@ -326,6 +326,48 @@ test('Studio edits and reorders independent cards, counts only active references
     state(node).references.map((card) => card.id),
     ['picture', 'sound', 'video'],
   );
+  // Dragging marks the source row, the hovered row shows which half the card lands in, and the drop follows it;
+  // the video moves above the audio and back below it, so later steps keep the audio card in the middle.
+  const cardRows = () => descendants(panel(node)).filter((element) => element.dataset.cardId);
+  const grip = (row) => row.children.find((element) => element.className === 'handle');
+  const drag = (row) => grip(row).ondragstart({ dataTransfer: { setData() {} } });
+  const over = (row, clientY) => {
+    row.getBoundingClientRect = () => ({ top: 0, height: 52 });
+    row.ondragover({ preventDefault() {}, clientY });
+  };
+  const drop = (row) => row.ondrop({ preventDefault() {} });
+  rows = cardRows();
+  drag(rows[2]);
+  assert.equal(rows[2].dataset.dragging, '');
+  over(rows[0], 10);
+  assert.equal(rows[0].dataset.drop, 'before');
+  over(rows[1], 10);
+  assert.equal(rows[0].dataset.drop, undefined);
+  assert.equal(rows[1].dataset.drop, 'before');
+  over(rows[2], 10);
+  assert.equal(rows[1].dataset.drop, undefined);
+  over(rows[0], 40);
+  assert.equal(rows[0].dataset.drop, 'after');
+  drop(rows[0]);
+  assert.deepEqual(
+    state(node).references.map((card) => card.id),
+    ['picture', 'video', 'sound'],
+  );
+  assert.equal(rows[0].dataset.drop, undefined);
+  assert.equal(rows[2].dataset.dragging, undefined);
+  rows = cardRows();
+  drag(rows[1]);
+  over(rows[2], 40);
+  drop(rows[2]);
+  assert.deepEqual(
+    state(node).references.map((card) => card.id),
+    ['picture', 'sound', 'video'],
+  );
+  rows = cardRows();
+  drag(rows[0]);
+  grip(rows[0]).ondragend();
+  over(rows[1], 10);
+  assert.equal(rows[1].dataset.drop, undefined);
   await checkBrowse(button(panel(node), 'Browse references…'), node, 'input:/');
   rows = descendants(panel(node)).filter((element) => element.dataset.cardId);
   button(rows[1], 'Unmute').onclick();
