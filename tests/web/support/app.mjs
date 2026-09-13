@@ -6,6 +6,7 @@ export const settings = {};
 
 export const app = {
   extensions: [],
+  canvas: null,
   graph: null,
   rootGraph: null,
   nodeOutputs: {},
@@ -40,6 +41,7 @@ export function extensionNamed(name) {
 
 /** Point `app` at a fresh root graph and drop the state the previous test left behind. */
 export function resetApp(graph) {
+  app.canvas = null;
   app.graph = graph;
   app.rootGraph = graph;
   app.nodeOutputs = {};

@@ -23,9 +23,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Stack Resource Studio keyframes in a left column beside the media reference list, with taller reference rows and larger thumbnails.
 
-- Show dimensions or clip length, video height or audio sample rate, and file size on Resource Studio reference rows, reloading them after a workflow opens.
+- Show dimensions or clip and source lengths, video height or audio sample rate, and file size on Resource Studio reference rows, reloading them after a workflow opens.
 
 - Limit Resource Studio clip times to one decimal, removing the clip editor's free-precision snapping.
+
+- Remove the Resource Studio height cap so the node grows freely, and pass wheel zoom and middle-button canvas drags through its panel, scrolling an overflowing reference list instead.
 
 - Coordinate MiniMax H3 settings and resource advertising across queueing and API exports, rejecting missing sources and conflicting resource inputs.
 

@@ -154,8 +154,8 @@ test('Studio edits and reorders independent cards, counts only active references
   // Cards restored without in-memory metadata probe it once, in list order, and describe themselves like the design.
   api.responses.push(
     jsonResponse(200, { kind: 'image', width: 1200, height: 1200, size: 1468006, revision: 'i' }),
-    jsonResponse(200, { kind: 'video', duration: 5, has_audio: true, width: 1280, height: 720, rate: 24, size: 8493465, revision: 'v' }),
-    jsonResponse(200, { kind: 'audio', duration: 5, has_audio: true, width: 0, height: 0, rate: 48000, size: 2306867, revision: 'a' }),
+    jsonResponse(200, { kind: 'video', duration: 12, has_audio: true, width: 1280, height: 720, rate: 24, size: 8493465, revision: 'v' }),
+    jsonResponse(200, { kind: 'audio', duration: 8.25, has_audio: true, width: 0, height: 0, rate: 48000, size: 2306867, revision: 'a' }),
   );
   widget(node, 'resources_json').value = JSON.stringify(data);
   widget(node, 'aspect_ratio').callback();
@@ -168,13 +168,57 @@ test('Studio edits and reorders independent cards, counts only active references
       .map((detail) => [detail.children[0].textContent, detail.children.map((part) => part.textContent).join('')]);
   assert.deepEqual(details(), [
     ['1200×1200', '1200×1200 · 1.4 MB'],
-    ['00:05', '00:05 · 720p · 8.1 MB'],
-    ['00:05', '00:05 · 48 kHz · 2.2 MB'],
+    ['00:05', '00:05 / 00:12 · 720p · 8.1 MB'],
+    ['00:05', '00:05 / 00:08.3 · 48 kHz · 2.2 MB'],
   ]);
   const probed = api.calls.length;
   widget(node, 'aspect_ratio').callback();
   await settle();
   assert.equal(api.calls.length, probed);
+  // Canvas gestures pass through the panel; only an overflowing list keeps a plain vertical wheel for itself.
+  const canvas = { calls: [] };
+  for (const method of ['processMouseWheel', 'processMouseDown', 'processMouseMove', 'processMouseUp']) {
+    canvas[method] = (event) => canvas.calls.push([method, event.type]);
+  }
+  app.canvas = canvas;
+  // The fake DOM does not bubble: a target's own handler runs first and the panel's listeners follow unless it stopped.
+  const fire = (target, type, init = {}) => {
+    const event = { type, deltaX: 0, deltaY: 120, ctrlKey: false, button: 0, buttons: 1, stopped: false, prevented: false, ...init };
+    event.currentTarget = target;
+    event.stopPropagation = () => {
+      event.stopped = true;
+    };
+    event.preventDefault = () => {
+      event.prevented = true;
+    };
+    target[`on${type}`]?.(event);
+    if (!event.stopped) for (const listener of panel(node).listeners.get(type) ?? []) listener(event);
+    return event;
+  };
+  const list = descendants(panel(node)).find((element) => element.className === 'references');
+  assert.equal(fire(panel(node), 'wheel').prevented, true);
+  assert.equal(fire(list, 'wheel').stopped, false);
+  list.scrollHeight = 500;
+  list.clientHeight = 200;
+  assert.equal(fire(list, 'wheel').stopped, true);
+  assert.equal(fire(list, 'wheel', { ctrlKey: true }).stopped, false);
+  assert.equal(fire(list, 'wheel', { deltaX: 200 }).stopped, false);
+  assert.equal(fire(panel(node), 'pointerdown', { button: 0, buttons: 1 }).stopped, true);
+  fire(panel(node), 'pointerdown', { button: 1, buttons: 4 });
+  fire(panel(node), 'pointermove', { button: -1, buttons: 4 });
+  fire(panel(node), 'pointermove', { button: -1, buttons: 1 });
+  fire(panel(node), 'pointerup', { button: 1, buttons: 0 });
+  assert.equal(fire(panel(node), 'keydown', { key: 'Delete' }).stopped, true);
+  assert.deepEqual(canvas.calls, [
+    ['processMouseWheel', 'wheel'],
+    ['processMouseWheel', 'wheel'],
+    ['processMouseWheel', 'wheel'],
+    ['processMouseWheel', 'wheel'],
+    ['processMouseDown', 'pointerdown'],
+    ['processMouseMove', 'pointermove'],
+    ['processMouseUp', 'pointerup'],
+  ]);
+  app.canvas = null;
   assert.equal(
     descendants(panel(node)).some((element) => ['VIDEO', 'AUDIO'].includes(element.tagName)),
     false,

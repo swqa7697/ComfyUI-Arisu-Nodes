@@ -114,6 +114,30 @@ function resourceId() {
 function widget(node, name) {
   return node.widgets?.find((widget) => widget.name === name);
 }
+// Wheel turns and middle-button drags over the panel reach the canvas, as they do over ComfyUI's multiline text
+// widgets; left clicks and keys stay on the panel so a row press cannot drag the node and Delete cannot remove it.
+function forwardToCanvas(body) {
+  body.addEventListener('keydown', (event) => event.stopPropagation());
+  body.addEventListener('pointerdown', (event) => {
+    if (event.button === 1 || event.buttons === 4) app.canvas?.processMouseDown(event);
+    event.stopPropagation();
+  });
+  body.addEventListener('pointermove', (event) => {
+    if ((event.buttons & 4) === 4) app.canvas?.processMouseMove(event);
+  });
+  body.addEventListener('pointerup', (event) => {
+    if (event.button === 1) app.canvas?.processMouseUp(event);
+  });
+  body.addEventListener('wheel', (event) => {
+    event.preventDefault();
+    app.canvas?.processMouseWheel(event);
+  });
+}
+// An overflowing list keeps a plain vertical wheel for scrolling; Ctrl and horizontal turns still reach the canvas.
+function keepScrollWheel(event) {
+  const list = event.currentTarget;
+  if (!event.ctrlKey && Math.abs(event.deltaX) <= Math.abs(event.deltaY) && list.scrollHeight > list.clientHeight) event.stopPropagation();
+}
 function toast(detail, severity = 'warn') {
   app.extensionManager?.toast?.add?.({ severity, summary: 'Resource Studio', detail, life: 8000 });
 }
@@ -391,7 +415,7 @@ function render(node) {
       }
       target.muted = !target.muted;
     });
-  // The design's second line: dimensions or clip length first, then video height or audio rate, then file size.
+  // The design's second line: dimensions, or the clip length beside the source length, then video height or audio rate, then file size.
   const details = (card) => {
     const info = state.info.get(card.id);
     const size = info ? bytes(info.size) : null;
@@ -401,7 +425,7 @@ function render(node) {
     }
     const lead = card.clip ? clock(card.clip.end - card.clip.start) : '—';
     if (!info) return { lead, rest: info === null ? ' · —' : '' };
-    return { lead, rest: ` · ${card.kind === 'video' ? `${info.height}p` : kilohertz(info.rate)} · ${size}` };
+    return { lead, rest: ` / ${clock(info.duration)} · ${card.kind === 'video' ? `${info.height}p` : kilohertz(info.rate)} · ${size}` };
   };
   const keyframes = el(
     'div',
@@ -458,7 +482,7 @@ function render(node) {
   };
   const references = el(
     'div',
-    { className: 'references' },
+    { className: 'references', onwheel: keepScrollWheel },
     data.references.map((card) => {
       const handle = el('span', {
         className: 'handle',
@@ -601,7 +625,7 @@ app.registerExtension({
       const body = el('div', { className: 'arisu-studio' });
       const state = { body, info: new Map(), posters: new Map(), pending: new Set(), generation: 0 };
       nodes.set(this, state);
-      for (const event of ['pointerdown', 'wheel', 'keydown']) body.addEventListener(event, (event) => event.stopPropagation());
+      forwardToCanvas(body);
       const control = widget(this, 'resources_json');
       if (control) {
         control.options ??= {};
@@ -612,7 +636,6 @@ app.registerExtension({
         serialize: false,
         hideOnZoom: false,
         getMinHeight: () => 420,
-        getMaxHeight: () => 620,
       });
       dom.serialize = false;
       this.setSize([470, 510]);
