@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add aspect-ratio outputs to both MiniMax H3 Video Settings nodes.
 - Add inline names and renaming for saved Load Image browse paths.
 - Add a ComfyUI setting for the default Load Image browse location when no image is selected: a root or a saved path by name, reset to `input` with a warning when a chosen saved path is gone.
+- Add a keyframes settings dialog to both MiniMax H3 Hybrid to Video nodes: resize method, crop, pad or stretch, pad colour and crop position for the first and the last frame separately, on the model's 32-pixel canvas grid.
 
 ### Changed
 
@@ -29,6 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Remove the custom aspect ratio from crop dialogs: a saved crop that matches no preset opens as Free and constrains nothing, and `21:9` joins the presets.
 - Highlight every reference already in the list when browsing Resource Studio references, and show poster stills for videos and waveform tiles for audio in mixed Browse, outlined in their kind colour.
 - Show a loading indicator on Browse tiles until their thumbnail or poster arrives, keep loaded tiles while filtering, and queue media requests behind the busy workers instead of refusing them.
+- Center-crop the first keyframe of the MiniMax H3 Hybrid nodes to the canvas by default instead of stretching it; API-format exports must supply the eight `first_frame_*` / `last_frame_*` keys.
 
 ### Fixed
 

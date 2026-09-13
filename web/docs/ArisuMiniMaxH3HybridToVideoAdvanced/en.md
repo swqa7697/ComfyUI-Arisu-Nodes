@@ -65,9 +65,8 @@ sure its multiplier lands on them after its 32-pixel alignment.
   768-short-edge canvas), so they are encoded once and shared.
 - The text encoder sees the keyframes and references at the generation size only, because the prompt
   is encoded once; `frame_picture_tags` works as in the hybrid node.
-- The same crop policy applies at both sizes: `first_frame` is stretched, `last_frame` is
-  center-cropped. Keep the target aspect equal to the generation aspect unless you want a different
-  crop in the second pass.
+- Each keyframe's settings from the **keyframes…** dialog apply at both sizes. Keep the target aspect
+  equal to the generation aspect unless you want a different crop or padding in the second pass.
 - Keyframes added later by **Add Guide for MiniMax H3** or a motion-context node are not covered;
   add them against the latent of the pass they belong to.
 

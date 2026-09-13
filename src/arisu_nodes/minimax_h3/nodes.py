@@ -5,7 +5,9 @@ Importing this module requires ComfyUI's source tree and virtual environment
 
 The tensor helpers mirror ``comfy_extras/nodes_minimax_h3.py`` (v0.34.5) rather
 than importing its underscore-private names, so a ComfyUI rename cannot break
-the pack at import time.
+the pack at import time. Keyframes are fitted to the canvas with **Resize
+Image**'s geometry (``common.core.resize_plan``) and pixel path
+(``common.nodes.apply_resize_plan``), as the per-keyframe settings say.
 """
 
 from __future__ import annotations
@@ -16,7 +18,6 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple, Type, Union
 import comfy.model_management
 import comfy.nested_tensor
 import comfy.sd
-import comfy.utils
 import folder_paths
 import node_helpers
 import torch
@@ -24,11 +25,14 @@ import torchaudio
 from comfy_api.latest import io
 from nodes import MAX_RESOLUTION
 
+from ..common.core import CROP_POSITIONS, DEFAULT_PAD_COLOR, KEYFRAME_MODES, RESIZE_METHODS, FrameFit, resize_plan
+from ..common.nodes import apply_resize_plan, pad_color_error
 from ..common.paths import image_roots
 from .core import (
     ASPECT_RATIO_LABELS,
     AUDIO_CHANNELS,
     AUDIO_LATENT_CHANNELS,
+    CANVAS_MULTIPLE,
     EMPTY_RESOURCES,
     FRAME_TAG_MODES,
     REF_IMAGE_SIZE_MODES,
@@ -56,46 +60,54 @@ from .media import build_bundle, read_audio, read_image, read_video, source_fing
 RefItem = Dict[str, Any]
 RefBlock = Dict[str, Any]
 Conditioning = List[List[Any]]
-# A keyframe before it is fitted to a canvas: (frames [1, H, W, C], crop mode, resolved frame index).
-KeyframeSource = Tuple[torch.Tensor, str, int]
+# A keyframe before it is fitted to a canvas: (frames [1, H, W, C], how to fit them, resolved frame index).
+KeyframeSource = Tuple[torch.Tensor, FrameFit, int]
+# References are lanczos-stretched to their canvas, as the stock node does.
+STRETCH_FIT = FrameFit("lanczos", "stretch", DEFAULT_PAD_COLOR, "center")
+_KEYFRAME_METHOD_TOOLTIP = (
+    "Keyframes dialog. How the {label} is resampled; lanczos is the sharpest for photos, nearest-exact keeps hard edges."
+)
+_KEYFRAME_MODE_TOOLTIP = (
+    "Keyframes dialog. How the {label} reaches the canvas: crop cuts it to the canvas aspect first, pad fits it inside and fills "
+    "the rest with its pad colour, stretch ignores the aspect ratio. The canvas is always exactly width x height."
+)
+_KEYFRAME_PAD_COLOR_TOOLTIP = (
+    "Keyframes dialog. The pad fill of the {label}: r, g, b (0-255, or 0.0-1.0 with a decimal point), #rrggbb, one grey value, "
+    "or a colour name."
+)
+_KEYFRAME_POSITION_TOOLTIP = "Keyframes dialog. Where the {label} stays: the region kept in crop, the side it sits on in pad."
+_KEYFRAME_TOOLTIP = (
+    "Keyframe pinned at {where}; fitted to the canvas as its keyframes dialog settings say (lanczos, crop, center by default)."
+)
 
 
-def resize_frames(image: torch.Tensor, width: int, height: int, crop: str) -> torch.Tensor:
-    """Lanczos-resize an image batch to ``width`` x ``height``, dropping any alpha channel.
-
-    Args:
-        image: Frames shaped ``[B, H, W, C]`` in the 0-1 range.
-        width: Target width in pixels.
-        height: Target height in pixels.
-        crop: ``"disabled"`` for a plain stretch or ``"center"`` for an aspect-preserving cover-crop.
-
-    Returns:
-        Frames shaped ``[B, height, width, 3]``.
-    """
-    samples = image[..., :3].movedim(-1, 1)
-    samples = comfy.utils.common_upscale(samples, width, height, "lanczos", crop)
-    return samples.movedim(1, -1)
-
-
-def fit_frames(image: torch.Tensor, width: int, height: int, crop: str) -> torch.Tensor:
-    """Fit an image batch to ``width`` x ``height``, skipping the resize when it already matches.
+def fit_frames(image: torch.Tensor, width: int, height: int, fit: FrameFit) -> torch.Tensor:
+    """Fit an image batch to ``width`` x ``height`` as ``fit`` says, skipping the resize when it already matches.
 
     ComfyUI's lanczos path round-trips through 8-bit images even at the same
     size, so a batch that already has the canvas size is passed through as is,
-    minus any alpha channel.
+    minus any alpha channel. Otherwise ``core.resize_plan`` works out the crop,
+    scale and pad on the model's 32-pixel canvas grid and ``apply_resize_plan``
+    moves the pixels.
 
     Args:
         image: Frames shaped ``[B, H, W, C]`` in the 0-1 range.
         width: Canvas width in pixels.
         height: Canvas height in pixels.
-        crop: ``"disabled"`` for a plain stretch or ``"center"`` for an aspect-preserving cover-crop.
+        fit: The resampler, mode, pad colour and crop position.
 
     Returns:
         Frames shaped ``[B, height, width, 3]``.
+
+    Raises:
+        ValueError: For a mode outside ``KEYFRAME_MODES``; a keyframe must land on exactly the canvas.
     """
-    if frame_needs_resize(image.shape, width, height):
-        return resize_frames(image, width, height, crop)
-    return image[..., :3]
+    if fit.mode not in KEYFRAME_MODES:
+        raise ValueError(f"unknown keyframe mode {fit.mode!r}")
+    if not frame_needs_resize(image.shape, width, height):
+        return image[..., :3]
+    plan = resize_plan((image.shape[2], image.shape[1]), width, height, fit.mode, fit.crop_position, CANVAS_MULTIPLE)
+    return apply_resize_plan(image[..., :3], plan, fit.resize_method, fit.pad_color)
 
 
 def encode_ref_audio(audio_vae: comfy.sd.VAE, audio: Dict[str, Any]) -> Tuple[torch.Tensor, int]:
@@ -164,7 +176,7 @@ def _encode_ref_images(
             size = ref_image_canvas(img.shape[2], img.shape[1], canvas_w, canvas_h, ref_image_size)
             block = encoded.get(size)
             if block is None:
-                resized = fit_frames(img[:1], size[0], size[1], "disabled")
+                resized = fit_frames(img[:1], size[0], size[1], STRETCH_FIT)
                 if not encoded:
                     # the text encoder sees the reference at the generation canvas only
                     items.append({"type": "image", "data": resized})
@@ -191,7 +203,7 @@ def _encode_ref_videos(
         soundtrack = ref_video_audios.get(soundtrack_key(name))
         canvas_w, canvas_h = ref_video_canvas(video_frames.shape[2], video_frames.shape[1])
         n_frames = align_clip_frames(video_frames.shape[0], frame_count)
-        frames = fit_frames(video_frames[:n_frames], canvas_w, canvas_h, "disabled")
+        frames = fit_frames(video_frames[:n_frames], canvas_w, canvas_h, STRETCH_FIT)
         z = vae.encode(frames)
         audio_latent: Optional[torch.Tensor] = None
         ref_audio_t = 0
@@ -232,19 +244,19 @@ def _encode_ref_audios(
     return items, blocks
 
 
-def _keyframe_sources(first_frame: Optional[torch.Tensor], last_frame: Optional[torch.Tensor], frame_count: int) -> List[KeyframeSource]:
+def _keyframe_sources(
+    first_frame: Optional[torch.Tensor], first_fit: FrameFit, last_frame: Optional[torch.Tensor], last_fit: FrameFit, frame_count: int
+) -> List[KeyframeSource]:
     sources: List[KeyframeSource] = []
     if first_frame is not None:
-        # geometry anchor: plain stretch to canvas
-        sources.append((first_frame[:1], "disabled", 0))
+        sources.append((first_frame[:1], first_fit, 0))
     if last_frame is not None:
-        # follower: aspect-preserving cover-crop
-        sources.append((last_frame[:1], "center", frame_count - 1))
+        sources.append((last_frame[:1], last_fit, frame_count - 1))
     return sources
 
 
 def _fit_keyframes(sources: Sequence[KeyframeSource], width: int, height: int) -> List[torch.Tensor]:
-    return [fit_frames(img, width, height, crop) for img, crop, _index in sources]
+    return [fit_frames(img, width, height, fit) for img, fit, _index in sources]
 
 
 def encode_hybrid(
@@ -258,6 +270,8 @@ def encode_hybrid(
     frame_picture_tags: str,
     first_frame: Optional[torch.Tensor],
     last_frame: Optional[torch.Tensor],
+    first_fit: FrameFit,
+    last_fit: FrameFit,
     ref_images: Dict[str, Optional[torch.Tensor]],
     ref_videos: Dict[str, Optional[torch.Tensor]],
     ref_video_audios: Dict[str, Optional[Dict[str, Any]]],
@@ -283,6 +297,8 @@ def encode_hybrid(
         frame_picture_tags: One of ``FRAME_TAG_MODES``.
         first_frame: Optional keyframe pinned at frame 0.
         last_frame: Optional keyframe pinned at the last frame.
+        first_fit: How ``first_frame`` is fitted to each canvas.
+        last_fit: How ``last_frame`` is fitted to each canvas.
         ref_images: Autogrow slot dict of reference images.
         ref_videos: Autogrow slot dict of reference clips.
         ref_video_audios: Autogrow slot dict of reference clip soundtracks.
@@ -295,7 +311,7 @@ def encode_hybrid(
     width, height = canvases[0]
     latent, frame_count = empty_av_latent(width, height, length)
 
-    sources = _keyframe_sources(first_frame, last_frame, frame_count)
+    sources = _keyframe_sources(first_frame, first_fit, last_frame, last_fit, frame_count)
     base_frames = _fit_keyframes(sources, width, height)
     frame_items: List[RefItem] = [{"type": "image", "data": img} for img in base_frames]
 
@@ -318,7 +334,7 @@ def encode_hybrid(
         values: Dict[str, Any] = {"minimax_refs": ref_blocks} if ref_blocks else {}
         if sources:
             values["minimax_keyframes"] = [
-                {"resolved_frame_index": index, "latent": vae.encode(img)} for img, (_src, _crop, index) in zip(frames, sources)
+                {"resolved_frame_index": index, "latent": vae.encode(img)} for img, (_src, _fit, index) in zip(frames, sources)
             ]
         conds.append(node_helpers.conditioning_set_values(cond, values) if values else cond)
     return conds, latent
@@ -338,6 +354,42 @@ def _hybrid_inputs_head() -> List[io.Input]:
         io.Int.Input("width", default=1344, min=32, max=MAX_RESOLUTION, step=32),
         io.Int.Input("height", default=768, min=32, max=MAX_RESOLUTION, step=32),
     ]
+
+
+def _keyframe_fit_inputs(prefix: str) -> List[io.Input]:
+    """The four **Resize Image** settings of one keyframe, ordinary inputs the frontend hides behind the keyframes button.
+
+    Args:
+        prefix: The keyframe input's id, ``first_frame`` or ``last_frame``.
+
+    Returns:
+        The resampler, mode, pad colour and crop position inputs named ``<prefix>_<setting>``.
+    """
+    label = prefix.replace("_", " ")
+    return [
+        io.Combo.Input(
+            f"{prefix}_resize_method", options=list(RESIZE_METHODS), default="lanczos", tooltip=_KEYFRAME_METHOD_TOOLTIP.format(label=label)
+        ),
+        io.Combo.Input(f"{prefix}_mode", options=list(KEYFRAME_MODES), default="crop", tooltip=_KEYFRAME_MODE_TOOLTIP.format(label=label)),
+        io.String.Input(f"{prefix}_pad_color", default=DEFAULT_PAD_COLOR, tooltip=_KEYFRAME_PAD_COLOR_TOOLTIP.format(label=label)),
+        io.Combo.Input(
+            f"{prefix}_crop_position",
+            options=list(CROP_POSITIONS),
+            default="center",
+            tooltip=_KEYFRAME_POSITION_TOOLTIP.format(label=label),
+        ),
+    ]
+
+
+def _validate_keyframe_fits(
+    first_frame_mode: Optional[str],
+    first_frame_pad_color: Optional[str],
+    last_frame_mode: Optional[str],
+    last_frame_pad_color: Optional[str],
+) -> Union[bool, str]:
+    """Refuse a keyframe pad colour its ``pad`` mode cannot fill with; ``None`` values are linked inputs the executor skips."""
+    error = pad_color_error(first_frame_mode, first_frame_pad_color) or pad_color_error(last_frame_mode, last_frame_pad_color)
+    return True if error is None else error
 
 
 def _hybrid_inputs_tail() -> List[io.Input]:
@@ -371,8 +423,10 @@ def _hybrid_inputs_tail() -> List[io.Input]:
                 "and are invisible to the prompt."
             ),
         ),
-        io.Image.Input("first_frame", optional=True, tooltip="Keyframe pinned at frame 0; stretched to the canvas."),
-        io.Image.Input("last_frame", optional=True, tooltip="Keyframe pinned at the last frame; center-cropped to the canvas."),
+        io.Image.Input("first_frame", optional=True, tooltip=_KEYFRAME_TOOLTIP.format(where="frame 0")),
+        io.Image.Input("last_frame", optional=True, tooltip=_KEYFRAME_TOOLTIP.format(where="the last frame")),
+        *_keyframe_fit_inputs("first_frame"),
+        *_keyframe_fit_inputs("last_frame"),
         io.Autogrow.Input(
             "ref_images",
             optional=True,
@@ -456,6 +510,14 @@ class ArisuMiniMaxH3HybridToVideo(io.ComfyNode):
         length: int,
         ref_image_size: str,
         frame_picture_tags: str,
+        first_frame_resize_method: str,
+        first_frame_mode: str,
+        first_frame_pad_color: str,
+        first_frame_crop_position: str,
+        last_frame_resize_method: str,
+        last_frame_mode: str,
+        last_frame_pad_color: str,
+        last_frame_crop_position: str,
         audio_vae: Optional[comfy.sd.VAE] = None,
         first_frame: Optional[torch.Tensor] = None,
         last_frame: Optional[torch.Tensor] = None,
@@ -476,6 +538,14 @@ class ArisuMiniMaxH3HybridToVideo(io.ComfyNode):
             length: Requested frame count at 24 fps; snapped up to the model's 17k+5 grid.
             ref_image_size: One of ``REF_IMAGE_SIZE_MODES``.
             frame_picture_tags: One of ``FRAME_TAG_MODES``.
+            first_frame_resize_method: One of ``RESIZE_METHODS``, for ``first_frame``.
+            first_frame_mode: One of ``KEYFRAME_MODES``, for ``first_frame``.
+            first_frame_pad_color: The ``pad`` fill of ``first_frame``; see ``core.parse_pad_color``.
+            first_frame_crop_position: One of ``CROP_POSITIONS``, for ``first_frame``.
+            last_frame_resize_method: Likewise, for ``last_frame``.
+            last_frame_mode: Likewise.
+            last_frame_pad_color: Likewise.
+            last_frame_crop_position: Likewise.
             audio_vae: The audio VAE, or ``None`` when no audio reference is connected.
             first_frame: Optional keyframe pinned at frame 0.
             last_frame: Optional keyframe pinned at the last frame.
@@ -503,12 +573,35 @@ class ArisuMiniMaxH3HybridToVideo(io.ComfyNode):
             frame_picture_tags,
             first_frame,
             last_frame,
+            FrameFit(first_frame_resize_method, first_frame_mode, first_frame_pad_color, first_frame_crop_position),
+            FrameFit(last_frame_resize_method, last_frame_mode, last_frame_pad_color, last_frame_crop_position),
             ref_images or {},
             ref_videos or {},
             ref_video_audios or {},
             ref_audios or {},
         )
         return io.NodeOutput(conds[0], latent)
+
+    @classmethod
+    def validate_inputs(
+        cls,
+        first_frame_mode: Optional[str] = None,
+        first_frame_pad_color: Optional[str] = None,
+        last_frame_mode: Optional[str] = None,
+        last_frame_pad_color: Optional[str] = None,
+    ) -> Union[bool, str]:
+        """Refuse a keyframe pad colour its ``pad`` mode cannot fill with.
+
+        Args:
+            first_frame_mode: The widget value; ``None`` when fed by a link, which the executor leaves out of validation.
+            first_frame_pad_color: Likewise; only checked when the mode is ``pad`` or unknown.
+            last_frame_mode: Likewise, for ``last_frame``.
+            last_frame_pad_color: Likewise.
+
+        Returns:
+            ``True`` when the run can go ahead, otherwise the error to show.
+        """
+        return _validate_keyframe_fits(first_frame_mode, first_frame_pad_color, last_frame_mode, last_frame_pad_color)
 
 
 class ArisuMiniMaxH3HybridToVideoAdvanced(io.ComfyNode):
@@ -582,6 +675,14 @@ class ArisuMiniMaxH3HybridToVideoAdvanced(io.ComfyNode):
         length: int,
         ref_image_size: str,
         frame_picture_tags: str,
+        first_frame_resize_method: str,
+        first_frame_mode: str,
+        first_frame_pad_color: str,
+        first_frame_crop_position: str,
+        last_frame_resize_method: str,
+        last_frame_mode: str,
+        last_frame_pad_color: str,
+        last_frame_crop_position: str,
         audio_vae: Optional[comfy.sd.VAE] = None,
         first_frame: Optional[torch.Tensor] = None,
         last_frame: Optional[torch.Tensor] = None,
@@ -604,6 +705,14 @@ class ArisuMiniMaxH3HybridToVideoAdvanced(io.ComfyNode):
             length: Requested frame count at 24 fps; snapped up to the model's 17k+5 grid.
             ref_image_size: One of ``REF_IMAGE_SIZE_MODES``.
             frame_picture_tags: One of ``FRAME_TAG_MODES``.
+            first_frame_resize_method: One of ``RESIZE_METHODS``, for ``first_frame``.
+            first_frame_mode: One of ``KEYFRAME_MODES``, for ``first_frame``.
+            first_frame_pad_color: The ``pad`` fill of ``first_frame``; see ``core.parse_pad_color``.
+            first_frame_crop_position: One of ``CROP_POSITIONS``, for ``first_frame``.
+            last_frame_resize_method: Likewise, for ``last_frame``.
+            last_frame_mode: Likewise.
+            last_frame_pad_color: Likewise.
+            last_frame_crop_position: Likewise.
             audio_vae: The audio VAE, or ``None`` when no audio reference is connected.
             first_frame: Optional keyframe pinned at frame 0.
             last_frame: Optional keyframe pinned at the last frame.
@@ -633,6 +742,8 @@ class ArisuMiniMaxH3HybridToVideoAdvanced(io.ComfyNode):
             frame_picture_tags,
             first_frame,
             last_frame,
+            FrameFit(first_frame_resize_method, first_frame_mode, first_frame_pad_color, first_frame_crop_position),
+            FrameFit(last_frame_resize_method, last_frame_mode, last_frame_pad_color, last_frame_crop_position),
             ref_images or {},
             ref_videos or {},
             ref_video_audios or {},
@@ -640,6 +751,27 @@ class ArisuMiniMaxH3HybridToVideoAdvanced(io.ComfyNode):
         )
         # with a single canvas both conditionings are the same object: nothing was encoded twice
         return io.NodeOutput(conds[0], latent, conds[-1])
+
+    @classmethod
+    def validate_inputs(
+        cls,
+        first_frame_mode: Optional[str] = None,
+        first_frame_pad_color: Optional[str] = None,
+        last_frame_mode: Optional[str] = None,
+        last_frame_pad_color: Optional[str] = None,
+    ) -> Union[bool, str]:
+        """Refuse a keyframe pad colour its ``pad`` mode cannot fill with.
+
+        Args:
+            first_frame_mode: The widget value; ``None`` when fed by a link, which the executor leaves out of validation.
+            first_frame_pad_color: Likewise; only checked when the mode is ``pad`` or unknown.
+            last_frame_mode: Likewise, for ``last_frame``.
+            last_frame_pad_color: Likewise.
+
+        Returns:
+            ``True`` when the run can go ahead, otherwise the error to show.
+        """
+        return _validate_keyframe_fits(first_frame_mode, first_frame_pad_color, last_frame_mode, last_frame_pad_color)
 
 
 def _settings_inputs_head() -> List[io.Input]:

@@ -143,7 +143,7 @@ ComfyUI serves the same page in-app from a node's right-click **Help**.
 | [Load Image (Browse)](web/docs/ArisuLoadImage/en.md) | Common | Browse images in configured directories, including external disks or shares, and optionally crop them; nothing is uploaded. |
 | [Resize Image](web/docs/ArisuResizeImage/en.md) | Common | Crop, pad, fit or stretch an image batch to a size on a pixel grid, with the options in a dialog and the result previewed on the node. |
 | [MiniMax H3 Resource Studio](web/docs/ArisuMiniMaxH3ResourceStudio/en.md) | MiniMax H3 | Browse, crop, trim, mute, and arrange keyframes and mixed references in one resource bundle. |
-| [MiniMax H3 Hybrid to Video](web/docs/ArisuMiniMaxH3HybridToVideo/en.md) | MiniMax H3 | Keyframes and image/video/audio references in one conditioning, plus the AV latent. |
+| [MiniMax H3 Hybrid to Video](web/docs/ArisuMiniMaxH3HybridToVideo/en.md) | MiniMax H3 | Keyframes and image/video/audio references in one conditioning, plus the AV latent; each keyframe's crop, pad or stretch fit in a dialog. |
 | [MiniMax H3 Hybrid to Video (Advanced)](web/docs/ArisuMiniMaxH3HybridToVideoAdvanced/en.md) | MiniMax H3 | The same, plus a `positive (upscaled)` conditioning for two-sampler latent upscaling. |
 | [MiniMax H3 Video Settings](web/docs/ArisuMiniMaxH3VideoSettings/en.md) | MiniMax H3 | Canvas from an aspect ratio and a megapixel budget, length from a duration in seconds. |
 | [MiniMax H3 Video Settings (Upscale)](web/docs/ArisuMiniMaxH3VideoSettingsUpscale/en.md) | MiniMax H3 | The same, plus the target size of a latent-upscale pass from an upscale factor. |

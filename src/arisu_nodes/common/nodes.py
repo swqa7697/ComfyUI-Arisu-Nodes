@@ -556,6 +556,46 @@ def _pad_mask(mask: Optional[torch.Tensor], plan: ResizePlan, batch: int) -> tor
     return canvas
 
 
+def apply_resize_plan(images: torch.Tensor, plan: ResizePlan, resize_method: str, pad_color: str) -> torch.Tensor:
+    """Move a ``[B, H, W, C]`` batch through ``plan``: the crop, the scale, and the pad when the canvas leaves room.
+
+    Args:
+        images: The batch to resize.
+        plan: The geometry from ``core.resize_plan``.
+        resize_method: One of ``RESIZE_METHODS``.
+        pad_color: The fill of the ``pad`` mode; see ``core.parse_pad_color``.
+
+    Returns:
+        The batch on ``plan.canvas``.
+    """
+    if plan.crop is not None:
+        left, top, crop_width, crop_height = plan.crop
+        images = images.narrow(2, left, crop_width).narrow(1, top, crop_height)
+    images = _scale(images, plan.scaled, resize_method)
+    if plan.canvas != plan.scaled:
+        images = _pad(images, plan, pad_color)
+    return images
+
+
+def pad_color_error(mode: Optional[str], pad_color: Optional[str]) -> Optional[str]:
+    """The reason ``pad_color`` cannot fill the ``pad`` mode, or ``None`` when it can.
+
+    Args:
+        mode: The widget value; ``None`` when fed by a link, which the executor leaves out of validation.
+            The colour is only checked when it is ``pad`` or unknown.
+        pad_color: Likewise.
+
+    Returns:
+        The error to show, or ``None`` when the run can go ahead.
+    """
+    if pad_color is not None and mode in (None, "pad"):
+        try:
+            _fill_color(pad_color, 3)
+        except (TypeError, ValueError) as error:
+            return str(error)
+    return None
+
+
 class ArisuResizeImage(io.ComfyNode):
     """Resize an image batch by cropping, padding, fitting or stretching, with only the size on the node.
 
@@ -642,16 +682,13 @@ class ArisuResizeImage(io.ComfyNode):
         source = (source_width, source_height)
         mask = _usable_mask(mask, source)
         plan = resize_plan(source, width, height, mode, crop_position, divisible_by)
-        if plan.crop is not None:
+        image = apply_resize_plan(image, plan, resize_method, pad_color)
+        if mask is not None and plan.crop is not None:
             left, top, crop_width, crop_height = plan.crop
-            image = image.narrow(2, left, crop_width).narrow(1, top, crop_height)
-            if mask is not None:
-                mask = mask.narrow(2, left, crop_width).narrow(1, top, crop_height)
-        image = _scale(image, plan.scaled, resize_method)
+            mask = mask.narrow(2, left, crop_width).narrow(1, top, crop_height)
         if mask is not None:
             mask = _scale_mask(mask, plan.scaled, resize_method)
         if plan.canvas != plan.scaled:
-            image = _pad(image, plan, pad_color)
             mask = _pad_mask(mask, plan, batch)
         if mask is None:
             mask = torch.zeros((1, PLACEHOLDER_MASK_SIZE, PLACEHOLDER_MASK_SIZE))
@@ -669,12 +706,8 @@ class ArisuResizeImage(io.ComfyNode):
         Returns:
             ``True`` when the run can go ahead, otherwise the error to show.
         """
-        if pad_color is not None and mode in (None, "pad"):
-            try:
-                _fill_color(pad_color, 3)
-            except (TypeError, ValueError) as error:
-                return str(error)
-        return True
+        error = pad_color_error(mode, pad_color)
+        return True if error is None else error
 
 
 NODES: List[Type[io.ComfyNode]] = [

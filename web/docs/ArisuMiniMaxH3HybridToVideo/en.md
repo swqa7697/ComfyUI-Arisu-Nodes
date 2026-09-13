@@ -21,8 +21,13 @@ sets both on one conditioning.
 | `length`             | INT    | Frame count at 24 fps, snapped up to the 17k+5 grid (default 124, about 5 s). Same sources as the canvas. |
 | `ref_image_size`     | COMBO  | `match` scales each reference image down to the generation's pixel area; `max` caps its short edge at 2048 px. |
 | `frame_picture_tags` | COMBO  | How the keyframes appear to the text encoder; see below.                                           |
-| `first_frame`        | IMAGE  | Optional keyframe pinned at frame 0. Stretched to the canvas.                                      |
-| `last_frame`         | IMAGE  | Optional keyframe pinned at the last frame. Center-cropped to the canvas.                          |
+| `first_frame`        | IMAGE  | Optional keyframe pinned at frame 0. Fitted to the canvas as its keyframe settings say.            |
+| `last_frame`         | IMAGE  | Optional keyframe pinned at the last frame. Fitted likewise, with its own settings.                |
+| `keyframes…`         | button | Open the dialog that edits the eight keyframe settings below, the first frame's above the last frame's. **reset** puts them back to their defaults. |
+| `<frame>_resize_method` | combo | Settings dialog, once per keyframe. `nearest-exact`, `bilinear`, `area`, `bicubic` or `lanczos` (default). |
+| `<frame>_mode`       | combo  | Settings dialog. How the keyframe reaches the canvas: `crop` (default) cuts it to the canvas aspect first, `pad` fits it inside and fills the rest with its pad colour, `stretch` ignores the aspect ratio. |
+| `<frame>_pad_color`  | STRING | Settings dialog. The `pad` fill (default `0, 0, 0`), in the forms **Resize Image** accepts; the dialog has a colour picker beside it. |
+| `<frame>_crop_position` | combo | Settings dialog. Where the keyframe stays (default `center`): the region kept in `crop`, the side it sits on in `pad`. |
 | `ref_image_N`        | IMAGE  | Up to 9 reference images, `<Picture i>`.                                                           |
 | `ref_video_N`        | IMAGE  | Up to 3 reference clips as frame batches at 24 fps, `<Video k>`. Cropped to the video's length and to the 17k+5 grid; at least 5 frames. |
 | `ref_video_audio_N`  | AUDIO  | Soundtrack of the same-numbered reference video. Gets its own `<Audio j>` label right before the video. |
@@ -51,6 +56,16 @@ decides where they go:
 
 In every mode the keyframes are sent to the model once, as keyframes. They never become extra
 reference blocks.
+
+## Keyframe fitting
+
+A keyframe always lands on exactly `width` x `height`: the pixel grid is the model's 32, fixed, and
+**Resize Image**'s `resize` mode, which would leave the frame smaller, is not offered. The eight
+settings are ordinary inputs the pack's frontend script hides; they are saved with the workflow and
+sent with the prompt, so an API-format export must carry them. A frame that already has the canvas
+size is passed to the VAE untouched. Keyframes from **Resource Studio** arrive as their integer crop,
+whose aspect can differ from the canvas by a pixel, so `pad` may leave a one-pixel stripe and `crop`
+may trim one.
 
 ## Notes
 

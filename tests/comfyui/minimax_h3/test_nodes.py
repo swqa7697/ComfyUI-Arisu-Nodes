@@ -25,6 +25,14 @@ from tests.support.comfy import StubAudioVae, StubClip, StubVae, audio_input, im
 pytestmark = pytest.mark.comfyui
 
 
+# The keyframes dialog's defaults: lanczos, crop, center for both frames.
+_KEYFRAME_FITS = {
+    f"{frame}_{setting}": value
+    for frame in ("first_frame", "last_frame")
+    for setting, value in (("resize_method", "lanczos"), ("mode", "crop"), ("pad_color", "0, 0, 0"), ("crop_position", "center"))
+}
+
+
 def _base_kwargs() -> Dict[str, Any]:
     return {
         "clip": StubClip(),
@@ -35,6 +43,7 @@ def _base_kwargs() -> Dict[str, Any]:
         "length": 124,
         "ref_image_size": "match",
         "frame_picture_tags": "after_refs",
+        **_KEYFRAME_FITS,
     }
 
 
@@ -72,6 +81,20 @@ def test_first_and_last_frames_only_pin_keyframes():
     assert samples.is_nested
     assert tuple(samples.tensors[0].shape) == (1, 24, 37, 48, 84)
     assert tuple(samples.tensors[1].shape) == (1, 32, 2, 207)
+
+    # each keyframe has its own fit: pad keeps the square first frame whole between red bars, stretch fills the
+    # canvas with the last frame regardless of its aspect
+    kwargs = _base_kwargs()
+    kwargs.update(first_frame=image(768, 768), first_frame_mode="pad", first_frame_pad_color="#ff0000")
+    kwargs.update(last_frame=image(512, 512), last_frame_mode="stretch")
+    ArisuMiniMaxH3HybridToVideo.execute(**kwargs)
+    padded, stretched = kwargs["vae"].encoded
+    assert tuple(padded.shape) == tuple(stretched.shape) == (1, 768, 1344, 3)
+    red = torch.tensor([1.0, 0.0, 0.0]).expand(1, 768, 288, 3)
+    assert torch.equal(padded[:, :, :288], red)
+    assert torch.equal(padded[:, :, -288:], red)
+    # the fitted frame is resampled at its own size, so it comes back 8-bit quantized rather than byte-equal
+    assert torch.allclose(padded[:, :, 288:-288], kwargs["first_frame"], atol=1 / 255)
 
 
 def test_frame_picture_tags_order_frames_around_references():
@@ -124,6 +147,11 @@ def test_hybrid_rejects_missing_audio_vae_and_short_reference_videos():
         _run(ref_audios={"ref_audio_0": audio_input()})
     with pytest.raises(ValueError, match="at least 5 frames"):
         _run(ref_videos={"ref_video_0": torch.rand(3, 360, 640, 3)})
+    # Resize Image's "resize" mode would leave the keyframe smaller than the canvas
+    with pytest.raises(ValueError, match="keyframe mode"):
+        _run(first_frame=image(768, 1344), first_frame_mode="resize")
+    assert isinstance(ArisuMiniMaxH3HybridToVideo.validate_inputs(last_frame_mode="pad", last_frame_pad_color="nope"), str)
+    assert ArisuMiniMaxH3HybridToVideoAdvanced.validate_inputs(first_frame_mode="crop", first_frame_pad_color="nope") is True
 
 
 def test_matching_frames_are_not_resampled():
