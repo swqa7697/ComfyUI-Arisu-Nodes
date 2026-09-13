@@ -178,6 +178,13 @@ function applyCard(node, slot, id, item, info) {
   nodes.get(node).info.set(item.id, info);
   commit(node, data);
 }
+function cropRatio(box) {
+  if (!box) return '';
+  let divisor = box.width;
+  let remainder = box.height;
+  while (remainder) [divisor, remainder] = [remainder, divisor % remainder];
+  return `${box.width / divisor}:${box.height / divisor}`;
+}
 async function edit(node, item, slot) {
   const task = begin(node);
   try {
@@ -192,7 +199,7 @@ async function edit(node, item, slot) {
       const box = draft.crop;
       const result = await cropImage(
         image,
-        { rect: box ? { x: box.left, y: box.top, w: box.width, h: box.height } : null, ratio: '' },
+        { rect: box ? { x: box.left, y: box.top, w: box.width, h: box.height } : null, ratio: cropRatio(box) },
         { aspectRatio: slot ? current : undefined, signal: task.signal },
       );
       if (!task.current() || !result.rect) return;
@@ -214,10 +221,11 @@ async function edit(node, item, slot) {
 }
 async function browse(node, slot = null, replacing = null) {
   const task = begin(node);
+  const location = replacing ?? (!slot ? read(node).references.at(-1) : null);
   const adapter = {
     widgets: [
-      { name: 'root', value: replacing?.root ?? 'input' },
-      { name: 'path', value: replacing?.path ?? '' },
+      { name: 'root', value: location?.root ?? 'input' },
+      { name: 'path', value: location?.path ?? '' },
     ],
   };
   await browseResources(adapter, {
@@ -346,7 +354,7 @@ function render(node) {
         className: 'picture',
         textContent: card ? '' : 'Browse…',
         ariaLabel: `${key} frame`,
-        onclick: () => (card ? edit(node, card, key) : browse(node, key)),
+        onclick: () => browse(node, key, card),
       });
       const actions = [];
       if (card) {
@@ -355,7 +363,6 @@ function render(node) {
         crop.innerHTML = CROP_ICON;
         actions.push(
           crop,
-          button('↻', () => browse(node, key, card), 'Replace'),
           muteButton(card, () => toggle(card, key)),
           button(
             '×',
@@ -433,7 +440,6 @@ function render(node) {
             el('span', { className: 'name', textContent: card.path.split('/').at(-1) }),
             el('span', { className: 'detail', textContent: details(card) }),
           ]),
-          button('↻', () => browse(node, null, card), 'Replace'),
           muteButton(card, () => toggle(card, null)),
           button(
             '×',
@@ -450,7 +456,7 @@ function render(node) {
       return row;
     }),
   );
-  const browseAll = button('Browse resources…', () => browse(node), undefined, 'browse');
+  const browseAll = button('Browse references…', () => browse(node), undefined, 'browse');
   const box = data.references.length
     ? el('div', { className: 'box' }, [references, browseAll])
     : el('div', { className: 'box empty' }, [

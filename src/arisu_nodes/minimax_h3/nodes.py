@@ -333,6 +333,7 @@ def _hybrid_inputs_head() -> List[io.Input]:
             optional=True,
             tooltip="Audio VAE, needed only when a reference audio or a reference video soundtrack is connected.",
         ),
+        io.Custom("ARISU_MINIMAX_H3_RESOURCES").Input("resources", optional=True),
         io.String.Input("prompt", multiline=True, dynamic_prompts=True),
         io.Int.Input("width", default=1344, min=32, max=MAX_RESOLUTION, step=32),
         io.Int.Input("height", default=768, min=32, max=MAX_RESOLUTION, step=32),
@@ -412,7 +413,6 @@ def _hybrid_inputs_tail() -> List[io.Input]:
                 max=3,
             ),
         ),
-        io.Custom("ARISU_MINIMAX_H3_RESOURCES").Input("resources", optional=True),
     ]
 
 

@@ -17,11 +17,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Replace Resource Studio replace buttons with keyframe canvas selection, and open Browse references at the final reference’s folder in list order.
+
 - Coordinate MiniMax H3 settings and resource advertising across queueing and API exports, rejecting missing sources and conflicting resource inputs.
 
 - Move the Load Image input and output directory shortcuts beside up in the browse toolbar to free sidebar space.
 
 ### Fixed
+
+- Show the saved crop ratio when opening Resource Studio crop dialogs, with custom width and height fields when needed and Free for uncropped images.
 
 - Fix Resource Studio keyframe and reference creation in browsers without `crypto.randomUUID`, including HTTP connections.
 
