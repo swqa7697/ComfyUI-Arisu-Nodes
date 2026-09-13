@@ -60,6 +60,27 @@ def test_resource_routes_browse_probe_ranges_and_reject_untrusted_inputs(tmp_pat
             response = await client.get("/arisu/resources/poster", params={"root": "external", "path": "movie.mkv", "at": "0", "max": "32"})
             assert response.status == 200 and response.headers["Content-Type"] == "image/webp"
             assert response.headers["X-Content-Type-Options"] == "nosniff" and (await response.read())[:4] == b"RIFF"
+            # A browser loads several posters at once: requests past the two worker slots wait their turn rather than
+            # failing, while the queue depth and the deadline still refuse work the server cannot absorb.
+            assert routes._PROBE_GUARD.acquire(blocking=False) and routes._PROBE_GUARD.acquire(blocking=False)
+            try:
+                poster = {"root": "external", "path": "movie.mkv", "at": "0", "max": "32"}
+                queued = asyncio.create_task(client.get("/arisu/resources/poster", params=poster))
+                await asyncio.sleep(0.2)
+                assert not queued.done()
+                monkeypatch.setattr(routes, "_MAX_WAITERS", 1)
+                response = await client.get("/arisu/resources/metadata", params={"root": "external", "path": "sound.wav"})
+                assert response.status == 429
+                monkeypatch.setattr(routes, "_MAX_WAITERS", 32)
+                monkeypatch.setattr(routes, "_WAIT_DEADLINE", 0.1)
+                response = await client.get("/arisu/resources/metadata", params={"root": "external", "path": "sound.wav"})
+                assert response.status == 429
+                assert not queued.done()
+            finally:
+                routes._PROBE_GUARD.release()
+                routes._PROBE_GUARD.release()
+            response = await queued
+            assert response.status == 200 and response.headers["Content-Type"] == "image/webp"
             response = await client.get("/arisu/resources/poster", params={"root": "external", "path": "sound.wav"})
             assert response.status == 415
             response = await client.get("/arisu/resources/poster", params={"root": "external", "path": "movie.mkv", "at": "abc"})

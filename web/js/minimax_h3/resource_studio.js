@@ -418,7 +418,7 @@ function render(node) {
       }
       target.muted = !target.muted;
     });
-  // The design's second line: dimensions, or the clip length beside the source length, then video height or audio rate, then file size.
+  // The design's second line: dimensions, or the clip length beside the source length, then video resolution or audio rate, then file size.
   const details = (card) => {
     const info = state.info.get(card.id);
     const size = info ? bytes(info.size) : null;
@@ -428,7 +428,10 @@ function render(node) {
     }
     const lead = card.clip ? clock(card.clip.end - card.clip.start) : '—';
     if (!info) return { lead, rest: info === null ? ' · —' : '' };
-    return { lead, rest: ` / ${clock(info.duration)} · ${card.kind === 'video' ? `${info.height}p` : kilohertz(info.rate)} · ${size}` };
+    return {
+      lead,
+      rest: ` / ${clock(info.duration)} · ${card.kind === 'video' ? `${info.width}×${info.height}` : kilohertz(info.rate)} · ${size}`,
+    };
   };
   const keyframes = el(
     'div',

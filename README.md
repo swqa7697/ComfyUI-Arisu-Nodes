@@ -112,10 +112,12 @@ directory; use its pencil button to rename it, or **✕** to remove it. Names ar
 existing bookmarks remain available.
 
 In **ComfyUI Settings → Arisu Nodes → LoadImage**, **Load Image (Browse): default location** chooses
-where Browse starts when no image is selected. Choose `input` (the default), `output`, or a
-configured root; saved bookmarks are not choices. A selected image keeps its existing location,
-and an unavailable default falls back to `input`. Direct API execution
-keeps its validated root-relative inputs; hiding controls does not grant filesystem access.
+where Browse starts when no image is selected. Choose `input` (the default), `output`, a
+configured root, or a saved bookmark, listed by name; renaming a bookmark keeps the choice. A
+selected image keeps its existing location. An unavailable root falls back to `input`, and a
+bookmark that was removed or no longer opens resets the choice to `input` with a warning. Direct
+API execution keeps its validated root-relative inputs; hiding controls does not grant filesystem
+access.
 
 Previews stream the original file, as Load Image's do; only Browse thumbnails are resized. Accepted
 types are static PNG, JPEG, WebP, BMP and AVIF images; animated files are not listed. Save buttons accept at most 256 previews
@@ -170,7 +172,7 @@ Resource Studio targets the legacy node renderer (Nodes 2.0 disabled), against C
 
 ## Usage
 
-**Resource Studio:** select optional first/last keyframes and browse a mixed reference list. Keyframes auto-crop to the effective aspect ratio; click their canvas to select or replace an image and their crop icon to edit it. Click a reference name to open its crop or clip editor. **Browse**, beside the Media references heading, opens at the final reference’s folder in the current list order, or the configured default location for an empty list, highlighting every file already in the list and showing poster stills for videos and waveform tiles for audio. Video rows show a still from the clip start and audio rows a waveform marker. Each row lists its dimensions, or its clip length beside the source length, then video height or audio sample rate, and file size. Apply commits edits, while Mute retains them without sending the resource to Hybrid. The node resizes freely; wheel and middle-button drags over the panel zoom and pan the canvas, and a plain wheel over an overflowing reference list scrolls the list. Connect `resources` to either Hybrid variant or enable root-graph advertising. Video Settings can advertise its aspect ratio to Studio too. Taking ownership drops competing wires; releasing ownership restores empty sockets, and Undo can restore the earlier graph.
+**Resource Studio:** select optional first/last keyframes and browse a mixed reference list. Keyframes auto-crop to the effective aspect ratio; click their canvas to select or replace an image and their crop icon to edit it. Click a reference name to open its crop or clip editor. **Browse**, beside the Media references heading, opens at the final reference’s folder in the current list order, or the configured default location for an empty list, highlighting every file already in the list and showing poster stills for videos and waveform tiles for audio. Video rows show a still from the clip start and audio rows a waveform marker. Each row lists its dimensions, or its clip length beside the source length, then video resolution or audio sample rate, and file size. Apply commits edits, while Mute retains them without sending the resource to Hybrid. The node resizes freely; wheel and middle-button drags over the panel zoom and pan the canvas, and a plain wheel over an overflowing reference list scrolls the list. Connect `resources` to either Hybrid variant or enable root-graph advertising. Video Settings can advertise its aspect ratio to Studio too. Taking ownership drops competing wires; releasing ownership restores empty sockets, and Undo can restore the earlier graph.
 
 Studio stores source descriptions. Hybrid decodes originals and performs generation resizing; video selections are sampled at 24 fps and aligned down to H3's frame grid. Playback uses originals when possible and on-demand VP9/Opus proxies otherwise, with one conversion worker, a 2 GiB cache, a ten-minute deadline, and thirty-minute idle expiry. Proxies retain display dimensions and never become generation inputs. Saved workflows retain selections; imports and duplicates require reselection.
 

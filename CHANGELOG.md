@@ -12,14 +12,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add MiniMax H3 Resource Studio with keyframe cropping, mixed references, clip editing, and original-source Hybrid processing.
 - Add aspect-ratio outputs to both MiniMax H3 Video Settings nodes.
 - Add inline names and renaming for saved Load Image browse paths.
-- Add a ComfyUI setting for the default Load Image browse root when no image is selected.
+- Add a ComfyUI setting for the default Load Image browse location when no image is selected: a root or a saved path by name, reset to `input` with a warning when a chosen saved path is gone.
 
 ### Changed
 
 - Replace Resource Studio replace buttons with keyframe canvas selection, and open Browse references at the final reference’s folder in list order.
 - Move Resource Studio’s Browse beside the Media references heading, hide zero counters, and show clip-start stills for video references and a waveform marker for audio.
 - Stack Resource Studio keyframes in a left column beside the media reference list, with taller reference rows and larger thumbnails.
-- Show dimensions or clip and source lengths, video height or audio sample rate, and file size on Resource Studio reference rows, reloading them after a workflow opens.
+- Show dimensions or clip and source lengths, video resolution or audio sample rate, and file size on Resource Studio reference rows, reloading them after a workflow opens.
 - Limit Resource Studio clip times to one decimal, removing the clip editor's free-precision snapping.
 - Remove the Resource Studio height cap so the node grows freely, and pass wheel zoom and middle-button canvas drags through its panel, scrolling an overflowing reference list instead.
 - Coordinate MiniMax H3 settings and resource advertising across queueing and API exports, rejecting missing sources and conflicting resource inputs.
@@ -28,6 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Auto-crop Resource Studio keyframes from a wired aspect ratio when the upstream Video Settings selector is readable, and drop the auto-crop notification.
 - Remove the custom aspect ratio from crop dialogs: a saved crop that matches no preset opens as Free and constrains nothing, and `21:9` joins the presets.
 - Highlight every reference already in the list when browsing Resource Studio references, and show poster stills for videos and waveform tiles for audio in mixed Browse, outlined in their kind colour.
+- Show a loading indicator on Browse tiles until their thumbnail or poster arrives, keep loaded tiles while filtering, and queue media requests behind the busy workers instead of refusing them.
 
 ### Fixed
 

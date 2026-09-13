@@ -23,6 +23,12 @@ from .proxies import ProxyBusy, ProxyJob, ProxyManager
 logger = logging.getLogger(__name__)
 HEADERS = {"X-Content-Type-Options": "nosniff"}
 _PROBE_GUARD = threading.BoundedSemaphore(2)
+# Admission waits are bounded by this queue depth and deadline, not by client disconnects: aiohttp keeps a handler
+# running after a browser drops an <img> request, so an abandoned poster still holds its place until it times out.
+_MAX_WAITERS = 32
+_WAIT_DEADLINE = 30.0
+_POLL_INTERVAL = 0.05
+_waiting = 0
 
 
 def roots() -> Dict[str, str]:
@@ -56,10 +62,28 @@ def resource(query: Any) -> Resource:
     return Resource("request", "image" if kind == "image" else "video", root, path)
 
 
+async def admit():
+    """Wait for a worker slot; a browser's parallel poster loads queue up instead of failing, within the bounds above."""
+    global _waiting
+    if _PROBE_GUARD.acquire(blocking=False):
+        return
+    if _waiting >= _MAX_WAITERS:
+        raise ProxyBusy("resource workers are busy")
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + _WAIT_DEADLINE
+    _waiting += 1
+    try:
+        while not _PROBE_GUARD.acquire(blocking=False):
+            if loop.time() >= deadline:
+                raise ProxyBusy("resource workers are busy")
+            await asyncio.sleep(_POLL_INTERVAL)
+    finally:
+        _waiting -= 1
+
+
 async def bounded(function: Callable[..., Any], *args: Any) -> Any:
     """Retain admission until the actual blocking work finishes after cancellation."""
-    if not _PROBE_GUARD.acquire(blocking=False):
-        raise ProxyBusy("resource workers are busy")
+    await admit()
 
     def work() -> Any:
         try:

@@ -187,7 +187,7 @@ test('Studio edits and reorders independent cards, counts only active references
       .map((detail) => [detail.children[0].textContent, detail.children.map((part) => part.textContent).join('')]);
   assert.deepEqual(details(), [
     ['1200×1200', '1200×1200 · 1.4 MB'],
-    ['00:05', '00:05 / 00:12 · 720p · 8.1 MB'],
+    ['00:05', '00:05 / 00:12 · 1280×720 · 8.1 MB'],
     ['00:05', '00:05 / 00:08.3 · 48 kHz · 2.2 MB'],
   ]);
   const probed = api.calls.length;
@@ -266,12 +266,13 @@ test('Studio edits and reorders independent cards, counts only active references
     ['output:audio/clip.mkv', null, 'video'],
   ]);
   const tile = (card) => card.children[0];
-  assert.equal(tile(cards[0]).tagName, 'SPAN');
+  assert.equal(tile(cards[0]).className, 'arisu-browser-tile');
   assert.match(tile(cards[0]).innerHTML, /<svg/);
-  assert.equal(tile(cards[2]).tagName, 'IMG');
-  assert.match(tile(cards[2]).src, /\/arisu\/resources\/poster\?.*path=audio%2Fclip\.mkv.*at=0.*max=256/);
-  tile(cards[2]).onerror();
-  assert.equal(tile(cards[2]).tagName, 'SPAN');
+  assert.equal(tile(cards[2]).className, 'arisu-browser-tile arisu-loading');
+  assert.equal(tile(cards[2]).children[0].tagName, 'IMG');
+  assert.match(tile(cards[2]).children[0].src, /\/arisu\/resources\/poster\?.*path=audio%2Fclip\.mkv.*at=0.*max=256/);
+  tile(cards[2]).children[0].onerror();
+  assert.equal(tile(cards[2]).className, 'arisu-browser-tile');
   assert.match(tile(cards[2]).innerHTML, /<svg/);
   let rows = descendants(panel(node)).filter((element) => element.dataset.cardId);
   button(rows[0], 'Mute').onclick();

@@ -21,14 +21,22 @@ const ROOTS_ROUTE = '/arisu/roots';
 const THUMBNAIL_MAX = 256;
 /** The hidden ComfyUI setting holding the browser's saved directories, an array of {root, path, name?} locations. */
 export const SAVED_PATHS_SETTING = 'Arisu.LoadImage.SavedLocations';
+/** A saved path's choice in the default-location setting: its location key behind this prefix, so a rename keeps the choice. */
+const SAVED_OPTION_PREFIX = 'saved:';
+/** The roots the server reported, or the built-in pair until discovery succeeds. */
+let discoveredRoots = [
+  { id: 'input', label: 'input' },
+  { id: 'output', label: 'output' },
+];
 export const DEFAULT_ROOT_SETTING = {
   id: 'Arisu.LoadImage.DefaultRoot',
   category: ['Arisu Nodes', 'LoadImage'],
   name: 'Load Image (Browse): default location',
   type: 'combo',
   defaultValue: 'input',
-  options: ['input', 'output'],
-  tooltip: 'Starting root when Browse opens without a selected image. Saved paths are not included.',
+  // The settings panel calls this on every render, so saved paths and their names stay current without mirroring.
+  options: () => defaultOptions(),
+  tooltip: 'Starting location when Browse opens without a selected image: a root or a saved path.',
 };
 let rootsDiscovered = false;
 
@@ -39,11 +47,7 @@ export async function discoverRoots() {
     const response = await api.fetchApi(ROOTS_ROUTE);
     if (!response.ok) return;
     const data = await response.json();
-    const options = data.roots.map(({ id, label }) => ({ value: id, text: label }));
-    DEFAULT_ROOT_SETTING.options = options;
-    // Update the registered definition so the settings panel observes the change reactively.
-    const registered = app.ui?.settings?.settingsLookup?.[DEFAULT_ROOT_SETTING.id];
-    if (registered) registered.options = options;
+    discoveredRoots = data.roots.map(({ id, label }) => ({ id, label }));
     rootsDiscovered = true;
   } catch {
     // Built-in choices remain usable; a later Browse retries discovery.
@@ -114,14 +118,16 @@ const STYLE = `
   box-shadow: 0 8px 20px rgba(0, 0, 0, 0.35); }
 .arisu-browser-file[aria-current="true"] { border-color: var(--p-primary-color, #6ea8fe); }
 .arisu-browser-file[aria-current="true"] span, .arisu-browser-file:hover span { color: inherit; }
-.arisu-browser-file img { width: 100%; aspect-ratio: 1; object-fit: contain; background: #111; border-radius: 6px; opacity: 0;
-  transition: opacity 250ms ease; }
-.arisu-browser-file img.arisu-loaded { opacity: 1; }
-.arisu-browser-glyph { width: 100%; aspect-ratio: 1; display: flex; align-items: center; justify-content: center; box-sizing: border-box;
-  background: #111; border-radius: 6px; color: var(--descrip-text, #999); }
-.arisu-browser-glyph svg { width: 40%; height: 40%; }
-.arisu-browser-file[data-kind="video"] :is(img, .arisu-browser-glyph) { outline: 2px solid #d9a441; outline-offset: -2px; }
-.arisu-browser-file[data-kind="audio"] :is(img, .arisu-browser-glyph) { outline: 2px solid #b89be0; outline-offset: -2px; }
+.arisu-browser-tile { position: relative; width: 100%; aspect-ratio: 1; display: flex; align-items: center; justify-content: center;
+  box-sizing: border-box; background: #111; border-radius: 6px; color: var(--descrip-text, #999); }
+.arisu-browser-tile img { width: 100%; height: 100%; object-fit: contain; border-radius: 6px; transition: opacity 250ms ease; }
+.arisu-browser-tile.arisu-loading img { opacity: 0; }
+.arisu-browser-tile.arisu-loading::after { content: ''; position: absolute; width: 22px; height: 22px; border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.15); border-top-color: var(--p-primary-color, #6ea8fe);
+  animation: arisu-spin 800ms linear infinite; }
+.arisu-browser-tile svg { width: 40%; height: 40%; }
+.arisu-browser-file[data-kind="video"] .arisu-browser-tile { outline: 2px solid #d9a441; outline-offset: -2px; }
+.arisu-browser-file[data-kind="audio"] .arisu-browser-tile { outline: 2px solid #b89be0; outline-offset: -2px; }
 .arisu-browser-file span { font-size: 12px; color: var(--descrip-text, #999); overflow: hidden; text-overflow: ellipsis;
   white-space: nowrap; transition: color 150ms ease; }
 .arisu-fresh .arisu-browser-file { animation: arisu-rise 160ms ease-out backwards; animation-delay: min(calc(var(--i, 0) * 10ms), 120ms); }
@@ -130,6 +136,7 @@ const STYLE = `
 @keyframes arisu-pop { from { opacity: 0; transform: translateY(12px) scale(0.97); } }
 @keyframes arisu-fade { from { opacity: 0; } }
 @keyframes arisu-rise { from { opacity: 0; transform: translateY(4px); } }
+@keyframes arisu-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) {
   .arisu-browser, .arisu-browser::backdrop, .arisu-browser * { animation: none !important; transition: none !important; }
 }
@@ -148,6 +155,35 @@ function savedLabel(location) {
 
 function storeSavedPaths(paths) {
   return app.extensionManager?.setting?.set?.(SAVED_PATHS_SETTING, paths);
+}
+
+function savedOption(location) {
+  return { value: SAVED_OPTION_PREFIX + locationKey(location.root, location.path), text: savedLabel(location) };
+}
+
+/** The default-location choices: every root, then every saved path by name. */
+function defaultOptions() {
+  return [...discoveredRoots.map(({ id, label }) => ({ value: id, text: label })), ...savedPaths().map(savedOption)];
+}
+
+function defaultLocation() {
+  return app.extensionManager?.setting?.get?.(DEFAULT_ROOT_SETTING.id) ?? 'input';
+}
+
+/** The saved location the default-location choice names, if it is still saved. */
+function savedDefault(preferred) {
+  const key = preferred.slice(SAVED_OPTION_PREFIX.length);
+  return savedPaths().find((location) => locationKey(location.root, location.path) === key);
+}
+
+/** A forgotten or unreachable saved path cannot stay the default location: the choice returns to the input directory. */
+async function resetDefault() {
+  try {
+    await app.extensionManager?.setting?.set?.(DEFAULT_ROOT_SETTING.id, 'input');
+  } catch {
+    // The next Browse repeats this fallback.
+  }
+  toast('warn', 'The default location was a saved path that is no longer available; Browse starts at the input directory again.');
 }
 
 function rootWidget(node) {
@@ -331,8 +367,10 @@ export async function browseResources(node, options = {}) {
         if (saving || !isCurrent()) return;
         saving = true;
         renderSaved();
+        const key = locationKey(root, path);
         try {
-          await storeSavedPaths(savedPaths().filter((saved) => locationKey(saved.root, saved.path) !== locationKey(root, path)));
+          await storeSavedPaths(savedPaths().filter((saved) => locationKey(saved.root, saved.path) !== key));
+          if (defaultLocation() === SAVED_OPTION_PREFIX + key) await resetDefault();
         } catch {
           if (isCurrent()) toast('error', 'Cannot remove saved path. Try again.');
         } finally {
@@ -423,26 +461,33 @@ export async function browseResources(node, options = {}) {
 
   const selected = options.selected ?? ((root, path) => root === rootValue(node) && path === pathWidget(node)?.value?.trim());
 
-  /** A square tile carrying the kind's glyph, where no picture exists or a poster failed. */
-  function glyph(kind) {
-    const tile = el('span', { className: 'arisu-browser-glyph', ariaLabel: `${kind === 'video' ? 'Video' : 'Audio'} resource` });
+  /** The current listing's tiles by kind and location: a filter keystroke moves a tile instead of loading its picture again. */
+  const tiles = new Map();
+
+  /** Turn `tile` into a square carrying the kind's glyph, where no picture exists or a poster failed. */
+  function glyph(kind, tile = el('span')) {
+    tile.className = 'arisu-browser-tile';
+    tile.ariaLabel = `${kind === 'video' ? 'Video' : 'Audio'} resource`;
     tile.innerHTML = KIND_ICONS[kind];
     return tile;
   }
 
-  /** An image's thumbnail, a video's poster at its first frame (a glyph when that fails), or an audio glyph. */
+  /** An image's thumbnail or a video's poster at its first frame, behind a spinner until it loads; audio and a failed poster get a glyph. */
   function thumbnail(kind, root, path, name) {
     if (kind === 'audio') return glyph(kind);
+    const tile = el('span', { className: 'arisu-browser-tile arisu-loading' });
+    const settle = () => {
+      tile.className = 'arisu-browser-tile';
+    };
     const image = el('img', {
       loading: 'lazy',
       alt: name,
-      onload: (event) => {
-        event.target.className = 'arisu-loaded';
-      },
+      onload: settle,
+      onerror: kind === 'video' ? () => glyph(kind, tile) : settle,
       src: kind === 'video' ? posterUrl(root, path, 0, THUMBNAIL_MAX) : viewUrl(path, THUMBNAIL_MAX, false, '', root),
     });
-    if (kind === 'video') image.onerror = () => image.replaceWith(glyph(kind));
-    return image;
+    tile.append(image);
+    return tile;
   }
 
   function renderGrid(fresh) {
@@ -451,6 +496,8 @@ export async function browseResources(node, options = {}) {
       const path = joinPath(listing.path, name);
       const root = listing.root;
       const kind = (options.mixed && listing.kinds?.[name]) || 'image';
+      const key = `${kind}|${locationKey(root, path)}`;
+      if (!tiles.has(key)) tiles.set(key, thumbnail(kind, root, path, name));
       const card = el(
         'button',
         {
@@ -464,7 +511,7 @@ export async function browseResources(node, options = {}) {
             return options.onPick(path, root);
           },
         },
-        [thumbnail(kind, root, path, name), el('span', { textContent: name })],
+        [tiles.get(key), el('span', { textContent: name })],
       );
       card.dataset.kind = kind;
       return card;
@@ -492,6 +539,7 @@ export async function browseResources(node, options = {}) {
       pathField.textContent = data.path || '/';
       pathField.title = `Relative to ${data.root}`;
       upButton.disabled = data.parent == null;
+      tiles.clear();
       renderGrid(true);
       renderSaved();
       renderTree();
@@ -532,8 +580,12 @@ export async function browseResources(node, options = {}) {
   if (!relativePath(start)) toast('warn', 'Reselect this image under a configured root; absolute paths are no longer accepted.');
   if (!rootsDiscovered) await discoverRoots();
   if (!isCurrent() || navigation !== 0) return;
-  const preferred = app.extensionManager?.setting?.get?.(DEFAULT_ROOT_SETTING.id) ?? 'input';
-  const allowed = DEFAULT_ROOT_SETTING.options.some((option) => (typeof option === 'string' ? option : option.value) === preferred);
-  await navigate(start ? rootValue(node) : allowed ? preferred : 'input', relativePath(start) ? start : '');
+  const preferred = defaultLocation();
+  if (start) await navigate(rootValue(node), relativePath(start) ? start : '');
+  else if (typeof preferred === 'string' && preferred.startsWith(SAVED_OPTION_PREFIX)) {
+    const location = savedDefault(preferred);
+    if (location) await navigate(location.root, location.path);
+    if (!loaded && isCurrent()) await resetDefault();
+  } else await navigate(discoveredRoots.some(({ id }) => id === preferred) ? preferred : 'input', '');
   if (!loaded) await navigate('input', '');
 }

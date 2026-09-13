@@ -161,33 +161,55 @@ test('browse navigates configured roots, saves relative bookmarks, and selects a
   assert.equal(treeRow(openDialog(), 'input:/').ariaCurrent, 'true');
   openDialog().close();
   reset();
-  // The settings choices are populated before any successful Browse, without saved bookmarks.
+  // The settings choices are the roots and then the saved paths by name, read whenever the settings panel renders.
   settings[SAVED_SETTING] = [{ root: 'photos', path: 'refs', name: 'Bookmark only' }];
   api.responses.push(jsonResponse(200, { roots: ROOTS }));
   await extension.setup();
-  assert.deepEqual(
-    defaultSetting.options,
-    ROOTS.map(({ id, label }) => ({ value: id, text: label })),
-  );
+  const SAVED_CHOICE = 'saved:["photos","refs"]';
+  assert.deepEqual(defaultSetting.options(), [
+    ...ROOTS.map(({ id, label }) => ({ value: id, text: label })),
+    { value: SAVED_CHOICE, text: 'Bookmark only' },
+  ]);
   const empty = makeLoadNode('');
-  for (const root of ['output', 'photos', 'input', 'removed', 'Bookmark only']) {
-    settings[defaultSetting.id] = root;
-    const expected = ROOTS.some(({ id }) => id === root) ? root : 'input';
-    api.responses.push(jsonResponse(200, listing(expected, '', null, [], [])));
+  // A root or a saved path opens; an unknown root, a name, or a forgotten saved path falls back to input.
+  for (const [choice, root, path] of [
+    ['output', 'output', ''],
+    ['photos', 'photos', ''],
+    ['input', 'input', ''],
+    ['removed', 'input', ''],
+    ['Bookmark only', 'input', ''],
+    [SAVED_CHOICE, 'photos', 'refs'],
+    ['saved:["photos","gone"]', 'input', ''],
+  ]) {
+    settings[defaultSetting.id] = choice;
+    api.responses.push(jsonResponse(200, listing(root, path, path ? '' : null, [], [])));
     await browseButton(empty).callback();
-    assert.equal(treeRow(openDialog(), `${expected}:/`).ariaCurrent, 'true');
+    assert.equal(treeRow(openDialog(), `${root}:${path || '/'}`).ariaCurrent, 'true');
     assert.deepEqual(
       empty.widgets.slice(0, 3).map(({ value }) => value),
       ['', '', 'input'],
     );
     openDialog().close();
   }
+  // Only the forgotten saved path is reset to input, with a warning; a renamed saved path keeps its choice.
+  assert.equal(settings[defaultSetting.id], 'input');
+  assert.equal(toastSeverities().at(-1), 'warn');
+  assert.equal(toastSeverities().length, 1);
   // An inaccessible configured default reports the error and falls back to input.
   settings[defaultSetting.id] = 'photos';
   api.responses.push(jsonResponse(403, { error: 'unavailable' }), jsonResponse(200, listing('input', '', null, [], [])));
   await browseButton(empty).callback();
   assert.equal(treeRow(openDialog(), 'input:/').ariaCurrent, 'true');
   assert.equal(toastSeverities().at(-1), 'error');
+  assert.equal(settings[defaultSetting.id], 'photos');
+  openDialog().close();
+  // A saved default whose directory is gone reports the error, warns, and is reset to input.
+  settings[defaultSetting.id] = SAVED_CHOICE;
+  api.responses.push(jsonResponse(404, { error: 'missing' }), jsonResponse(200, listing('input', '', null, [], [])));
+  await browseButton(empty).callback();
+  assert.equal(treeRow(openDialog(), 'input:/').ariaCurrent, 'true');
+  assert.deepEqual(toastSeverities().slice(-2), ['error', 'warn']);
+  assert.equal(settings[defaultSetting.id], 'input');
   openDialog().close();
   // A selected image wins over the default; opening Browse preserves its selection.
   settings[defaultSetting.id] = 'output';
@@ -253,6 +275,11 @@ test('browse navigates configured roots, saves relative bookmarks, and selects a
     ['', '', 'input'],
   );
   assert.equal(byClass(dialog, 'arisu-browser-file').length, 2);
+  // Filtering rebuilds the cards around the tiles already loading, never requesting their pictures again.
+  const tile = byClass(dialog, 'arisu-browser-file')[1].children[0];
+  assert.equal(tile.className, 'arisu-browser-tile arisu-loading');
+  assert.equal(tile.children[0].tagName, 'IMG');
+  const requests = api.calls.length;
   const filter = descendants(dialog).find((element) => element.type === 'search');
   filter.value = 'C.J';
   filter.oninput();
@@ -260,6 +287,8 @@ test('browse navigates configured roots, saves relative bookmarks, and selects a
     byClass(dialog, 'arisu-browser-file').map((file) => file.title),
     ['photos:refs/c.jpg'],
   );
+  assert.equal(byClass(dialog, 'arisu-browser-file')[0].children[0], tile);
+  assert.equal(api.calls.length, requests);
   await saveButton(dialog).onclick();
   let editor = byClass(dialog, 'arisu-browser-name-editor')[0];
   editor.children[0].value = '  Reference images  ';
@@ -342,8 +371,16 @@ test('browse navigates configured roots, saves relative bookmarks, and selects a
   await savedRows(dialog)[0][0].onclick();
   assert.deepEqual(query(api.calls.at(-1).route), { root: 'photos', path: 'refs' });
   assert.equal(byClass(dialog, 'arisu-browser-path')[0].textContent, 'refs');
+  // Forgetting the saved path chosen as the default location resets that choice to input with a warning.
+  settings[defaultSetting.id] = 'saved:["input",""]';
   await savedRows(dialog)[1][2].onclick();
   assert.deepEqual(settings[SAVED_SETTING], [{ root: 'photos', path: 'refs' }]);
+  assert.equal(settings[defaultSetting.id], 'input');
+  assert.equal(toastSeverities().at(-1), 'warn');
+  assert.deepEqual(
+    defaultSetting.options().map(({ value }) => value),
+    [...ROOTS.map(({ id }) => id), 'saved:["photos","refs"]'],
+  );
   descendants(dialog)
     .find((element) => element.textContent === 'collapse')
     .onclick();
@@ -401,7 +438,8 @@ test('browse navigates configured roots, saves relative bookmarks, and selects a
   openDialog().close();
   await editor.children[1].onclick();
   assert.equal(settings[SAVED_SETTING][0].name, 'My references');
-  assert.deepEqual(toastSeverities(), ['error']);
+  // Only the failed write and the default-location reset above reported anything.
+  assert.deepEqual(toastSeverities(), ['error', 'warn']);
 });
 
 test('legacy paths require reselection, invalid bookmarks stay inert, and failed requests preserve the browser', async () => {
