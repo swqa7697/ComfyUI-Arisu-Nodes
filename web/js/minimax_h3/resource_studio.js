@@ -60,8 +60,8 @@ const STYLE = `
 .arisu-studio .thumb svg{width:14px;height:14px;}
 .arisu-studio .reference.muted .thumb{background:var(--surface);}
 .arisu-studio .edit{flex:1;min-width:0;text-align:left;}
-.arisu-studio .edit span{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-.arisu-studio .name{color:var(--text);}
+.arisu-studio .edit > span{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.arisu-studio .name{color:var(--text);}.arisu-studio .detail .lead{color:var(--text);}
 .arisu-studio .move{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);}
 .arisu-studio .move:focus{position:static;width:auto;height:auto;clip-path:none;}
 .arisu-studio .browse{display:flex;align-items:center;justify-content:center;gap:5px;height:20px;padding:0 9px;flex:none;border-radius:3px;
@@ -82,6 +82,25 @@ const AUDIO_ICON =
 function posterUrl(card) {
   const params = new URLSearchParams({ root: card.root, path: card.path, at: String(card.clip?.start ?? 0), max: String(POSTER_MAX) });
   return api.apiURL(`/arisu/resources/poster?${params}`);
+}
+// Row metadata formats; every time shown on the node keeps at most one decimal.
+function clock(seconds) {
+  const tenths = Math.round(seconds * 10);
+  const total = Math.floor(tenths / 10);
+  const fraction = tenths % 10;
+  const minutes = String(Math.floor((total % 3600) / 60)).padStart(2, '0');
+  const rest = `${minutes}:${String(total % 60).padStart(2, '0')}${fraction ? `.${fraction}` : ''}`;
+  return total >= 3600 ? `${Math.floor(total / 3600)}:${rest}` : rest;
+}
+function bytes(count) {
+  if (count < 1024) return `${count} B`;
+  if (count < 1024 ** 2) return `${Math.round(count / 1024)} KB`;
+  const [unit, scale] = count < 1024 ** 3 ? ['MB', 1024 ** 2] : ['GB', 1024 ** 3];
+  return `${(count / scale).toFixed(1)} ${unit}`;
+}
+function kilohertz(rate) {
+  const value = rate / 1000;
+  return `${Number.isInteger(value) ? value : value.toFixed(1)} kHz`;
 }
 function resourceId() {
   if (typeof crypto.randomUUID === 'function') return crypto.randomUUID();
@@ -125,6 +144,7 @@ function reset(node) {
   if (state) {
     state.info.clear();
     state.posters.clear();
+    state.pending.clear();
     state.ratio = undefined;
   }
   render(node);
@@ -311,6 +331,25 @@ async function refreshRatio(node, resolvedRatio) {
 function cropParam(card) {
   return card.crop ? ['left', 'top', 'width', 'height'].map((key) => card.crop[key]).join(',') : '';
 }
+// Metadata lives only in memory; rows probe what a reload or workflow open dropped, once per card and source.
+function describe(node, data) {
+  const state = nodes.get(node);
+  const key = (card) => `${card.id}|${card.root}|${card.path}`;
+  const missing = [data.keyframes.first, data.keyframes.last, ...data.references].filter(
+    (card) => card && !state.info.has(card.id) && !state.pending.has(key(card)),
+  );
+  if (!missing.length) return;
+  for (const card of missing) state.pending.add(key(card));
+  void (async () => {
+    for (const card of missing) {
+      const info = await probe(card).catch(() => null);
+      if (nodes.get(node) !== state) return;
+      if (!state.info.has(card.id)) state.info.set(card.id, info);
+      state.pending.delete(key(card));
+    }
+    render(node);
+  })();
+}
 function render(node) {
   const state = nodes.get(node);
   if (!state) return;
@@ -352,17 +391,17 @@ function render(node) {
       }
       target.muted = !target.muted;
     });
+  // The design's second line: dimensions or clip length first, then video height or audio rate, then file size.
   const details = (card) => {
     const info = state.info.get(card.id);
-    const size =
-      card.kind === 'image'
-        ? card.crop
-          ? `${card.crop.width} × ${card.crop.height}`
-          : info
-            ? `${info.width} × ${info.height}`
-            : 'Original crop'
-        : `${card.clip?.start.toFixed(3)}–${card.clip?.end.toFixed(3)}s`;
-    return `${size}${card.muted ? ' · Muted' : ''}`;
+    const size = info ? bytes(info.size) : null;
+    if (card.kind === 'image') {
+      const box = card.crop ?? info;
+      return { lead: box ? `${box.width}×${box.height}` : info === null ? '—' : '…', rest: size ? ` · ${size}` : '' };
+    }
+    const lead = card.clip ? clock(card.clip.end - card.clip.start) : '—';
+    if (!info) return { lead, rest: info === null ? ' · —' : '' };
+    return { lead, rest: ` · ${card.kind === 'video' ? `${info.height}p` : kilohertz(info.rate)} · ${size}` };
   };
   const keyframes = el(
     'div',
@@ -378,7 +417,8 @@ function render(node) {
       const actions = [];
       if (card) {
         // The crop size and muted state moved off the panel into the canvas tooltip.
-        picture.title = details(card);
+        const { lead, rest } = details(card);
+        picture.title = `${lead}${rest}${card.muted ? ' · Muted' : ''}`;
         picture.append(el('img', { src: viewUrl(card.path, undefined, false, cropParam(card), card.root), alt: `${key} frame` }));
         const crop = button('', () => edit(node, card, key), 'Crop');
         crop.innerHTML = CROP_ICON;
@@ -460,6 +500,7 @@ function render(node) {
           : card.kind === 'video'
             ? poster()
             : icon(AUDIO_ICON);
+      const { lead, rest } = details(card);
       const row = el(
         'div',
         {
@@ -479,7 +520,7 @@ function render(node) {
           thumb,
           el('button', { className: 'edit', ariaLabel: `Edit ${card.kind} ${card.path}`, onclick: () => edit(node, card, null) }, [
             el('span', { className: 'name', textContent: card.path.split('/').at(-1) }),
-            el('span', { className: 'detail', textContent: details(card) }),
+            el('span', { className: 'detail' }, [el('span', { className: 'lead', textContent: lead }), el('span', { textContent: rest })]),
           ]),
           muteButton(card, () => toggle(card, null)),
           button(
@@ -534,6 +575,7 @@ function render(node) {
     el('output', { className: 'status', ariaLive: 'polite', hidden: !status, textContent: status }),
     el('div', { className: 'layout' }, [keyframes, section]),
   );
+  describe(node, data);
 }
 registerSelectionOwner(TYPE, {
   fields: [
@@ -557,7 +599,7 @@ app.registerExtension({
     };
     chain('onNodeCreated', function () {
       const body = el('div', { className: 'arisu-studio' });
-      const state = { body, info: new Map(), posters: new Map(), generation: 0 };
+      const state = { body, info: new Map(), posters: new Map(), pending: new Set(), generation: 0 };
       nodes.set(this, state);
       for (const event of ['pointerdown', 'wheel', 'keydown']) body.addEventListener(event, (event) => event.stopPropagation());
       const control = widget(this, 'resources_json');

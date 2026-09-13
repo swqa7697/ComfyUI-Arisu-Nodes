@@ -151,10 +151,30 @@ test('Studio edits and reorders independent cards, counts only active references
   data.references = [card('picture'), card('video', 'video'), card('sound', 'audio', true)];
   data.references[2].root = 'output';
   data.references[2].path = 'audio/sound.wav';
+  // Cards restored without in-memory metadata probe it once, in list order, and describe themselves like the design.
+  api.responses.push(
+    jsonResponse(200, { kind: 'image', width: 1200, height: 1200, size: 1468006, revision: 'i' }),
+    jsonResponse(200, { kind: 'video', duration: 5, has_audio: true, width: 1280, height: 720, rate: 24, size: 8493465, revision: 'v' }),
+    jsonResponse(200, { kind: 'audio', duration: 5, has_audio: true, width: 0, height: 0, rate: 48000, size: 2306867, revision: 'a' }),
+  );
   widget(node, 'resources_json').value = JSON.stringify(data);
   widget(node, 'aspect_ratio').callback();
   await settle();
   assert.deepEqual(counts(node), ['image 1', 'video 1']);
+  const details = () =>
+    descendants(panel(node))
+      .filter((element) => element.dataset.cardId)
+      .map((row) => descendants(row).find((element) => element.className === 'detail'))
+      .map((detail) => [detail.children[0].textContent, detail.children.map((part) => part.textContent).join('')]);
+  assert.deepEqual(details(), [
+    ['1200×1200', '1200×1200 · 1.4 MB'],
+    ['00:05', '00:05 · 720p · 8.1 MB'],
+    ['00:05', '00:05 · 48 kHz · 2.2 MB'],
+  ]);
+  const probed = api.calls.length;
+  widget(node, 'aspect_ratio').callback();
+  await settle();
+  assert.equal(api.calls.length, probed);
   assert.equal(
     descendants(panel(node)).some((element) => ['VIDEO', 'AUDIO'].includes(element.tagName)),
     false,
@@ -207,7 +227,8 @@ test('Studio edits and reorders independent cards, counts only active references
   await checkBrowse(button(panel(node), 'Browse references…'), node, 'output:/');
   definition.prototype.onConfigure.call(node);
   assert.deepEqual(state(node), empty());
-  assert.equal(api.calls.filter((call) => call.route.includes('metadata')).length, 1);
+  // Three row probes plus the audio edit; resetting to an empty state probes nothing.
+  assert.equal(api.calls.filter((call) => call.route.includes('metadata')).length, 4);
 });
 
 test('Studio keyframes auto-crop on effective ratio changes and preserve manual edits until the basis changes', async () => {

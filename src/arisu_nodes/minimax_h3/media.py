@@ -132,13 +132,14 @@ def metadata(roots: Mapping[str, str], item: Resource) -> Dict[str, Any]:
     if not image_content_type(item.path) and not folder_paths.filter_files_content_types([item.path], ["video", "audio"]):
         raise UnsupportedMedia("unsupported resource extension")
     with source_file(roots, item) as handle:
-        revision = revision_for(os.fstat(handle.fileno()))
+        stat = os.fstat(handle.fileno())
+        revision = revision_for(stat)
         if image_content_type(item.path):
             with open_raster_image(handle) as image:
                 width, height = image.size
                 if image.getexif().get(274, 1) in (5, 6, 7, 8):
                     width, height = height, width
-            return {"kind": "image", "width": width, "height": height, "revision": revision}
+            return {"kind": "image", "width": width, "height": height, "size": stat.st_size, "revision": revision}
         try:
             with open_media(handle) as container:
                 video, audio = streams(container)
@@ -162,6 +163,7 @@ def metadata(roots: Mapping[str, str], item: Resource) -> Dict[str, Any]:
                     "height": height,
                     "rate": float(video.average_rate or 0) if video else audio.rate,
                     "origin": float(origin_for(main)),
+                    "size": stat.st_size,
                     "revision": revision,
                 }
         except (av.FFmpegError, EOFError, StopIteration) as error:

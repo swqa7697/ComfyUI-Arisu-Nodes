@@ -7,20 +7,27 @@ import { body, descendants, resetDom } from '../support/dom.mjs';
 
 const control = (root, name) => descendants(root).find((element) => element.ariaLabel === name || element.textContent === name);
 const settle = () => new Promise((resolve) => setImmediate(resolve));
-test('clip drafts preserve free precision, fixed durations and selection playback, and release proxy interests on close', async () => {
+test('clip drafts snap to tenths, keep fixed durations and selection playback, and release proxy interests on close', async () => {
   resetDom();
   resetApi();
   const item = { root: 'input', path: 'movie.mkv', kind: 'video' };
   let result = editClip(item, { kind: 'video', duration: 12, has_audio: true, revision: 'r' });
   let dialog = body.children[0];
   const player = descendants(dialog).find((element) => element.tagName === 'VIDEO');
-  control(dialog, 'Snapping').value = '0';
+  // Typed precision snaps to the default tenth grid; nothing finer exists in the editor.
+  assert.deepEqual(
+    control(dialog, 'Snapping').children.map((option) => option.value),
+    ['0.1', '1'],
+  );
   control(dialog, 'Start seconds').value = '1.23456';
   control(dialog, 'Start seconds').onchange();
   control(dialog, 'End seconds').value = '6.78901';
   control(dialog, 'End seconds').onchange();
+  const readout = descendants(dialog).find((element) => element.tagName === 'OUTPUT' && element.textContent?.includes('selection'));
+  assert.match(readout.textContent, /selection 1\.2–6\.8s$/);
+  assert.doesNotMatch(readout.textContent, /\d\.\d{2}/);
   control(dialog, 'Apply').onclick();
-  assert.deepEqual(await result, { clip: { start: 1.23456, end: 6.78901 }, include_audio: true });
+  assert.deepEqual(await result, { clip: { start: 1.2, end: 6.8 }, include_audio: true });
   result = editClip(item, { kind: 'video', duration: 12, has_audio: false, revision: 'r' });
   dialog = body.children[0];
   assert.equal(control(dialog, '15s').disabled, true);

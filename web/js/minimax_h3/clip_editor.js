@@ -19,9 +19,13 @@ const STYLE = `
 @media(prefers-reduced-motion:no-preference){.arisu-clip[open]{animation:arisu-clip-enter 150ms ease-out;}@keyframes arisu-clip-enter{from{opacity:0;transform:translateY(6px);}}}
 `;
 
+// Every time in the editor sits on a tenth-of-a-second grid, the finest step the clip contract shows.
+const tenth = (value) => Math.round(value * 10) / 10;
+
 export function editClip(item, info, options = {}) {
-  let start = item.clip?.start ?? 0;
-  let end = item.clip?.end ?? Math.min(5, info.duration);
+  const limit = Math.floor(info.duration * 10) / 10;
+  let start = Math.min(tenth(item.clip?.start ?? 0), limit);
+  let end = Math.min(tenth(item.clip?.end ?? 5), limit);
   let committed = null;
   let proxy = null;
   let converting = false;
@@ -43,7 +47,7 @@ export function editClip(item, info, options = {}) {
     type: 'number',
     min: '0',
     max: String(info.duration),
-    step: 'any',
+    step: '0.1',
     value: String(start),
     ariaLabel: 'Start seconds',
   });
@@ -51,7 +55,7 @@ export function editClip(item, info, options = {}) {
     type: 'number',
     min: '0',
     max: String(info.duration),
-    step: 'any',
+    step: '0.1',
     value: String(end),
     ariaLabel: 'End seconds',
   });
@@ -70,7 +74,6 @@ export function editClip(item, info, options = {}) {
     [
       ['0.1', '0.1 second'],
       ['1', 'Second'],
-      ['0', 'Free'],
     ].map(([value, textContent]) => el('option', { value, textContent })),
   );
   snap.value = '0.1';
@@ -81,9 +84,9 @@ export function editClip(item, info, options = {}) {
     ['stop', 'loop'].map((value) => el('option', { value, textContent: value })),
   );
   const include = el('input', { type: 'checkbox', checked: info.has_audio && item.include_audio !== false, disabled: !info.has_audio });
-  const startHandle = el('input', { type: 'range', min: '0', max: String(info.duration), step: '0.001', ariaLabel: 'Selection start' });
-  const endHandle = el('input', { type: 'range', min: '0', max: String(info.duration), step: '0.001', ariaLabel: 'Selection end' });
-  const playhead = el('input', { type: 'range', min: '0', max: String(info.duration), step: '0.001', value: '0', ariaLabel: 'Playhead' });
+  const startHandle = el('input', { type: 'range', min: '0', max: String(info.duration), step: '0.1', ariaLabel: 'Selection start' });
+  const endHandle = el('input', { type: 'range', min: '0', max: String(info.duration), step: '0.1', ariaLabel: 'Selection end' });
+  const playhead = el('input', { type: 'range', min: '0', max: String(info.duration), step: '0.1', value: '0', ariaLabel: 'Playhead' });
   const apply = el('button', {
     textContent: 'Apply',
     onclick: () => {
@@ -149,14 +152,13 @@ export function editClip(item, info, options = {}) {
     endField.value = String(end);
     startHandle.value = String(start);
     endHandle.value = String(end);
-    readout.textContent = `${position().toFixed(2)} / ${info.duration.toFixed(2)}s · selection ${start.toFixed(3)}–${end.toFixed(3)}s`;
+    readout.textContent = `${position().toFixed(1)} / ${info.duration.toFixed(1)}s · selection ${start.toFixed(1)}–${end.toFixed(1)}s`;
     startHandle.style.background = `linear-gradient(to right, transparent ${(start / info.duration) * 100}%, var(--p-primary-color,#7fd1c1) ${(start / info.duration) * 100}%, var(--p-primary-color,#7fd1c1) ${(end / info.duration) * 100}%, transparent ${(end / info.duration) * 100}%)`;
     apply.disabled = !valid();
   }
   function change(which, value) {
-    let next = Number(value);
     const grid = Number(snap.value);
-    if (grid) next = Math.round(next / grid) * grid;
+    const next = tenth(Math.round(Number(value) / grid) * grid);
     if (fixed.checked) {
       const length = Number(duration.value);
       if (!Number.isFinite(length) || length <= 0 || length > info.duration || Math.abs(length * 10 - Math.round(length * 10)) > 1e-8) {
@@ -164,12 +166,12 @@ export function editClip(item, info, options = {}) {
         apply.disabled = true;
         return;
       }
-      start = Math.max(0, Math.min(info.duration - length, which === 'end' ? next - length : next));
-      end = start + length;
+      start = tenth(Math.max(0, Math.min(limit - length, which === 'end' ? next - length : next)));
+      end = tenth(start + length);
     } else if (which === 'start') {
-      start = Math.max(0, Math.min(info.duration, next));
+      start = Math.max(0, Math.min(limit, next));
     } else {
-      end = Math.max(0, Math.min(info.duration, next));
+      end = Math.max(0, Math.min(limit, next));
     }
     status.textContent = '';
     show();

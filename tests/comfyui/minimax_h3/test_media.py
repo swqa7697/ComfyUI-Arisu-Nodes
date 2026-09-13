@@ -48,7 +48,8 @@ def test_timestamp_sampling_and_audio_boundaries(tmp_path: Path):
     # Nonzero timestamps and variable presentation intervals use timestamp containment.
     make_video(tmp_path / "variable.mkv", timestamps=[2000, 2030, 2100, 2200, 2250, 2400, 2500, 2700, 2900, 3100])
     variable = validate_source(roots, Resource("v", "video", "input", "variable.mkv", clip=(0, 0.5)))
-    assert metadata(roots, variable)["duration"] == pytest.approx(1.142)
+    described = metadata(roots, variable)
+    assert described["duration"] == pytest.approx(1.142) and described["size"] == (tmp_path / "variable.mkv").stat().st_size
     frames, _ = read_video(roots, variable, 5)
     assert [round(float(frame[0, 0, 0]) * 255) for frame in frames] == [0, 1, 1, 2, 2]
 
