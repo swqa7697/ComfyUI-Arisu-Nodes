@@ -34,6 +34,13 @@ export class FakeElement {
     if (this.parent) this.parent.children = this.parent.children.filter((child) => child !== this);
     this.parent = null;
   }
+  replaceWith(node) {
+    if (this.parent) {
+      node.parent = this.parent;
+      this.parent.children = this.parent.children.map((child) => (child === this ? node : child));
+    }
+    this.parent = null;
+  }
   get lastChild() {
     return this.children.at(-1);
   }

@@ -14,7 +14,6 @@ import logging
 import os
 import threading
 from datetime import datetime
-from io import BytesIO
 from typing import Any, Callable, Dict, List, Optional
 
 import comfy.model_management
@@ -31,6 +30,7 @@ from PIL.PngImagePlugin import PngInfo
 from .core import (
     BROWSE_ROUTE,
     NO_UPSCALE,
+    PREVIEW_CONTENT_TYPE,
     ROOTS_ROUTE,
     SAVE_IMAGE_ROUTE,
     VIEW_ROUTE,
@@ -39,6 +39,7 @@ from .core import (
     browse_directory,
     contained_path,
     crop_box,
+    encode_preview,
     expand_save_prefix,
     image_content_type,
     open_raster_image,
@@ -61,12 +62,6 @@ _COMPRESS_LEVEL = 4
 _TILE = 512
 _MIN_TILE = 128
 _OVERLAP = 32
-# Renderings of the view route (``max`` thumbnails, the only resized output, and ``crop`` previews at
-# the crop's own size): WEBP, the format /view's own previews use. libwebp's fastest method encodes a
-# 3 MP crop in a third of the default's time for the same size at this quality; these are previews.
-_RENDER_FORMAT = "WEBP"
-_RENDER_QUALITY = 80
-_RENDER_METHOD = 0
 _SAVE_BODY_LIMIT = 1024 * 1024
 _SAVE_LOCK = threading.Lock()
 _IMAGE_HEADERS = {"X-Content-Type-Options": "nosniff"}
@@ -211,7 +206,7 @@ async def _view(request: web.Request) -> web.StreamResponse:
     except Exception:
         logger.exception("Arisu view failed")
         return _error("rendering failed; see the server log", 500)
-    return web.Response(body=body, content_type=f"image/{_RENDER_FORMAT.lower()}", headers=_IMAGE_HEADERS)
+    return web.Response(body=body, content_type=PREVIEW_CONTENT_TYPE, headers=_IMAGE_HEADERS)
 
 
 def render(path: str, max_size: Optional[int], crop: Optional[CropBox]) -> bytes:
@@ -219,8 +214,6 @@ def render(path: str, max_size: Optional[int], crop: Optional[CropBox]) -> bytes
 
     The crop applies after the EXIF transpose, as ``nodes._load_image`` applies
     it, so the node preview shows the pixels a run produces, at their own size.
-    Only a ``max_size`` thumbnail is ever resized. WEBP refuses a side above
-    16383 pixels, which the route reports as an undecodable image.
 
     Raises:
         ValueError: If the crop lies wholly outside the image.
@@ -230,11 +223,7 @@ def render(path: str, max_size: Optional[int], crop: Optional[CropBox]) -> bytes
         box = crop_box(crop, frame.size) if crop else None
         if box is not None:
             frame = frame.crop(box)
-        if max_size is not None:
-            frame.thumbnail((max_size, max_size))
-        buffer = BytesIO()
-        frame.save(buffer, format=_RENDER_FORMAT, quality=_RENDER_QUALITY, method=_RENDER_METHOD)
-    return buffer.getvalue()
+        return encode_preview(frame, max_size)
 
 
 def _validate_previews(req: SaveRequest):

@@ -49,8 +49,15 @@ def test_resource_routes_browse_probe_ranges_and_reject_untrusted_inputs(tmp_pat
             )
             assert response.status == 206 and await response.read() == (root / "sound.wav").read_bytes()[2:10]
             assert response.headers["X-Content-Type-Options"] == "nosniff"
+            response = await client.get("/arisu/resources/poster", params={"root": "external", "path": "movie.mkv", "at": "0", "max": "32"})
+            assert response.status == 200 and response.headers["Content-Type"] == "image/webp"
+            assert response.headers["X-Content-Type-Options"] == "nosniff" and (await response.read())[:4] == b"RIFF"
+            response = await client.get("/arisu/resources/poster", params={"root": "external", "path": "sound.wav"})
+            assert response.status == 415
+            response = await client.get("/arisu/resources/poster", params={"root": "external", "path": "movie.mkv", "at": "abc"})
+            assert response.status == 400
             for path in ("../outside.wav", "..\\outside.wav", str(outside), "escape.wav", "document.svg"):
-                for endpoint in ("metadata", "view"):
+                for endpoint in ("metadata", "view", "poster"):
                     response = await client.get(f"/arisu/resources/{endpoint}", params={"root": "external", "path": path})
                     assert response.status in (400, 415), (path, response.status)
                     assert str(tmp_path) not in await response.text()

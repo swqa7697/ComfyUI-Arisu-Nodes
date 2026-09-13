@@ -14,10 +14,10 @@ from typing import Any, Awaitable, Callable, Dict, Optional
 import folder_paths
 from aiohttp import web
 
-from ..common.core import browse_directory, contained_path, image_content_type, is_animated_image, relative_path
+from ..common.core import PREVIEW_CONTENT_TYPE, browse_directory, contained_path, image_content_type, is_animated_image, relative_path
 from ..common.paths import image_roots, select_root
 from .core import Resource
-from .media import StaleResource, UnsupportedMedia, metadata, source_path
+from .media import StaleResource, UnsupportedMedia, metadata, poster, source_path
 from .proxies import ProxyBusy, ProxyJob, ProxyManager
 
 logger = logging.getLogger(__name__)
@@ -179,6 +179,13 @@ def register_routes(routes: web.RouteTableDef, app: Optional[web.Application] = 
         path = await bounded(source_path, roots(), item.root, item.path)
         mime = image_content_type(item.path) or mimetypes.guess_type(item.path, strict=False)[0] or "application/octet-stream"
         return web.FileResponse(path, headers={**HEADERS, "Content-Type": mime})
+
+    @route("GET", "/poster")
+    async def still(request: web.Request) -> web.Response:
+        # A static frame at the saved clip start; images use /arisu/view and audio has no picture.
+        item = resource(request.query)
+        body = await bounded(poster, roots(), item, float(request.query.get("at", "0")), int(request.query.get("max", "256")))
+        return web.Response(body=body, headers={**HEADERS, "Content-Type": PREVIEW_CONTENT_TYPE})
 
     @route("POST", "/proxy")
     async def create(request: web.Request) -> web.Response:

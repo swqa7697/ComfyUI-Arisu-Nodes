@@ -17,7 +17,7 @@ import folder_paths
 import numpy as np
 from PIL import Image, ImageOps
 
-from ..common.core import contained_path, image_content_type, open_raster_image
+from ..common.core import MAX_THUMBNAIL, MIN_THUMBNAIL, contained_path, encode_preview, image_content_type, open_raster_image
 from ..common.paths import select_root
 from .core import Resource, ResourceBundle, align_clip_frames, auto_crop, clip_interval, parse_resources, ref_video_canvas
 
@@ -166,6 +166,34 @@ def metadata(roots: Mapping[str, str], item: Resource) -> Dict[str, Any]:
                 }
         except (av.FFmpegError, EOFError, StopIteration) as error:
             raise UnsupportedMedia("unsupported or incomplete media") from error
+
+
+def poster(roots: Mapping[str, str], item: Resource, at: float, max_size: int) -> bytes:
+    """Encode the upright video frame presented at source-relative ``at`` as a bounded WEBP still."""
+    if not math.isfinite(at) or at < 0:
+        raise ValueError("poster time must be a finite non-negative number")
+    bound = min(MAX_THUMBNAIL, max(MIN_THUMBNAIL, max_size))
+    try:
+        with source_file(roots, item) as handle, open_media(handle) as container:
+            video, _audio = streams(container)
+            if video is None:
+                raise UnsupportedMedia("no video stream")
+            if at > stream_duration(container, video) + 1e-9:
+                raise ValueError("poster time exceeds the source duration")
+            target = origin_for(video) + Fraction(str(at))
+            container.seek(int(target / video.time_base), stream=video, backward=True)
+            chosen = None
+            for frame in container.decode(video):
+                if frame.pts is None:
+                    raise UnsupportedMedia("video timestamps are unavailable")
+                if chosen is not None and frame.pts * frame.time_base > target:
+                    break
+                chosen = frame
+            if chosen is None:
+                raise UnsupportedMedia("video has no decodable frames")
+            return encode_preview(upright(chosen), bound)
+    except (av.FFmpegError, EOFError, StopIteration) as error:
+        raise UnsupportedMedia("unsupported or incomplete media") from error
 
 
 def validate_source(roots: Mapping[str, str], item: Resource, ratio: Optional[str] = None) -> Resource:

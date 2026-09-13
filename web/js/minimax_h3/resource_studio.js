@@ -11,10 +11,12 @@ import { editClip } from './clip_editor.js';
 const TYPE = 'ArisuMiniMaxH3ResourceStudio';
 const EMPTY = '{"version":1,"keyframes":{"first":null,"last":null},"references":[]}';
 const LIMITS = { image: 9, video: 3, audio: 3 };
+// Bound of a video row's still: a 36 × 24 CSS pixel thumb at a 2× device pixel ratio.
+const POSTER_MAX = 96;
 const nodes = new WeakMap();
 let activeEditor;
 const STYLE = `
-.arisu-studio{box-sizing:border-box;width:100%;height:100%;overflow:hidden;display:flex;flex-direction:column;gap:10px;padding:6px 10px 10px;
+.arisu-studio{box-sizing:border-box;width:100%;height:100%;overflow:hidden;display:flex;flex-direction:column;gap:10px;padding:8px 10px 12px;
  font:11px/1.3 Arial,system-ui,sans-serif;--image:#7fd1c1;--video:#d9a441;--audio:#b89be0;
  --surface:var(--comfy-input-bg,#2a2a2a);--row:var(--comfy-menu-bg,#333);--line:var(--border-color,#444);
  --label:var(--descrip-text,#999);--text:var(--input-text,#ccc);--dim:#777;--strong:var(--fg-color,#fff);
@@ -44,7 +46,7 @@ const STYLE = `
 .arisu-studio .counts{display:flex;gap:8px;font-size:10px;}
 .arisu-studio .counts .image{color:var(--image);}.arisu-studio .counts .video{color:var(--video);}.arisu-studio .counts .audio{color:var(--audio);}
 .arisu-studio .box{flex:1;min-height:0;display:flex;flex-direction:column;gap:4px;padding:6px;background:var(--surface);border:1px solid var(--line);}
-.arisu-studio .box.empty{align-items:center;justify-content:center;gap:8px;padding:14px 10px;text-align:center;color:var(--dim);line-height:1.5;}
+.arisu-studio .box.empty{min-height:120px;align-items:center;justify-content:center;padding:14px 10px;text-align:center;color:var(--dim);line-height:1.5;}
 .arisu-studio .references{flex:1;min-height:0;overflow:auto;display:flex;flex-direction:column;gap:4px;scrollbar-width:thin;}
 .arisu-studio .reference{--kind:var(--image);display:flex;align-items:center;gap:7px;padding:5px 5px 5px 3px;background:var(--row);border-left:3px solid var(--kind);}
 .arisu-studio .reference.video{--kind:var(--video);}.arisu-studio .reference.audio{--kind:var(--audio);}
@@ -52,21 +54,34 @@ const STYLE = `
 .arisu-studio .reference:hover{background:var(--hover);}
 .arisu-studio .handle{width:12px;text-align:center;color:var(--dim);font-size:10px;cursor:grab;opacity:0;transition:opacity .12s;}
 .arisu-studio .reference:hover .handle{opacity:1;}.arisu-studio .handle:hover{color:var(--text);}
-.arisu-studio .thumb{width:36px;height:24px;flex:none;object-fit:contain;background:color-mix(in srgb,var(--kind) 12%,transparent);border:1px solid color-mix(in srgb,var(--kind) 30%,transparent);}
+.arisu-studio .thumb{width:36px;height:24px;flex:none;display:flex;align-items:center;justify-content:center;object-fit:contain;color:var(--kind);
+ background:color-mix(in srgb,var(--kind) 12%,transparent);border:1px solid color-mix(in srgb,var(--kind) 30%,transparent);}
+.arisu-studio .thumb svg{width:14px;height:14px;}
+.arisu-studio .reference.muted .thumb{background:var(--surface);}
 .arisu-studio .edit{flex:1;min-width:0;text-align:left;}
 .arisu-studio .edit span{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .arisu-studio .name{color:var(--text);}
 .arisu-studio .move{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);}
 .arisu-studio .move:focus{position:static;width:auto;height:auto;clip-path:none;}
-.arisu-studio .browse{display:flex;align-items:center;justify-content:center;gap:6px;height:28px;padding:0 12px;flex:none;border-radius:4px;
- background:var(--row);border:1px solid var(--line);color:var(--text);font-size:11.5px;}
-.arisu-studio .browse::before{content:'+';font-size:13px;line-height:1;margin-top:-1px;}
-.arisu-studio .browse:hover{background:var(--hover);border-color:var(--label);color:var(--strong);}
+.arisu-studio .browse{display:flex;align-items:center;justify-content:center;gap:5px;height:20px;padding:0 9px;flex:none;border-radius:3px;
+ background:var(--hover);border:1px solid color-mix(in srgb,var(--line),var(--strong) 10%);color:var(--text);font-size:11px;}
+.arisu-studio .browse::before{content:'+';font-size:12px;line-height:1;margin-top:-1px;}
+.arisu-studio .browse:hover{background:color-mix(in srgb,var(--row),var(--strong) 12%);border-color:var(--label);color:var(--strong);}
 @media(prefers-color-scheme:light){.arisu-studio{--image:#267c6b;--video:#986600;--audio:#7950aa;--dim:#666;}}
 `;
 const CROP_ICON =
   '<svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.2" aria-hidden="true">' +
   '<path d="M4 1.5H1.5V4"/><path d="M8 1.5h2.5V4"/><path d="M4 10.5H1.5V8"/><path d="M8 10.5h2.5V8"/><rect x="3.5" y="3.5" width="5" height="5"/></svg>';
+const VIDEO_ICON =
+  '<svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.2" aria-hidden="true">' +
+  '<rect x="1.5" y="2.5" width="9" height="7"/><path d="M3.5 2.5v7M8.5 2.5v7M1.5 4.5h2M1.5 7.5h2M8.5 4.5h2M8.5 7.5h2"/></svg>';
+const AUDIO_ICON =
+  '<svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" aria-hidden="true">' +
+  '<path d="M1.5 5.5v1M3.5 4v4M5.5 2.5v7M7.5 3.5v5M9.5 5v2"/></svg>';
+function posterUrl(card) {
+  const params = new URLSearchParams({ root: card.root, path: card.path, at: String(card.clip?.start ?? 0), max: String(POSTER_MAX) });
+  return api.apiURL(`/arisu/resources/poster?${params}`);
+}
 function resourceId() {
   if (typeof crypto.randomUUID === 'function') return crypto.randomUUID();
   // randomUUID requires a secure context; getRandomValues also works over HTTP.
@@ -108,6 +123,7 @@ function reset(node) {
   const state = nodes.get(node);
   if (state) {
     state.info.clear();
+    state.posters.clear();
     state.ratio = undefined;
   }
   render(node);
@@ -175,7 +191,9 @@ function applyCard(node, slot, id, item, info) {
       data.references.push(item);
     }
   }
-  nodes.get(node).info.set(item.id, info);
+  const state = nodes.get(node);
+  state.info.set(item.id, info);
+  for (const key of [...state.posters.keys()]) if (key.startsWith(`${item.id}|`)) state.posters.delete(key);
   commit(node, data);
 }
 function cropRatio(box) {
@@ -410,6 +428,25 @@ function render(node) {
           event.dataTransfer?.setData('text/plain', card.id);
         },
       });
+      const icon = (markup) => {
+        const span = el('span', { className: 'thumb', ariaHidden: 'true' });
+        span.innerHTML = markup;
+        return span;
+      };
+      // A video still is decoded once per card and clip start; re-renders move the loaded element.
+      const poster = () => {
+        const key = `${card.id}|${card.root}|${card.path}|${card.clip?.start}`;
+        let image = state.posters.get(key);
+        if (!image) {
+          image = el('img', { className: 'thumb', alt: '', loading: 'lazy', src: posterUrl(card) });
+          image.onerror = () => {
+            state.posters.delete(key);
+            image.replaceWith(icon(VIDEO_ICON));
+          };
+          state.posters.set(key, image);
+        }
+        return image;
+      };
       const thumb =
         card.kind === 'image'
           ? el('img', {
@@ -418,7 +455,9 @@ function render(node) {
               loading: 'lazy',
               src: viewUrl(card.path, undefined, false, cropParam(card), card.root),
             })
-          : el('span', { className: 'thumb', ariaHidden: 'true' });
+          : card.kind === 'video'
+            ? poster()
+            : icon(AUDIO_ICON);
       const row = el(
         'div',
         {
@@ -456,14 +495,17 @@ function render(node) {
       return row;
     }),
   );
-  const browseAll = button('Browse references…', () => browse(node), undefined, 'browse');
+  const browseAll = button('Browse', () => browse(node), 'Browse references…', 'browse');
   const box = data.references.length
-    ? el('div', { className: 'box' }, [references, browseAll])
+    ? el('div', { className: 'box' }, [references])
     : el('div', { className: 'box empty' }, [
         el('div', { textContent: 'no references yet' }),
         el('div', { textContent: 'image · video · audio' }),
-        browseAll,
       ]);
+  // Only kinds with active references are counted; nothing active shows no counters.
+  const counts = Object.keys(LIMITS)
+    .map((kind) => [kind, data.references.filter((card) => card.kind === kind && !card.muted).length])
+    .filter(([, count]) => count > 0);
   const status = ratio(node)
     ? node.arisuAspectSource
       ? `Aspect ratio from ${node.arisuAspectSource}`
@@ -476,20 +518,16 @@ function render(node) {
     el('div', { className: 'section' }, [
       el('div', { className: 'heading' }, [
         el('span', { className: 'label', textContent: 'Media references' }),
-        ...(data.references.length
+        ...(counts.length
           ? [
               el(
                 'span',
                 { className: 'counts' },
-                Object.keys(LIMITS).map((kind) =>
-                  el('span', {
-                    className: kind,
-                    textContent: `${kind} ${data.references.filter((card) => card.kind === kind && !card.muted).length}`,
-                  }),
-                ),
+                counts.map(([kind, count]) => el('span', { className: kind, textContent: `${kind} ${count}` })),
               ),
             ]
           : []),
+        browseAll,
       ]),
       box,
     ]),
@@ -517,7 +555,7 @@ app.registerExtension({
     };
     chain('onNodeCreated', function () {
       const body = el('div', { className: 'arisu-studio' });
-      const state = { body, info: new Map(), generation: 0 };
+      const state = { body, info: new Map(), posters: new Map(), generation: 0 };
       nodes.set(this, state);
       for (const event of ['pointerdown', 'wheel', 'keydown']) body.addEventListener(event, (event) => event.stopPropagation());
       const control = widget(this, 'resources_json');

@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from io import BytesIO
 from pathlib import Path
 
 import numpy as np
 import pytest
+from PIL import Image
 
 from src.arisu_nodes.minimax_h3.core import Resource
-from src.arisu_nodes.minimax_h3.media import StaleResource, metadata, read_audio, read_video, validate_source
+from src.arisu_nodes.minimax_h3.media import StaleResource, UnsupportedMedia, metadata, poster, read_audio, read_video, validate_source
 from tests.support.media import make_audio, make_av, make_video
 
 pytestmark = pytest.mark.comfyui
@@ -30,11 +32,19 @@ def test_timestamp_sampling_and_audio_boundaries(tmp_path: Path):
         assert shorter.shape[0] == 22
         with pytest.raises(ValueError, match="at least 5"):
             read_video(roots, replace(item, clip=(0, 0.1)), 124)
+        # A still at one second is the frame presented then, shrunk into the bound.
+        still = Image.open(BytesIO(poster(roots, item, 1.0, 32)))
+        assert still.format == "WEBP" and max(still.size) <= 32
+        assert abs(still.convert("RGB").getpixel((0, 0))[0] - fps) <= 2
     make_audio(tmp_path / "sound.wav")
     sound = validate_source(roots, Resource("a", "audio", "input", "sound.wav", clip=(0.10001, 0.60001)))
     samples, rate = read_audio(roots, sound)
     assert rate == 8000 and samples.shape == (1, 1, 4000)
     assert np.allclose(samples, 0.25, atol=1 / 32768)
+    with pytest.raises(UnsupportedMedia):
+        poster(roots, sound, 0, 32)
+    with pytest.raises(ValueError, match="duration"):
+        poster(roots, item, 99, 32)
     # Nonzero timestamps and variable presentation intervals use timestamp containment.
     make_video(tmp_path / "variable.mkv", timestamps=[2000, 2030, 2100, 2200, 2250, 2400, 2500, 2700, 2900, 3100])
     variable = validate_source(roots, Resource("v", "video", "input", "variable.mkv", clip=(0, 0.5)))

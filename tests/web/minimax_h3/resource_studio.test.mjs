@@ -154,16 +154,28 @@ test('Studio edits and reorders independent cards, counts only active references
   widget(node, 'resources_json').value = JSON.stringify(data);
   widget(node, 'aspect_ratio').callback();
   await settle();
-  assert.deepEqual(counts(node), ['image 1', 'video 1', 'audio 0']);
+  assert.deepEqual(counts(node), ['image 1', 'video 1']);
   assert.equal(
     descendants(panel(node)).some((element) => ['VIDEO', 'AUDIO'].includes(element.tagName)),
     false,
   );
+  // Video rows show a static still from the clip start, audio rows a marker; a failed still falls back to a marker.
+  const thumbs = () =>
+    descendants(panel(node))
+      .filter((element) => element.dataset.cardId)
+      .map((row) => row.children.find((child) => child.className === 'thumb'));
+  assert.equal(thumbs()[1].tagName, 'IMG');
+  assert.match(thumbs()[1].src, /\/arisu\/resources\/poster\?.*path=video\.mkv.*at=0/);
+  assert.equal(thumbs()[2].tagName, 'SPAN');
+  assert.match(thumbs()[2].innerHTML, /<svg/);
+  thumbs()[1].onerror();
+  assert.equal(thumbs()[1].tagName, 'SPAN');
+  assert.match(thumbs()[1].innerHTML, /<svg/);
   await checkBrowse(button(panel(node), 'Browse references…'), node, 'output:audio');
   let rows = descendants(panel(node)).filter((element) => element.dataset.cardId);
   button(rows[0], 'Mute').onclick();
   assert.equal(state(node).references[0].muted, true);
-  assert.deepEqual(counts(node), ['image 0', 'video 1', 'audio 0']);
+  assert.deepEqual(counts(node), ['video 1']);
   rows = descendants(panel(node)).filter((element) => element.dataset.cardId);
   button(rows[2], 'Move up').onclick();
   assert.deepEqual(
@@ -173,7 +185,7 @@ test('Studio edits and reorders independent cards, counts only active references
   await checkBrowse(button(panel(node), 'Browse references…'), node, 'input:/');
   rows = descendants(panel(node)).filter((element) => element.dataset.cardId);
   button(rows[1], 'Unmute').onclick();
-  assert.deepEqual(counts(node), ['image 0', 'video 1', 'audio 1']);
+  assert.deepEqual(counts(node), ['video 1', 'audio 1']);
   // Existing card edits are drafts; Cancel and node removal cannot write stale selections.
   api.responses.push(jsonResponse(200, { kind: 'audio', duration: 12, has_audio: true, revision: 'a' }));
   rows = descendants(panel(node)).filter((element) => element.dataset.cardId);
