@@ -70,7 +70,8 @@ async function pick(control, path) {
   await file.onclick();
 }
 
-async function checkBrowse(control, node, expected) {
+/** Open Browse from `control`, expect it at `expected` (`root:path`) listing `kinds`, and hand back the file cards. */
+async function checkBrowse(control, node, expected, kinds = {}) {
   const before = state(node);
   api.responses.push((route) => {
     const query = new URL(route, 'http://localhost').searchParams;
@@ -80,7 +81,8 @@ async function checkBrowse(control, node, expected) {
       path,
       parent: null,
       dirs: [],
-      files: [],
+      files: Object.keys(kinds),
+      kinds,
       ancestors: [],
       roots: [
         { id: 'input', label: 'Input' },
@@ -94,8 +96,10 @@ async function checkBrowse(control, node, expected) {
   const [root, path] = expected.split(':');
   assert.equal(location.textContent, path);
   assert.equal(location.title, `Relative to ${root}`);
+  const cards = descendants(dialog).filter((element) => element.className === 'arisu-browser-file');
   dialog.close();
   assert.deepEqual(state(node), before);
+  return cards;
 }
 
 test('Studio edits and reorders independent cards, counts only active references, and discards imported locations', async (t) => {
@@ -140,7 +144,22 @@ test('Studio edits and reorders independent cards, counts only active references
   assert.equal(state(node).keyframes.first.id, ids[0]);
   assert.equal(state(node).keyframes.first.path, 'replacement.png');
   await checkBrowse(button(panel(node), 'first frame'), node, 'input:/');
-  await checkBrowse(button(panel(node), 'Browse references…'), node, 'input:/');
+  // Browse references marks every card already in the list, not only the last one, and never a keyframe.
+  const marks = (cards) => cards.map((card) => [card.title, card.ariaCurrent, card.dataset.kind]);
+  assert.deepEqual(
+    marks(
+      await checkBrowse(button(panel(node), 'Browse references…'), node, 'input:/', {
+        'one.png': 'image',
+        'two.png': 'image',
+        'first.png': 'image',
+      }),
+    ),
+    [
+      ['input:one.png', 'true', 'image'],
+      ['input:two.png', 'true', 'image'],
+      ['input:first.png', null, 'image'],
+    ],
+  );
   restoreUUID();
   await pick(button(panel(node), 'Browse references…'), 'native.png');
   assert.equal(state(node).references[2].path, 'native.png');
@@ -235,7 +254,25 @@ test('Studio edits and reorders independent cards, counts only active references
   thumbs()[1].onerror();
   assert.equal(thumbs()[1].tagName, 'SPAN');
   assert.match(thumbs()[1].innerHTML, /<svg/);
-  await checkBrowse(button(panel(node), 'Browse references…'), node, 'output:audio');
+  // Mixed Browse draws videos as a poster still, falling back to the film glyph, and audio as a waveform glyph.
+  const cards = await checkBrowse(button(panel(node), 'Browse references…'), node, 'output:audio', {
+    'sound.wav': 'audio',
+    'other.wav': 'audio',
+    'clip.mkv': 'video',
+  });
+  assert.deepEqual(marks(cards), [
+    ['output:audio/sound.wav', 'true', 'audio'],
+    ['output:audio/other.wav', null, 'audio'],
+    ['output:audio/clip.mkv', null, 'video'],
+  ]);
+  const tile = (card) => card.children[0];
+  assert.equal(tile(cards[0]).tagName, 'SPAN');
+  assert.match(tile(cards[0]).innerHTML, /<svg/);
+  assert.equal(tile(cards[2]).tagName, 'IMG');
+  assert.match(tile(cards[2]).src, /\/arisu\/resources\/poster\?.*path=audio%2Fclip\.mkv.*at=0.*max=256/);
+  tile(cards[2]).onerror();
+  assert.equal(tile(cards[2]).tagName, 'SPAN');
+  assert.match(tile(cards[2]).innerHTML, /<svg/);
   let rows = descendants(panel(node)).filter((element) => element.dataset.cardId);
   button(rows[0], 'Mute').onclick();
   assert.equal(state(node).references[0].muted, true);
@@ -286,10 +323,11 @@ test('Studio keyframes auto-crop on effective ratio changes and preserve manual 
   await settle();
   assert.equal(state(node).keyframes.first.crop.width, 20);
   for (const slot of ['first', null]) {
-    for (const [crop, expected, parts] of [
-      [{ left: 2, top: 3, width: 320, height: 180 }, '16:9', []],
-      [{ left: 2, top: 3, width: 210, height: 90 }, 'custom', ['7', '3']],
-      [null, 'free', []],
+    // A saved box of a preset ratio opens on that preset; any other ratio, like 7:3, and an uncropped image open free.
+    for (const [crop, expected] of [
+      [{ left: 2, top: 3, width: 320, height: 180 }, '16:9'],
+      [{ left: 2, top: 3, width: 210, height: 90 }, 'free'],
+      [null, 'free'],
     ]) {
       const next = state(node);
       const item = { ...card('ratio'), crop, crop_basis_ratio: '16:9 (Widescreen)' };
@@ -304,10 +342,9 @@ test('Studio keyframes auto-crop on effective ratio changes and preserve manual 
         await settle();
         const dialog = body.children.find((element) => element.open);
         assert.equal(descendants(dialog).find((element) => element.className === 'arisu-cropper-ratio').value, expected);
-        const fields = descendants(dialog).filter((element) => element.className === 'arisu-cropper-ratio-part');
-        assert.deepEqual(
-          fields.filter((element) => !element.hidden).map((element) => element.value),
-          parts,
+        assert.equal(
+          descendants(dialog).some((element) => element.tagName === 'INPUT'),
+          false,
         );
         assert.equal(
           descendants(dialog).find((element) => element.className === 'arisu-cropper-readout').textContent,

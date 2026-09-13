@@ -51,6 +51,14 @@ export async function discoverRoots() {
 }
 
 const ICONS = { root: '\u{1F4BE}', folder: '\u{1F4C1}', saved: '\u{1F4CC}' };
+/** Inline kind glyphs, shared with Resource Studio's reference rows: a film strip and a waveform. */
+export const VIDEO_ICON =
+  '<svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.2" aria-hidden="true">' +
+  '<rect x="1.5" y="2.5" width="9" height="7"/><path d="M3.5 2.5v7M8.5 2.5v7M1.5 4.5h2M1.5 7.5h2M8.5 4.5h2M8.5 7.5h2"/></svg>';
+export const AUDIO_ICON =
+  '<svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" aria-hidden="true">' +
+  '<path d="M1.5 5.5v1M3.5 4v4M5.5 2.5v7M7.5 3.5v5M9.5 5v2"/></svg>';
+const KIND_ICONS = { video: VIDEO_ICON, audio: AUDIO_ICON };
 
 const STYLE = `
 .arisu-browser { width: min(1100px, 92vw); height: min(760px, 88vh); padding: 0; border: 1px solid var(--border-color, #444);
@@ -109,6 +117,11 @@ const STYLE = `
 .arisu-browser-file img { width: 100%; aspect-ratio: 1; object-fit: contain; background: #111; border-radius: 6px; opacity: 0;
   transition: opacity 250ms ease; }
 .arisu-browser-file img.arisu-loaded { opacity: 1; }
+.arisu-browser-glyph { width: 100%; aspect-ratio: 1; display: flex; align-items: center; justify-content: center; box-sizing: border-box;
+  background: #111; border-radius: 6px; color: var(--descrip-text, #999); }
+.arisu-browser-glyph svg { width: 40%; height: 40%; }
+.arisu-browser-file[data-kind="video"] :is(img, .arisu-browser-glyph) { outline: 2px solid #d9a441; outline-offset: -2px; }
+.arisu-browser-file[data-kind="audio"] :is(img, .arisu-browser-glyph) { outline: 2px solid #b89be0; outline-offset: -2px; }
 .arisu-browser-file span { font-size: 12px; color: var(--descrip-text, #999); overflow: hidden; text-overflow: ellipsis;
   white-space: nowrap; transition: color 150ms ease; }
 .arisu-fresh .arisu-browser-file { animation: arisu-rise 160ms ease-out backwards; animation-delay: min(calc(var(--i, 0) * 10ms), 120ms); }
@@ -175,7 +188,17 @@ export function viewUrl(path, max, bust = false, crop = '', root = 'input') {
   return api.apiURL(`${VIEW_ROUTE}?${params}`);
 }
 
-/** The image at `url` once loaded, or `null` when the browser cannot load it. */
+/** The poster route's URL: the upright frame of a video at `at` seconds, shrunk into `max`, as WebP. */
+export function posterUrl(root, path, at, max) {
+  const params = new URLSearchParams({ root, path, at: String(at), max: String(max) });
+  return api.apiURL(`/arisu/resources/poster?${params}`);
+}
+
+/**
+ * Open the Browse dialog for `node` and hand the picked `(path, root)` to `options.onPick`. `options.mixed` lists
+ * video and audio beside images; `options.selected(root, path)` marks the cards already chosen, by default the one
+ * the node's `root` and `path` widgets name.
+ */
 export async function browseResources(node, options = {}) {
   browserDialogs.get(node)?.close();
   const isCurrent = () => (!options.isCurrent || options.isCurrent()) && !options.signal?.aborted && dialog.open;
@@ -398,37 +421,53 @@ export async function browseResources(node, options = {}) {
     input.focus();
   }
 
+  const selected = options.selected ?? ((root, path) => root === rootValue(node) && path === pathWidget(node)?.value?.trim());
+
+  /** A square tile carrying the kind's glyph, where no picture exists or a poster failed. */
+  function glyph(kind) {
+    const tile = el('span', { className: 'arisu-browser-glyph', ariaLabel: `${kind === 'video' ? 'Video' : 'Audio'} resource` });
+    tile.innerHTML = KIND_ICONS[kind];
+    return tile;
+  }
+
+  /** An image's thumbnail, a video's poster at its first frame (a glyph when that fails), or an audio glyph. */
+  function thumbnail(kind, root, path, name) {
+    if (kind === 'audio') return glyph(kind);
+    const image = el('img', {
+      loading: 'lazy',
+      alt: name,
+      onload: (event) => {
+        event.target.className = 'arisu-loaded';
+      },
+      src: kind === 'video' ? posterUrl(root, path, 0, THUMBNAIL_MAX) : viewUrl(path, THUMBNAIL_MAX, false, '', root),
+    });
+    if (kind === 'video') image.onerror = () => image.replaceWith(glyph(kind));
+    return image;
+  }
+
   function renderGrid(fresh) {
     const files = listing.files.filter((name) => name.toLowerCase().includes(filterField.value.trim().toLowerCase()));
     const cards = files.map((name, index) => {
       const path = joinPath(listing.path, name);
       const root = listing.root;
-      const thumbnail =
-        options.mixed && listing.kinds?.[name] !== 'image'
-          ? el('span', { textContent: 'Open clip editor', ariaLabel: 'Video or audio resource' })
-          : el('img', {
-              loading: 'lazy',
-              alt: name,
-              onload: (event) => {
-                event.target.className = 'arisu-loaded';
-              },
-              src: viewUrl(path, THUMBNAIL_MAX, false, '', root),
-            });
-      return el(
+      const kind = (options.mixed && listing.kinds?.[name]) || 'image';
+      const card = el(
         'button',
         {
           className: 'arisu-browser-file',
           style: `--i: ${index}`,
           title: locationLabel(root, path),
-          ariaCurrent: root === rootValue(node) && path === pathWidget(node)?.value?.trim() ? 'true' : null,
+          ariaCurrent: selected(root, path) ? 'true' : null,
           onclick: () => {
             if (!isCurrent()) return;
             dialog.close();
             return options.onPick(path, root);
           },
         },
-        [thumbnail, el('span', { textContent: name })],
+        [thumbnail(kind, root, path, name), el('span', { textContent: name })],
       );
+      card.dataset.kind = kind;
+      return card;
     });
     grid.className = fresh ? 'arisu-browser-grid arisu-fresh' : 'arisu-browser-grid';
     grid.replaceChildren(

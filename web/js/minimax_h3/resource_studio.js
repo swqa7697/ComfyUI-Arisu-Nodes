@@ -3,7 +3,7 @@ import { api } from '../../../../scripts/api.js';
 import { app } from '../../../../scripts/app.js';
 import { cropImage } from '../common/cropper.js';
 import { el } from '../common/dom.js';
-import { browseResources, closeBrowser, viewUrl } from '../common/resource_browser.js';
+import { AUDIO_ICON, browseResources, closeBrowser, posterUrl, VIDEO_ICON, viewUrl } from '../common/resource_browser.js';
 import { installSelectionGuards, preservingSelections, registerSelectionOwner } from '../common/selection_context.js';
 import { hideWidget } from '../common/widgets.js';
 import { editClip } from './clip_editor.js';
@@ -73,16 +73,6 @@ const STYLE = `
 const CROP_ICON =
   '<svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.2" aria-hidden="true">' +
   '<path d="M4 1.5H1.5V4"/><path d="M8 1.5h2.5V4"/><path d="M4 10.5H1.5V8"/><path d="M8 10.5h2.5V8"/><rect x="3.5" y="3.5" width="5" height="5"/></svg>';
-const VIDEO_ICON =
-  '<svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.2" aria-hidden="true">' +
-  '<rect x="1.5" y="2.5" width="9" height="7"/><path d="M3.5 2.5v7M8.5 2.5v7M1.5 4.5h2M1.5 7.5h2M8.5 4.5h2M8.5 7.5h2"/></svg>';
-const AUDIO_ICON =
-  '<svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" aria-hidden="true">' +
-  '<path d="M1.5 5.5v1M3.5 4v4M5.5 2.5v7M7.5 3.5v5M9.5 5v2"/></svg>';
-function posterUrl(card) {
-  const params = new URLSearchParams({ root: card.root, path: card.path, at: String(card.clip?.start ?? 0), max: String(POSTER_MAX) });
-  return api.apiURL(`/arisu/resources/poster?${params}`);
-}
 // Row metadata formats; every time shown on the node keeps at most one decimal.
 function clock(seconds) {
   const tenths = Math.round(seconds * 10);
@@ -297,7 +287,9 @@ async function edit(node, item, slot) {
 }
 async function browse(node, slot = null, replacing = null) {
   const task = begin(node);
-  const location = replacing ?? (!slot ? read(node).references.at(-1) : null);
+  // A keyframe dialog marks the card it replaces; the reference dialog marks every card in the list.
+  const marked = slot ? (replacing ? [replacing] : []) : read(node).references;
+  const location = replacing ?? (!slot ? marked.at(-1) : null);
   const adapter = {
     widgets: [
       { name: 'root', value: location?.root ?? 'input' },
@@ -306,6 +298,7 @@ async function browse(node, slot = null, replacing = null) {
   };
   await browseResources(adapter, {
     mixed: !slot,
+    selected: (root, path) => marked.some((card) => card.root === root && card.path === path),
     signal: task.signal,
     isCurrent: task.current,
     onPick: async (path, root) => {
@@ -514,7 +507,12 @@ function render(node) {
         const key = `${card.id}|${card.root}|${card.path}|${card.clip?.start}`;
         let image = state.posters.get(key);
         if (!image) {
-          image = el('img', { className: 'thumb', alt: '', loading: 'lazy', src: posterUrl(card) });
+          image = el('img', {
+            className: 'thumb',
+            alt: '',
+            loading: 'lazy',
+            src: posterUrl(card.root, card.path, card.clip?.start ?? 0, POSTER_MAX),
+          });
           image.onerror = () => {
             state.posters.delete(key);
             image.replaceWith(icon(VIDEO_ICON));

@@ -1,7 +1,8 @@
 // Load Image (Browse)'s crop button: the dialog it opens on the picked file, how a drag, a ratio,
 // apply and reset drive the hidden crop widget (the value core.parse_crop reads on the other side)
 // and the node preview, how the ratio is remembered for the picked file and starts free on another,
-// and how it declines a file it cannot show.
+// how a saved box of no preset ratio opens free and unconstrained, and how it declines a file it
+// cannot show.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
@@ -51,13 +52,12 @@ function readout(dialog) {
   return byClass(dialog, 'arisu-cropper-readout')[0].textContent;
 }
 
-/** The ratio menu and its two custom fields. */
-function ratioControls(dialog) {
-  return { menu: byClass(dialog, 'arisu-cropper-ratio')[0], parts: byClass(dialog, 'arisu-cropper-ratio-part') };
+function ratioMenu(dialog) {
+  return byClass(dialog, 'arisu-cropper-ratio')[0];
 }
 
 function chooseRatio(dialog, value) {
-  const { menu } = ratioControls(dialog);
+  const menu = ratioMenu(dialog);
   menu.value = value;
   menu.onchange();
 }
@@ -99,23 +99,26 @@ test('the crop button opens a box over the picked file; drags, a ratio, apply an
   assert.equal(readout(dialog), '800 × 600 at 0, 0');
   // the image is shown at half size: pointer positions map to image pixels through its on-screen rectangle
   img.getBoundingClientRect = () => ({ left: 0, top: 0, width: 400, height: 300 });
-  const stage = byClass(dialog, 'arisu-cropper-stage')[0];
-  const press = (target, x, y) => stage.onpointerdown({ clientX: x, clientY: y, target, pointerId: 1 });
-  const drag = (x, y) => stage.onpointermove({ clientX: x, clientY: y, pointerId: 1 });
-  const release = () => stage.onpointerup({ pointerId: 1 });
+  // the pointer helpers address whichever crop dialog is open; a later dialog's image keeps the fake's 1:1 mapping
+  const stage = () => byClass(openDialog(), 'arisu-cropper-stage')[0];
+  const press = (target, x, y) => stage().onpointerdown({ clientX: x, clientY: y, target, pointerId: 1 });
+  const drag = (x, y) => stage().onpointermove({ clientX: x, clientY: y, pointerId: 1 });
+  const release = () => stage().onpointerup({ pointerId: 1 });
   // a drag on the image draws a box
   press(img, 100, 75);
   drag(300, 225);
   release();
   assert.equal(readout(dialog), '400 × 300 at 200, 150');
-  // a preset ratio makes the box the largest one of that ratio in the whole image, centred; the custom fields stay out of sight
-  assert.equal(ratioControls(dialog).menu.value, 'free');
-  assert.ok(ratioControls(dialog).parts.every((part) => part.hidden));
+  // a preset ratio makes the box the largest one of that ratio in the whole image, centred; the menu offers only free and presets
+  assert.equal(ratioMenu(dialog).value, 'free');
+  assert.deepEqual(
+    ratioMenu(dialog).children.map((option) => option.value),
+    ['free', '1:1', '3:2', '2:3', '4:3', '3:4', '16:9', '9:16', '21:9'],
+  );
   chooseRatio(dialog, '1:1');
   assert.equal(readout(dialog), '600 × 600 at 100, 0');
-  assert.ok(ratioControls(dialog).parts.every((part) => part.hidden));
   // a press inside the ratio menu that ends on the backdrop is not a backdrop click: the dialog stays
-  dialog.onpointerdown({ target: ratioControls(dialog).menu });
+  dialog.onpointerdown({ target: ratioMenu(dialog) });
   dialog.onclick({ target: dialog });
   assert.equal(dialog.open, true);
   // dragging the box moves it, and it stops at the image's edge
@@ -142,48 +145,40 @@ test('the crop button opens a box over the picked file; drags, a ratio, apply an
   assert.equal(openDialog(), undefined);
   assert.deepEqual([query(node.imgs[0].src).path, query(node.imgs[0].src).crop], ['a.png', '400,200,400,400']);
   assert.equal(query(node.imgs[0].src).max, undefined);
-  // opening again starts from the saved box and the remembered ratio; custom shows two fields, which read as free
-  // until both are filled and then make the box the largest one of their ratio; cancel leaves the widget alone
+  // opening again starts from the saved box and the remembered ratio; a free box drawn by hand keeps any shape, and
+  // cancel leaves the widget alone
   applied = cropButton(node).callback();
   await settle();
   dialog = openDialog();
   assert.equal(readout(dialog), '400 × 400 at 400, 200');
-  assert.equal(ratioControls(dialog).menu.value, '1:1');
-  chooseRatio(dialog, 'custom');
-  const { parts } = ratioControls(dialog);
-  assert.ok(parts.every((part) => !part.hidden));
-  parts[0].value = '5';
-  parts[0].oninput();
+  assert.equal(ratioMenu(dialog).value, '1:1');
+  chooseRatio(dialog, 'free');
   assert.equal(readout(dialog), '400 × 400 at 400, 200');
-  parts[1].value = '4';
-  parts[1].oninput();
-  assert.equal(readout(dialog), '750 × 600 at 25, 0');
+  press(img, 0, 0);
+  drag(750, 300);
+  release();
+  assert.equal(readout(dialog), '750 × 300 at 0, 0');
   button(dialog, 'cancel').onclick();
   await applied;
   assert.equal(cropWidget(node).value, '400,200,400,400');
   assert.deepEqual(written, ['400,200,400,400']);
-  // the custom ratio comes back seeded into its fields, over the saved box; switching presets never shrinks the box,
-  // since each one is fitted to the image, not to the box before it
+  // the free choice comes back over the saved box; switching presets never shrinks the box, since each one is fitted
+  // to the image, not to the box before it
   applied = cropButton(node).callback();
   await settle();
   dialog = openDialog();
   assert.equal(readout(dialog), '400 × 400 at 400, 200');
-  assert.equal(ratioControls(dialog).menu.value, 'custom');
-  assert.deepEqual(
-    ratioControls(dialog).parts.map((part) => part.value),
-    ['5', '4'],
-  );
+  assert.equal(ratioMenu(dialog).value, 'free');
   chooseRatio(dialog, '16:9');
   assert.equal(readout(dialog), '800 × 450 at 0, 75');
   chooseRatio(dialog, '9:16');
   assert.equal(readout(dialog), '338 × 600 at 231, 0');
   chooseRatio(dialog, '16:9');
   assert.equal(readout(dialog), '800 × 450 at 0, 75');
-  // reset is the whole image at a free ratio, with the custom fields hidden and blank; applied, it is stored as no crop
+  // reset is the whole image at a free ratio; applied, it is stored as no crop
   button(dialog, 'reset').onclick();
   assert.equal(readout(dialog), '800 × 600 at 0, 0');
-  assert.equal(ratioControls(dialog).menu.value, 'free');
-  assert.ok(ratioControls(dialog).parts.every((part) => part.hidden && part.value === ''));
+  assert.equal(ratioMenu(dialog).value, 'free');
   button(dialog, 'apply').onclick();
   await applied;
   assert.deepEqual(written, ['400,200,400,400', '']);
@@ -192,7 +187,7 @@ test('the crop button opens a box over the picked file; drags, a ratio, apply an
   applied = cropButton(node).callback();
   await settle();
   dialog = openDialog();
-  assert.equal(ratioControls(dialog).menu.value, 'free');
+  assert.equal(ratioMenu(dialog).value, 'free');
   press(img, 0, 0);
   drag(100, 100);
   release();
@@ -221,7 +216,7 @@ test('the crop button opens a box over the picked file; drags, a ratio, apply an
   assert.equal(node.widgets[0].value, 'b.png');
   applied = cropButton(node).callback();
   await settle();
-  assert.equal(ratioControls(openDialog()).menu.value, 'free');
+  assert.equal(ratioMenu(openDialog()).value, 'free');
   chooseRatio(openDialog(), '3:2');
   button(openDialog(), 'cancel').onclick();
   await applied;
@@ -229,7 +224,7 @@ test('the crop button opens a box over the picked file; drags, a ratio, apply an
   node.widgets[0].value = 'c.png';
   applied = cropButton(node).callback();
   await settle();
-  assert.equal(ratioControls(openDialog()).menu.value, 'free');
+  assert.equal(ratioMenu(openDialog()).value, 'free');
   button(openDialog(), 'cancel').onclick();
   await applied;
   // nothing to crop without a file, and a format the browser cannot decode has no known size: a warning, no dialog

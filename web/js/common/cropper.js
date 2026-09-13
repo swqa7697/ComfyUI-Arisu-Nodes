@@ -7,11 +7,11 @@
 // dialog is cancelled, and the ratio the bar showed when it closed, so the
 // caller can hand it back next time. A drag on the image draws a new box, a
 // drag on the box moves it, and its eight handles resize it. The ratio menu
-// offers `free`, the presets, and `custom`, which shows a width and a height
-// field; choosing a ratio makes the box the largest one of that ratio in the
-// image, centred, and holds it through every drag, while `free` leaves the box
-// as it is. Reset is the whole image at `free`, which the caller treats as no
-// crop at all.
+// offers `free` and the presets; choosing a preset makes the box the largest
+// one of that ratio in the image, centred, and holds it through every drag,
+// while `free` leaves the box as it is and constrains nothing. A ratio that is
+// not a preset is free. Reset is the whole image at `free`, which the caller
+// treats as no crop at all.
 //
 // Nothing here knows about nodes, widgets or routes: the caller loads the
 // image and stores the result. The geometry is pure functions over integer
@@ -21,8 +21,8 @@
 import { closeOnBackdropClick, el } from './dom.js';
 
 const RATIO_FREE = 'free';
-const RATIO_CUSTOM = 'custom';
-const RATIO_PRESETS = ['1:1', '3:2', '2:3', '4:3', '3:4', '16:9', '9:16'];
+/** Every Video Settings aspect ratio is here, so the Studio's auto-crop always lands on a menu entry. */
+const RATIO_PRESETS = ['1:1', '3:2', '2:3', '4:3', '3:4', '16:9', '9:16', '21:9'];
 /** Each handle's place on the box as (x, y) fractions; a drag moves the sides it sits on and holds the others. */
 const HANDLES = { nw: [0, 0], n: [0.5, 0], ne: [1, 0], e: [1, 0.5], se: [1, 1], s: [0.5, 1], sw: [0, 1], w: [0, 0.5] };
 const MIN_SIDE = 1;
@@ -43,7 +43,6 @@ const STYLE = `
 .arisu-cropper-bar { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--border-color, #444); }
 .arisu-cropper-bar label { color: var(--descrip-text, #999); }
 .arisu-cropper-ratio { min-width: 96px; }
-.arisu-cropper-ratio-part { width: 64px; }
 .arisu-cropper-readout { flex: 1; text-align: center; color: var(--descrip-text, #999); font-variant-numeric: tabular-nums; }
 .arisu-cropper-apply { border-color: var(--p-primary-color, #6ea8fe); }
 .arisu-cropper-body { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; padding: 16px; background: #111; }
@@ -135,30 +134,28 @@ function resizeRect(origin, handle, point, ratio, bounds) {
   return clampRect({ x, y, w, h }, bounds);
 }
 
-/** The width-over-height ratio of `text` (`16:9`, `16/9`, `1.78`), or `null` for free (blank, `free`, or nonsense). */
-function parseRatio(text) {
-  const value = text.trim().toLowerCase();
-  if (!value || value === RATIO_FREE) return null;
-  const [w, h = '1'] = value.split(/[:/x]/);
-  const ratio = Number(w) / Number(h);
-  return Number.isFinite(ratio) && ratio > 0 ? ratio : null;
+/** `text` when it names a preset, otherwise blank: any other ratio is free. */
+function presetRatio(text) {
+  return RATIO_PRESETS.includes(text) ? text : '';
 }
 
-/** The menu entry for a ratio text: a preset by name, blank is free, anything else is custom. */
-function ratioChoice(text) {
-  if (!text) return RATIO_FREE;
-  return RATIO_PRESETS.includes(text) ? text : RATIO_CUSTOM;
+/** The width-over-height ratio of a preset text (`16:9`), or `null` for free (blank). */
+function parseRatio(text) {
+  if (!text) return null;
+  const [w, h] = text.split(':').map(Number);
+  return w / h;
 }
 
 /**
  * Let the user crop `img`, a loaded image, starting from `initial.rect` (`{ x, y, w, h }` in image pixels, or null for
- * the whole image) with the aspect ratio `initial.ratio` (a `w:h` text, blank for free); resolves to `{ rect, ratio }`,
- * `rect` being the applied box or `null` when the dialog is cancelled, and `ratio` the text the bar ended on.
+ * the whole image) with the aspect ratio `initial.ratio` (a preset `w:h` text; anything else is free); resolves to
+ * `{ rect, ratio }`, `rect` being the applied box or `null` when the dialog is cancelled, and `ratio` the text the bar
+ * ended on.
  */
 export function cropImage(img, initial, options = {}) {
   const bounds = { w: img.naturalWidth, h: img.naturalHeight };
   let rect = initial.rect ? clampRect(initial.rect, bounds) : fullRect(bounds);
-  let ratioText = initial.ratio ?? '';
+  let ratioText = presetRatio(initial.ratio ?? '');
   let ratio = parseRatio(ratioText);
   let drag = null;
   let result = null;
@@ -167,19 +164,8 @@ export function cropImage(img, initial, options = {}) {
   const ratioMenu = el(
     'select',
     { className: 'arisu-cropper-ratio', title: 'aspect ratio, width:height', onchange: onRatioChange },
-    [RATIO_FREE, ...RATIO_PRESETS, RATIO_CUSTOM].map((value) => el('option', { value, textContent: value })),
+    [RATIO_FREE, ...RATIO_PRESETS].map((value) => el('option', { value, textContent: value })),
   );
-  const ratioParts = ['width', 'height'].map((axis) =>
-    el('input', {
-      className: 'arisu-cropper-ratio-part',
-      type: 'number',
-      min: '0',
-      step: 'any',
-      placeholder: axis,
-      oninput: onRatioChange,
-    }),
-  );
-  const ratioColon = el('span', { textContent: ':' });
   const handles = Object.entries(HANDLES).map(([handle, [ax, ay]]) =>
     el('div', { className: 'arisu-cropper-handle', handle, style: `left: ${ax * 100}%; top: ${ay * 100}%; cursor: ${handle}-resize;` }),
   );
@@ -195,9 +181,6 @@ export function cropImage(img, initial, options = {}) {
     el('div', { className: 'arisu-cropper-bar' }, [
       el('label', { textContent: 'ratio' }),
       ratioMenu,
-      ratioParts[0],
-      ratioColon,
-      ratioParts[1],
       readout,
       el('button', { textContent: 'reset', title: 'the whole image at a free ratio: no crop', onclick: reset }),
       ...(options.aspectRatio
@@ -208,8 +191,8 @@ export function cropImage(img, initial, options = {}) {
                 const [rw, rh] = options.aspectRatio.split(' ')[0].split(':').map(Number);
                 const w = Math.max(1, Math.min(bounds.w, Math.floor((bounds.h * rw) / rh)));
                 const h = Math.max(1, Math.min(bounds.h, Math.floor((bounds.w * rh) / rw)));
-                ratioText = `${rw}:${rh}`;
-                ratio = rw / rh;
+                ratioText = presetRatio(`${rw}:${rh}`);
+                ratio = parseRatio(ratioText);
                 showRatio();
                 show({ x: Math.floor((bounds.w - w) / 2), y: Math.floor((bounds.h - h) / 2), w, h });
               },
@@ -223,32 +206,15 @@ export function cropImage(img, initial, options = {}) {
   ]);
   closeOnBackdropClick(dialog);
 
-  /** Seed the menu and the fields from `ratioText`; the fields show only for a custom ratio and are blank otherwise. */
+  /** Seed the menu from `ratioText`. */
   function showRatio() {
-    const choice = ratioChoice(ratioText);
-    ratioMenu.value = choice;
-    const custom = choice === RATIO_CUSTOM;
-    const [w = '', h = ''] = custom ? ratioText.split(':') : [];
-    ratioParts[0].value = w;
-    ratioParts[1].value = h;
-    for (const element of [...ratioParts, ratioColon]) element.hidden = !custom;
+    ratioMenu.value = ratioText || RATIO_FREE;
   }
 
-  /**
-   * The menu or a field changed: read the ratio text back, show or hide the fields, and make the box the largest one of
-   * the ratio in the image; a free ratio leaves the box alone.
-   */
+  /** The menu changed: a preset makes the box the largest one of its ratio in the image; free leaves the box alone. */
   function onRatioChange() {
-    const choice = ratioMenu.value;
-    if (choice === RATIO_CUSTOM) {
-      // a blank side reads as free until both are filled; the text still says custom when it comes back
-      ratioText = ratioParts.map((part) => part.value.trim()).join(':');
-    } else {
-      ratioText = choice === RATIO_FREE ? '' : choice;
-    }
+    ratioText = presetRatio(ratioMenu.value);
     ratio = parseRatio(ratioText);
-    const custom = choice === RATIO_CUSTOM;
-    for (const element of [...ratioParts, ratioColon]) element.hidden = !custom;
     if (ratio != null) show(fitRatio(fullRect(bounds), ratio, bounds));
   }
 

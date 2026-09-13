@@ -11,38 +11,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Add MiniMax H3 Resource Studio with keyframe cropping, mixed references, clip editing, and original-source Hybrid processing.
 - Add aspect-ratio outputs to both MiniMax H3 Video Settings nodes.
-
 - Add inline names and renaming for saved Load Image browse paths.
 - Add a ComfyUI setting for the default Load Image browse root when no image is selected.
 
 ### Changed
 
 - Replace Resource Studio replace buttons with keyframe canvas selection, and open Browse references at the final reference’s folder in list order.
-
 - Move Resource Studio’s Browse beside the Media references heading, hide zero counters, and show clip-start stills for video references and a waveform marker for audio.
-
 - Stack Resource Studio keyframes in a left column beside the media reference list, with taller reference rows and larger thumbnails.
-
 - Show dimensions or clip and source lengths, video height or audio sample rate, and file size on Resource Studio reference rows, reloading them after a workflow opens.
-
 - Limit Resource Studio clip times to one decimal, removing the clip editor's free-precision snapping.
-
 - Remove the Resource Studio height cap so the node grows freely, and pass wheel zoom and middle-button canvas drags through its panel, scrolling an overflowing reference list instead.
-
 - Coordinate MiniMax H3 settings and resource advertising across queueing and API exports, rejecting missing sources and conflicting resource inputs.
-
 - Move the Load Image input and output directory shortcuts beside up in the browse toolbar to free sidebar space.
-
 - Rename the MiniMax H3 Video Settings `advertise` switch to `advertise_settings` and the Resource Studio switch to `advertise_resources`; saved workflows keep the flag by position, API-format exports must use the new key.
-
 - Auto-crop Resource Studio keyframes from a wired aspect ratio when the upstream Video Settings selector is readable, and drop the auto-crop notification.
+- Remove the custom aspect ratio from crop dialogs: a saved crop that matches no preset opens as Free and constrains nothing, and `21:9` joins the presets.
+- Highlight every reference already in the list when browsing Resource Studio references, and show poster stills for videos and waveform tiles for audio in mixed Browse, outlined in their kind colour.
 
 ### Fixed
 
-- Show the saved crop ratio when opening Resource Studio crop dialogs, with custom width and height fields when needed and Free for uncropped images.
-
+- Show the saved crop ratio when opening Resource Studio crop dialogs, selecting the matching preset or Free otherwise.
 - Fix Resource Studio keyframe and reference creation in browsers without `crypto.randomUUID`, including HTTP connections.
-
 - Restore each Arisu node's saved dimensions when reopening a workflow, including manually minimized nodes.
 
 ## [1.1.2] - 2026-09-11

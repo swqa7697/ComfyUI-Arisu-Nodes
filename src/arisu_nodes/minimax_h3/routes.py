@@ -30,17 +30,30 @@ def roots() -> Dict[str, str]:
     return image_roots(folder_paths.get_input_directory(), folder_paths.get_output_directory())
 
 
+def media_kind(path: str) -> Optional[str]:
+    """Classify a candidate by extension: the image policy first, then ComfyUI's stock media filter; ``None`` otherwise."""
+    if image_content_type(path):
+        return "image"
+    if folder_paths.filter_files_content_types([path], ["video"]):
+        return "video"
+    if folder_paths.filter_files_content_types([path], ["audio"]):
+        return "audio"
+    return None
+
+
 def candidate(path: str) -> bool:
     """Preserve image policy and use ComfyUI's stock media candidate filter."""
-    return bool(image_content_type(path) or folder_paths.filter_files_content_types([path], ["video", "audio"]))
+    return media_kind(path) is not None
 
 
 def resource(query: Any) -> Resource:
     """Parse only relative browser locations, never physical base directories."""
     root, path = query.get("root", "input"), relative_path(query.get("path", ""))
-    if not isinstance(root, str) or not candidate(path):
+    kind = media_kind(path)
+    if not isinstance(root, str) or kind is None:
         raise UnsupportedMedia("unsupported resource type")
-    return Resource("request", "image" if image_content_type(path) else "video", root, path)
+    # A provisional kind: metadata settles video against audio once the container is read.
+    return Resource("request", "image" if kind == "image" else "video", root, path)
 
 
 async def bounded(function: Callable[..., Any], *args: Any) -> Any:
@@ -87,7 +100,7 @@ def listing(root: str, path: str, tree: bool) -> Dict[str, Any]:
         "parent": result.parent,
         "dirs": list(result.dirs),
         "files": files,
-        "kinds": {name: "image" if image_content_type(name) else "media" for name in files},
+        "kinds": {name: media_kind(name) for name in files},
         "ancestors": [{"path": level.path, "dirs": list(level.dirs)} for level in result.ancestors],
         "roots": [{"id": key, "label": key} for key in allowed],
     }
