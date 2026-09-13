@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add aspect-ratio outputs to both MiniMax H3 Video Settings nodes.
 - Add inline names and renaming for saved Load Image browse paths.
 - Add a ComfyUI setting for the default Load Image browse location when no image is selected: a root or a saved path by name, reset to `input` with a warning when a chosen saved path is gone.
-- Add a keyframes settings dialog to both MiniMax H3 Hybrid to Video nodes: resize method, crop, pad or stretch, pad colour and crop position for the first and the last frame separately, on the model's 32-pixel canvas grid.
+- Add a keyframes settings dialog to both MiniMax H3 Hybrid to Video nodes: resize method, crop, pad or stretch, pad colour and crop position in a first frame and a last frame section, on the model's 32-pixel canvas grid.
 
 ### Changed
 

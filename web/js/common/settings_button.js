@@ -11,12 +11,22 @@
 // a combo lists what the backend declares and a number keeps its declared bounds; nothing
 // about the options is repeated in the scripts. A combo arrives in one of two shapes: V3
 // declares it as `["COMBO", { options }]`, the V1 form is `[[choices], options]`.
+//
+// Widgets that come in families (`first_frame_mode`, `last_frame_mode`) share a dialog:
+// `sections` names each family by its prefix, and the dialog groups the widgets under a
+// heading per section with the prefix dropped from their labels. Widget names, and so
+// the applied values, keep the prefix.
 
 import { editSettings } from './settings_dialog.js';
 import { addButton, hideWidget, setWidget } from './widgets.js';
 
+/** The section of `sections` whose prefix starts `name`, if any. */
+function sectionOf(name, sections) {
+  return sections.find((section) => name.startsWith(section.prefix));
+}
+
 /** The dialog's fields for `names` from the node definition, whose inputs are `[type or choices, options]`. */
-function fieldsFrom(nodeData, names, colorWidgets) {
+function fieldsFrom(nodeData, names, colorWidgets, sections) {
   const inputs = { ...nodeData.input?.required, ...nodeData.input?.optional };
   return names
     .filter((name) => name in inputs)
@@ -24,8 +34,11 @@ function fieldsFrom(nodeData, names, colorWidgets) {
       const [type, options = {}] = inputs[name];
       const choices = Array.isArray(type) ? type : type === 'COMBO' ? (options.options ?? []) : null;
       const kind = choices ? 'combo' : type === 'INT' ? 'number' : colorWidgets.has(name) ? 'color' : 'text';
+      const section = sectionOf(name, sections);
       return {
         name,
+        label: section ? name.slice(section.prefix.length) : name,
+        section: section?.title,
         kind,
         values: choices ?? [],
         min: options.min,
@@ -58,10 +71,11 @@ async function openSettings(node, names, title, fields) {
 
 /**
  * Wrap `nodeType`'s hooks so every node hides the `widgets` named and gets a `label` button that edits them in a
- * dialog titled `title`, in that order; `colorWidgets` names the text widgets that get a colour picker.
+ * dialog titled `title`, in that order; `colorWidgets` names the text widgets that get a colour picker, and
+ * `sections` (`{ title, prefix }` each) the widget families the dialog groups under a heading, prefix dropped.
  */
-export function installSettingsButton(nodeType, nodeData, { label, title, widgets, colorWidgets = [] }) {
-  const fields = fieldsFrom(nodeData, widgets, new Set(colorWidgets));
+export function installSettingsButton(nodeType, nodeData, { label, title, widgets, colorWidgets = [], sections = [] }) {
+  const fields = fieldsFrom(nodeData, widgets, new Set(colorWidgets), sections);
 
   const onNodeCreated = nodeType.prototype.onNodeCreated;
   nodeType.prototype.onNodeCreated = function () {

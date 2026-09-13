@@ -126,7 +126,8 @@ test('both hybrid nodes hide the eight keyframe fit widgets behind a keyframes b
     assert.equal(loaded.inputs.length, sockets(data).length - CONFIG.length, `case=${data.name}`);
     assert.equal(widget(loaded, 'last_frame_mode').value, 'pad', `case=${data.name}`);
   }
-  // the dialog lists the first frame's settings, then the last frame's, seeded lanczos / crop / center from the widgets
+  // the dialog lists the first frame's settings, then the last frame's, each under its own heading with the
+  // keyframe prefix dropped from the labels, seeded lanczos / crop / center from the widgets
   const node = makeHybridNode(HYBRID);
   Hybrid.prototype.onNodeCreated.call(node);
   const written = [];
@@ -139,6 +140,18 @@ test('both hybrid nodes hide the eight keyframe fit widgets behind a keyframes b
       .filter((element) => element.id?.startsWith('arisu-settings-'))
       .map((element) => element.id.slice('arisu-settings-'.length)),
     CONFIG,
+  );
+  assert.deepEqual(
+    descendants(dialog)
+      .filter((element) => element.className === 'arisu-settings-heading')
+      .map((element) => element.textContent),
+    ['first frame', 'last frame'],
+  );
+  assert.deepEqual(
+    descendants(dialog)
+      .filter((element) => element.className === 'arisu-settings-label')
+      .map((element) => [element.htmlFor, element.textContent]),
+    CONFIG.map((name) => [`arisu-settings-${name}`, name.replace(/^(first|last)_frame_/, '')]),
   );
   for (const frame of KEYFRAMES) {
     const mode = control(dialog, `${frame}_mode`);

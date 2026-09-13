@@ -23,7 +23,7 @@ sets both on one conditioning.
 | `frame_picture_tags` | COMBO  | How the keyframes appear to the text encoder; see below.                                           |
 | `first_frame`        | IMAGE  | Optional keyframe pinned at frame 0. Fitted to the canvas as its keyframe settings say.            |
 | `last_frame`         | IMAGE  | Optional keyframe pinned at the last frame. Fitted likewise, with its own settings.                |
-| `keyframes…`         | button | Open the dialog that edits the eight keyframe settings below, the first frame's above the last frame's. **reset** puts them back to their defaults. |
+| `keyframes…`         | button | Open the dialog that edits the eight keyframe settings below, a **first frame** and a **last frame** section. **reset** puts them back to their defaults. |
 | `<frame>_resize_method` | combo | Settings dialog, once per keyframe. `nearest-exact`, `bilinear`, `area`, `bicubic` or `lanczos` (default). |
 | `<frame>_mode`       | combo  | Settings dialog. How the keyframe reaches the canvas: `crop` (default) cuts it to the canvas aspect first, `pad` fits it inside and fills the rest with its pad colour, `stretch` ignores the aspect ratio. |
 | `<frame>_pad_color`  | STRING | Settings dialog. The `pad` fill (default `0, 0, 0`), in the forms **Resize Image** accepts; the dialog has a colour picker beside it. |
