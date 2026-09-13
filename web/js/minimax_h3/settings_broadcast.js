@@ -178,7 +178,6 @@ function refreshNode(node) {
   if (dropped) toast('info', 'Links into advertised controls were removed.');
   if (node.type === STUDIO) {
     const settings = node.graph === rootGraph() ? source('settings') : null;
-    node.arisuAspectSource = settings ? `#${settings.id}` : null;
     // A linked settings ratio is not the source node's stale local widget.
     node.arisuEffectiveAspect = settings
       ? settings.inputs?.some((input) => input.name === 'aspect_ratio' && input.link != null)

@@ -549,7 +549,7 @@ test('Studio keyframes auto-crop on effective ratio changes and preserve manual 
   await settle();
   assert.deepEqual(state(node).keyframes.first.crop, { left: 100, top: 0, width: 600, height: 600 });
   assert.equal(node.properties.arisu_crop_modes['keyframe:first'].ratio, '1:1');
-  assert.equal(status(), 'Aspect ratio from #2');
+  assert.equal(status(), '');
   widget(settings, 'aspect_ratio').value = '16:9 (Widescreen)';
   node.arisuRefreshAspect();
   await settle();

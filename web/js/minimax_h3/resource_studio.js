@@ -11,13 +11,13 @@ import { editClip } from './clip_editor.js';
 const TYPE = 'ArisuMiniMaxH3ResourceStudio';
 const EMPTY = '{"version":1,"keyframes":{"first":null,"last":null},"references":[]}';
 const LIMITS = { image: 9, video: 3, audio: 3 };
-// Bound of a video row's still: a 44 × 30 CSS pixel thumb at a 2× device pixel ratio.
-const POSTER_MAX = 96;
+// Bound of a video row's still: a 58 × 40 CSS pixel thumb at a 2× device pixel ratio.
+const POSTER_MAX = 116;
 const nodes = new WeakMap();
 let activeEditor;
 const STYLE = `
 .arisu-studio{box-sizing:border-box;width:100%;height:100%;overflow:hidden;display:flex;flex-direction:column;gap:10px;padding:8px 10px 12px;
- font:11px/1.3 Arial,system-ui,sans-serif;--image:#7fd1c1;--video:#d9a441;--audio:#b89be0;
+ font:11px/1.3 Arial,system-ui,sans-serif;--image:#64b5f6;--video:#d9a441;--audio:#b89be0;
  --surface:var(--comfy-input-bg,#2a2a2a);--row:var(--comfy-menu-bg,#333);--line:var(--border-color,#444);
  --label:var(--descrip-text,#999);--text:var(--input-text,#ccc);--dim:#777;--strong:var(--fg-color,#fff);
  --hover:color-mix(in srgb,var(--row),var(--strong) 8%);color:var(--text);}
@@ -25,15 +25,15 @@ const STYLE = `
 .arisu-studio button{font:inherit;color:inherit;background:none;border:0;border-radius:2px;padding:0;cursor:pointer;}
 .arisu-studio :focus-visible{outline:2px solid var(--image);outline-offset:1px;}
 .arisu-studio .status{font-size:10px;color:var(--dim);text-align:right;}
-.arisu-studio .label{color:var(--label);}
-.arisu-studio .heading{display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:16px;}
+.arisu-studio .label{color:var(--label);line-height:20px;}
+.arisu-studio .heading{display:flex;align-items:center;justify-content:space-between;gap:8px;height:20px;}
 .arisu-studio .icons{display:flex;align-items:center;gap:4px;}
 .arisu-studio .icon{width:16px;height:16px;display:inline-flex;align-items:center;justify-content:center;color:var(--label);font-size:13px;line-height:1;}
 .arisu-studio .icon svg{width:11px;height:11px;}
 .arisu-studio .icon.dot{font-size:10px;color:var(--image);}.arisu-studio .icon.off{color:var(--dim);}
 .arisu-studio .icon:hover{color:var(--strong);background:var(--hover);}
-.arisu-studio .layout{flex:1;min-height:0;display:grid;grid-template-columns:150px minmax(0,1fr);grid-template-rows:minmax(0,1fr);gap:10px;}
-.arisu-studio .keyframes{display:flex;flex-direction:column;gap:8px;}
+.arisu-studio .layout{flex:1;min-height:0;display:grid;grid-template-columns:170px minmax(0,1fr);grid-template-rows:minmax(0,1fr);gap:10px;}
+.arisu-studio .keyframes{display:flex;flex-direction:column;justify-content:space-between;gap:8px;}
 .arisu-studio .keyframe{display:flex;flex-direction:column;gap:4px;min-width:0;}
 .arisu-studio .picture{width:100%;aspect-ratio:1;display:flex;align-items:center;justify-content:center;overflow:hidden;
  background:var(--surface);border:1px solid var(--line);border-radius:0;color:var(--dim);}
@@ -41,34 +41,34 @@ const STYLE = `
 .arisu-studio .picture img{width:100%;height:100%;object-fit:contain;}
 .arisu-studio .filename{height:14px;line-height:14px;font-size:10px;color:var(--label);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .arisu-studio .filename.none{color:var(--dim);}
-.arisu-studio .detail{font-size:9.5px;color:var(--dim);font-variant-numeric:tabular-nums;}
+.arisu-studio .detail{font-size:10px;line-height:13px;color:var(--dim);font-variant-numeric:tabular-nums;}
 .arisu-studio .muted{opacity:.5;}.arisu-studio .muted .filename,.arisu-studio .muted .name{text-decoration:line-through;}
 .arisu-studio .section{display:flex;flex-direction:column;gap:4px;min-width:0;min-height:0;}
-.arisu-studio .counts{display:flex;gap:8px;font-size:10px;}
+.arisu-studio .counts{display:flex;gap:8px;margin-left:auto;font-size:10px;line-height:20px;font-variant-numeric:tabular-nums;}
 .arisu-studio .counts .image{color:var(--image);}.arisu-studio .counts .video{color:var(--video);}.arisu-studio .counts .audio{color:var(--audio);}
 .arisu-studio .box{flex:1;min-height:0;display:flex;flex-direction:column;gap:5px;padding:6px;background:var(--surface);border:1px solid var(--line);}
 .arisu-studio .box.empty{min-height:120px;align-items:center;justify-content:center;padding:14px 10px;text-align:center;color:var(--dim);line-height:1.5;}
 .arisu-studio .references{flex:1;min-height:0;overflow:auto;display:flex;flex-direction:column;gap:5px;scrollbar-width:thin;}
-.arisu-studio .reference{--kind:var(--image);display:flex;align-items:center;gap:7px;height:42px;flex:none;padding:0 5px 0 3px;background:var(--row);border-left:3px solid var(--kind);}
+.arisu-studio .reference{--kind:var(--image);display:flex;align-items:center;gap:7px;height:52px;flex:none;padding:0 5px 0 3px;background:var(--row);border-left:3px solid var(--kind);}
 .arisu-studio .reference.video{--kind:var(--video);}.arisu-studio .reference.audio{--kind:var(--audio);}
 .arisu-studio .reference.muted{border-left-color:rgba(120,126,132,.6);}
 .arisu-studio .reference:hover{background:var(--hover);}
 .arisu-studio .handle{width:12px;text-align:center;color:var(--dim);font-size:10px;cursor:grab;opacity:0;transition:opacity .12s;}
 .arisu-studio .reference:hover .handle{opacity:1;}.arisu-studio .handle:hover{color:var(--text);}
-.arisu-studio .thumb{width:44px;height:30px;flex:none;display:flex;align-items:center;justify-content:center;object-fit:contain;color:var(--kind);
+.arisu-studio .thumb{width:58px;height:40px;flex:none;display:flex;align-items:center;justify-content:center;object-fit:contain;color:var(--kind);
  background:color-mix(in srgb,var(--kind) 12%,transparent);border:1px solid color-mix(in srgb,var(--kind) 30%,transparent);}
-.arisu-studio .thumb svg{width:14px;height:14px;}
+.arisu-studio .thumb svg{width:16px;height:16px;}
 .arisu-studio .reference.muted .thumb{background:var(--surface);}
 .arisu-studio .edit{flex:1;min-width:0;text-align:left;}
 .arisu-studio .edit > span{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-.arisu-studio .name{color:var(--text);}.arisu-studio .detail .lead{color:var(--text);}
+.arisu-studio .name{color:var(--text);line-height:14px;}.arisu-studio .detail .lead{color:var(--text);}
 .arisu-studio .move{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);}
 .arisu-studio .move:focus{position:static;width:auto;height:auto;clip-path:none;}
 .arisu-studio .browse{display:flex;align-items:center;justify-content:center;gap:5px;height:20px;padding:0 9px;flex:none;border-radius:3px;
  background:var(--hover);border:1px solid color-mix(in srgb,var(--line),var(--strong) 10%);color:var(--text);font-size:11px;}
 .arisu-studio .browse::before{content:'+';font-size:12px;line-height:1;margin-top:-1px;}
 .arisu-studio .browse:hover{background:color-mix(in srgb,var(--row),var(--strong) 12%);border-color:var(--label);color:var(--strong);}
-@media(prefers-color-scheme:light){.arisu-studio{--image:#267c6b;--video:#986600;--audio:#7950aa;--dim:#666;}}
+@media(prefers-color-scheme:light){.arisu-studio{--image:#2a6db5;--video:#986600;--audio:#7950aa;--dim:#666;}}
 `;
 const CROP_ICON =
   '<svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.2" aria-hidden="true">' +
@@ -182,7 +182,8 @@ function reset(node) {
   }
   render(node);
 }
-// A wired ratio reads the origin's widget of the output's name unless that widget is itself linked; otherwise execution resolves it.
+// A wired ratio reads the origin's widget of the output's name unless that widget is itself linked, in which case execution
+// resolves it (null); an unwired input yields undefined.
 function upstreamRatio(node) {
   const input = node.inputs?.find((entry) => (entry.widget?.name ?? entry.name) === 'aspect_ratio' && entry.link != null);
   if (!input) return undefined;
@@ -193,12 +194,12 @@ function upstreamRatio(node) {
   const control = name ? widget(origin, name) : null;
   const linked = origin?.inputs?.some((entry) => (entry.widget?.name ?? entry.name) === name && entry.link != null);
   const value = control && !linked ? control.value : null;
-  return { origin, value: typeof value === 'string' && /^\d+:\d+\b/.test(value) ? value : null };
+  return typeof value === 'string' && /^\d+:\d+\b/.test(value) ? value : null;
 }
 function ratio(node) {
   if (node.arisuEffectiveAspect !== undefined) return node.arisuEffectiveAspect;
   const upstream = upstreamRatio(node);
-  return upstream ? upstream.value : widget(node, 'aspect_ratio')?.value;
+  return upstream === undefined ? widget(node, 'aspect_ratio')?.value : upstream;
 }
 function cropFor(info, label) {
   const [w, h] = label.split(' ')[0].split(':').map(Number);
@@ -605,9 +606,7 @@ function render(node) {
   const counts = Object.keys(LIMITS)
     .map((kind) => [kind, data.references.filter((card) => card.kind === kind && !card.muted).length])
     .filter(([, count]) => count > 0);
-  const upstream = upstreamRatio(node)?.origin;
-  const origin = node.arisuAspectSource ?? (upstream ? `#${upstream.id}` : null);
-  const status = ratio(node) ? (origin ? `Aspect ratio from ${origin}` : '') : 'Aspect ratio will resolve during execution';
+  const status = ratio(node) ? '' : 'Aspect ratio will resolve during execution';
   const section = el('div', { className: 'section' }, [
     el('div', { className: 'heading' }, [
       el('span', { className: 'label', textContent: 'Media references' }),
@@ -666,10 +665,10 @@ app.registerExtension({
       const dom = this.addDOMWidget('studio', 'arisu-studio', body, {
         serialize: false,
         hideOnZoom: false,
-        getMinHeight: () => 420,
+        getMinHeight: () => 460,
       });
       dom.serialize = false;
-      this.setSize([470, 510]);
+      this.setSize([490, 550]);
       this.arisuRefreshAspect = () => refreshRatio(this);
       const aspect = widget(this, 'aspect_ratio');
       if (aspect) {
@@ -682,7 +681,7 @@ app.registerExtension({
       render(this);
     });
     chain('onResize', (size) => {
-      size[0] = Math.max(420, size[0]);
+      size[0] = Math.max(440, size[0]);
     });
     chain('onConfigure', function () {
       invalidate(this);
