@@ -1,7 +1,7 @@
 // Legacy LiteGraph Resource Studio: persisted descriptions, transient editors, native sockets.
 import { api } from '../../../../scripts/api.js';
 import { app } from '../../../../scripts/app.js';
-import { cropImage } from '../common/cropper.js';
+import { cropImage, savedCropRatio } from '../common/cropper.js';
 import { el } from '../common/dom.js';
 import { AUDIO_ICON, browseResources, closeBrowser, posterUrl, VIDEO_ICON, viewUrl } from '../common/resource_browser.js';
 import { installSelectionGuards, preservingSelections, registerSelectionOwner } from '../common/selection_context.js';
@@ -143,8 +143,26 @@ function invalidate(node) {
   state.controller?.abort();
   closeBrowser(node);
 }
-function commit(node, data) {
+function cropKey(slot, id) {
+  return slot ? `keyframe:${slot}` : `reference:${id}`;
+}
+function cropMode(item, ratio) {
+  return { root: item.root, path: item.path, ratio: ratio?.split(' ')[0] || 'free' };
+}
+function commit(node, data, modes = node.properties?.arisu_crop_modes ?? {}) {
+  // Keep modes attached to selections through reordering, and discard removed or replaced sources.
+  const sources = new Map([
+    ...Object.entries(data.keyframes).map(([slot, item]) => [cropKey(slot), item]),
+    ...data.references.map((item) => [cropKey(null, item.id), item]),
+  ]);
   node.graph?.beforeChange?.();
+  node.properties ??= {};
+  node.properties.arisu_crop_modes = Object.fromEntries(
+    Object.entries(modes).filter(([key, entry]) => {
+      const item = sources.get(key);
+      return item?.kind === 'image' && entry?.root === item.root && entry?.path === item.path;
+    }),
+  );
   widget(node, 'resources_json').value = JSON.stringify(data);
   node.graph?.afterChange?.();
   invalidate(node);
@@ -154,6 +172,7 @@ function commit(node, data) {
 function reset(node) {
   invalidate(node);
   widget(node, 'resources_json').value = EMPTY;
+  if (node.properties) delete node.properties.arisu_crop_modes;
   const state = nodes.get(node);
   if (state) {
     state.info.clear();
@@ -219,7 +238,7 @@ function begin(node) {
   const generation = state.generation;
   return { signal: controller.signal, current: () => !controller.signal.aborted && nodes.get(node)?.generation === generation };
 }
-function applyCard(node, slot, id, item, info) {
+function applyCard(node, slot, id, item, info, appliedRatio) {
   const data = read(node);
   if (slot) {
     data.keyframes[slot] = item;
@@ -242,14 +261,9 @@ function applyCard(node, slot, id, item, info) {
   const state = nodes.get(node);
   state.info.set(item.id, info);
   for (const key of [...state.posters.keys()]) if (key.startsWith(`${item.id}|`)) state.posters.delete(key);
-  commit(node, data);
-}
-function cropRatio(box) {
-  if (!box) return '';
-  let divisor = box.width;
-  let remainder = box.height;
-  while (remainder) [divisor, remainder] = [remainder, divisor % remainder];
-  return `${box.width / divisor}:${box.height / divisor}`;
+  const modes = { ...node.properties?.arisu_crop_modes };
+  if (appliedRatio !== undefined) modes[cropKey(slot, item.id)] = cropMode(item, appliedRatio);
+  commit(node, data, modes);
 }
 async function edit(node, item, slot) {
   const task = begin(node);
@@ -258,6 +272,7 @@ async function edit(node, item, slot) {
     if (!task.current()) return;
     if (slot && info.kind !== 'image') throw new Error('Keyframes require an image');
     const draft = { ...item, kind: info.kind };
+    let appliedRatio;
     if (info.kind === 'image') {
       const image = await imageAt(item, task.signal);
       if (!task.current()) return;
@@ -265,10 +280,14 @@ async function edit(node, item, slot) {
       const box = draft.crop;
       const result = await cropImage(
         image,
-        { rect: box ? { x: box.left, y: box.top, w: box.width, h: box.height } : null, ratio: cropRatio(box) },
+        {
+          rect: box ? { x: box.left, y: box.top, w: box.width, h: box.height } : null,
+          ratio: savedCropRatio(node.properties?.arisu_crop_modes?.[cropKey(slot, item.id)], item),
+        },
         { aspectRatio: slot ? current : undefined, signal: task.signal },
       );
       if (!task.current() || !result.rect) return;
+      appliedRatio = result.ratio;
       const { x, y, w, h } = result.rect;
       draft.crop = x === 0 && y === 0 && w === info.width && h === info.height ? null : { left: x, top: y, width: w, height: h };
       if (slot) draft.crop_basis_ratio = current ?? draft.crop_basis_ratio ?? null;
@@ -280,7 +299,7 @@ async function edit(node, item, slot) {
     const latest = await probe(item, task.signal);
     if (!task.current()) return;
     if (latest.revision !== info.revision) throw new Error('Source changed while editing; reselect it.');
-    applyCard(node, slot, item.id, draft, info);
+    applyCard(node, slot, item.id, draft, info, appliedRatio);
   } catch (error) {
     if (task.current()) toast(error.message, 'error');
   }
@@ -310,7 +329,7 @@ async function browse(node, slot = null, replacing = null) {
         if (info.kind === 'image') {
           item.crop = slot && ratio(node) ? cropFor(info, ratio(node)) : null;
           if (slot) item.crop_basis_ratio = ratio(node);
-          applyCard(node, slot, replacing?.id, item, info);
+          applyCard(node, slot, replacing?.id, item, info, slot ? (ratio(node) ?? '') : '');
         } else {
           if (info.kind === 'video') item.include_audio = info.has_audio;
           await edit(node, item, null);
@@ -337,6 +356,7 @@ async function refreshRatio(node, resolvedRatio) {
   invalidate(node);
   const generation = state.generation;
   const data = read(node);
+  const modes = { ...node.properties?.arisu_crop_modes };
   let changed = false;
   try {
     for (const key of ['first', 'last']) {
@@ -347,9 +367,10 @@ async function refreshRatio(node, resolvedRatio) {
       state.info.set(card.id, info);
       card.crop = cropFor(info, effective);
       card.crop_basis_ratio = effective;
+      modes[cropKey(key)] = cropMode(card, effective);
       changed = true;
     }
-    if (changed) commit(node, data);
+    if (changed) commit(node, data, modes);
     else render(node);
   } catch (error) {
     if (state.generation === generation) toast(error.message, 'error');
@@ -611,6 +632,7 @@ function render(node) {
   describe(node, data);
 }
 registerSelectionOwner(TYPE, {
+  properties: ['arisu_crop_modes'],
   fields: [
     ['resources_json', 2, EMPTY],
     ['advertise_resources', 1, false],
@@ -684,17 +706,19 @@ app.registerExtension({
       const feedback = message.arisu_resources?.[0];
       if (!feedback || feedback.state !== widget(this, 'resources_json')?.value) return;
       const data = read(this);
+      const modes = { ...this.properties?.arisu_crop_modes };
       let changed = false;
       for (const key of ['first', 'last']) {
         const actual = feedback.keyframes[key],
           card = data.keyframes[key];
         if (!card || !actual || actual.id !== card.id) continue;
         card.crop = actual.crop ? Object.fromEntries(['left', 'top', 'width', 'height'].map((name, i) => [name, actual.crop[i]])) : null;
+        if (card.crop_basis_ratio !== actual.crop_basis_ratio) modes[cropKey(key)] = cropMode(card, actual.crop_basis_ratio);
         card.crop_basis_ratio = actual.crop_basis_ratio;
         changed = true;
       }
       nodes.get(this).ratio = undefined;
-      if (changed) commit(this, data);
+      if (changed) commit(this, data, modes);
       void refreshRatio(this, feedback.aspect_ratio);
     });
   },

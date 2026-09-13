@@ -36,6 +36,7 @@ async function configureWorkflow(data, workflow) {
       if (saved.type !== 'ArisuLoadImage') continue;
       const node = makeLoadNode(saved.widgets_values[0], saved.widgets_values[2]);
       node.graph = graph;
+      node.properties = structuredClone(saved.properties ?? {});
       node.widgets[1].value = saved.widgets_values[1];
       app.configuringGraph = true;
       try {
@@ -530,6 +531,9 @@ test('workflow provenance preserves reopening and undo, while imports, paste and
     nodes: [serialized()],
     definitions: { subgraphs: [{ id: 'nested', nodes: [serialized('nested.png')] }] },
   };
+  for (const saved of [source.nodes[0], source.definitions.subgraphs[0].nodes[0]]) {
+    saved.properties = { arisu_crop_modes: { image: { root: 'photos', path: saved.widgets_values[0], ratio: '21:9' } } };
+  }
   // Saved reopening, tab switching, refresh and undo/redo all carry workflow objects.
   for (const clean of [true, false, true]) {
     const nodes = await app.loadGraphData(source, clean, true, savedWorkflow);
@@ -539,6 +543,7 @@ test('workflow provenance preserves reopening and undo, while imports, paste and
     );
     assert.ok(nodes.every((node) => node.imgs?.length === 1));
     assert.equal(nodes[0].widgets[1].value, '1,1,2,2');
+    assert.ok(nodes.every((node) => node.properties.arisu_crop_modes.image.ratio === '21:9'));
   }
   // An unsaved tab is recognized by its frontend-owned object after it has been active.
   const existingTab = { isPersisted: false };
@@ -554,6 +559,8 @@ test('workflow provenance preserves reopening and undo, while imports, paste and
     assert.ok(nodes.every((node) => node.widgets[0].value === '' && node.widgets[1].value === '' && node.widgets[2].value === 'input'));
     assert.ok(nodes.every((node) => node.imgs === undefined));
     assert.equal(receivedLoads.at(-1).definitions.subgraphs[0].nodes[0].widgets_values[0], '');
+    assert.ok(nodes.every((node) => node.properties.arisu_crop_modes === undefined));
+    assert.equal(receivedLoads.at(-1).definitions.subgraphs[0].nodes[0].properties.arisu_crop_modes, undefined);
   }
   assert.deepEqual(toastSeverities(), []);
   assert.equal(source.nodes[0].widgets_values[0], 'private.png');
@@ -590,12 +597,14 @@ test('workflow provenance preserves reopening and undo, while imports, paste and
   const copied = makeLoadNode('private.png', 'photos');
   copied.widgets[1].value = '1,1,2,2';
   copied.imgs = [{}];
+  copied.properties = structuredClone(source.nodes[0].properties);
   await LoadImage.prototype.onConfigure.call(copied);
   assert.deepEqual(
     copied.widgets.slice(0, 3).map((widget) => widget.value),
     ['', '', 'input'],
   );
   assert.equal(copied.imgs, undefined);
+  assert.equal(copied.properties.arisu_crop_modes, undefined);
   const [reopened] = await app.loadGraphData(source, true, true, savedWorkflow);
   assert.equal(reopened.widgets[0].value, 'private.png');
 

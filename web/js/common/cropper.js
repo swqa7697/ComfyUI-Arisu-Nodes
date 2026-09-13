@@ -5,8 +5,8 @@
 // image's own pixels, or the whole image when null) and the aspect ratio
 // `ratio`, and resolves to `{ rect, ratio }`: the applied box, or null when the
 // dialog is cancelled, and the ratio the bar showed when it closed, so the
-// caller can hand it back next time. A drag on the image draws a new box, a
-// drag on the box moves it, and its eight handles resize it. The ratio menu
+// caller can persist it on Apply and hand it back next time. A drag on the image
+// draws a new box, a drag on the box moves it, and its eight handles resize it. The ratio menu
 // offers `free` and the presets; choosing a preset makes the box the largest
 // one of that ratio in the image, centred, and holds it through every drag,
 // while `free` leaves the box as it is and constrains nothing. A ratio that is
@@ -137,6 +137,11 @@ function resizeRect(origin, handle, point, ratio, bounds) {
 /** `text` when it names a preset, otherwise blank: any other ratio is free. */
 function presetRatio(text) {
   return RATIO_PRESETS.includes(text) ? text : '';
+}
+
+/** Restore only an explicitly saved preset for this source; Free, missing and invalid modes stay unconstrained. */
+export function savedCropRatio(entry, source) {
+  return entry?.root === source.root && entry?.path === source.path ? presetRatio(entry.ratio) : '';
 }
 
 /** The width-over-height ratio of a preset text (`16:9`), or `null` for free (blank). */

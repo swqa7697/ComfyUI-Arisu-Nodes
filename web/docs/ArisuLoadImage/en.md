@@ -81,11 +81,12 @@ The crop dialog shows the picked file with a box over it. Drag on the image to d
 box to move it, and pull its handles to resize it; the readout gives the box in pixels. The **ratio**
 menu sets an aspect ratio: a preset (`1:1`, `3:2`, `2:3`, `4:3`, `3:4`, `16:9`, `9:16`, `21:9`)
 makes the box the largest one of that ratio in the image and holds it while you drag; `free` leaves
-the box as it is and lets it take any shape, and a box of any other ratio is `free`. The choice is
-remembered for the picked image and starts over as `free` on another one. **reset** is the
-whole image at `free`, which is no crop at all; **apply** stores the box and the node previews the
-cropped image at the cropped size. Nothing is resized or padded, and picking another file drops the
-crop.
+the box as it is and lets it take any shape. **apply** saves both the box and the selected ratio,
+including `free`, with the workflow. Reopening restores that applied choice without guessing from
+the crop dimensions. Older workflows without a saved choice start at `free`, keeping their crop.
+**cancel**, Escape, and clicking the backdrop discard both draft changes. **reset** selects the
+whole image at `free`; apply it to remove the crop. The node previews the cropped image at its own
+size. Nothing is resized or padded, and picking another file drops the crop and its saved ratio.
 
 ## Outputs
 

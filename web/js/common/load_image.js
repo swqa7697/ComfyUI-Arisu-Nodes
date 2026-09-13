@@ -1,7 +1,7 @@
 // Browse and crop images beneath server-configured roots. Paths and bookmarks are relative; previews
 // stream the original file, as Load Image's do, and only the browser's thumbnails are resized.
 import { app } from '../../../../scripts/app.js';
-import { cropImage } from './cropper.js';
+import { cropImage, savedCropRatio } from './cropper.js';
 import { el } from './dom.js';
 import {
   browseResources,
@@ -22,8 +22,6 @@ const CROP_WIDGET = 'crop';
 const MASK_EDITOR_ENTRY = /mask ?editor/i;
 /** A pending preview per node, so a load that finishes after a newer pick cannot overwrite it. */
 const previewTokens = new WeakMap();
-/** The aspect ratio the crop dialog last showed, per node, as `{ path, ratio }` with the file it was chosen for; dropped when the node's file changes. */
-const cropRatios = new WeakMap();
 const cropControllers = new WeakMap();
 /** Dialog work belongs to one selection generation, never to a restored node. */
 const selectionTokens = new WeakMap();
@@ -69,7 +67,7 @@ function clearSelection(node) {
   if (pathWidget(node)) pathWidget(node).value = '';
   if (cropWidget(node)) cropWidget(node).value = '';
   if (rootWidget(node)) rootWidget(node).value = 'input';
-  cropRatios.delete(node);
+  if (node.properties) delete node.properties.arisu_crop_modes;
   node.imgs = undefined;
   node.images = undefined;
   node.imageIndex = null;
@@ -179,7 +177,7 @@ function pick(node, path, root) {
   const crop = cropWidget(node);
   if (widget.value !== path || rootValue(node) !== root) {
     if (crop) crop.value = '';
-    cropRatios.delete(node);
+    if (node.properties) delete node.properties.arisu_crop_modes;
   }
   const rootField = rootWidget(node);
   if (rootField && rootField.value !== root) setWidget(node, rootField, root);
@@ -202,23 +200,23 @@ async function openCropper(node) {
   // The original file keeps crop coordinates aligned with node execution.
   const root = rootValue(node);
   const img = await loadImage(viewUrl(path, undefined, true, '', root));
-  if (selectionTokens.get(node) !== selection) return;
+  if (selectionTokens.get(node) !== selection || controller.signal.aborted) return;
   if (!img) {
     toast('warn', `Cannot crop ${path}: the browser cannot decode this file.`);
     return;
   }
-  // Restored selections may differ from the remembered file; start their ratio over as free.
-  const remembered = cropRatios.get(node);
-  if (remembered && (remembered.path !== path || remembered.root !== root)) cropRatios.delete(node);
   const { rect, ratio } = await cropImage(
     img,
-    { rect: parseCrop(crop.value), ratio: cropRatios.get(node)?.ratio ?? '' },
+    { rect: parseCrop(crop.value), ratio: savedCropRatio(node.properties?.arisu_crop_modes?.image, { root, path }) },
     { signal: controller.signal },
   );
-  if (selectionTokens.get(node) !== selection) return;
-  cropRatios.set(node, { root, path, ratio });
+  if (selectionTokens.get(node) !== selection || controller.signal.aborted) return;
   if (!rect || pathWidget(node)?.value?.trim() !== path || rootValue(node) !== root) return;
+  node.graph?.beforeChange?.();
+  node.properties ??= {};
+  node.properties.arisu_crop_modes = { image: { root, path, ratio: ratio || 'free' } };
   setWidget(node, crop, formatCrop(rect, img));
+  node.graph?.afterChange?.();
   await showPreview(node);
 }
 
@@ -231,6 +229,7 @@ async function openBrowser(node) {
 }
 
 registerSelectionOwner(NODE_TYPE, {
+  properties: ['arisu_crop_modes'],
   fields: [
     ['path', 0, ''],
     ['crop', 1, ''],

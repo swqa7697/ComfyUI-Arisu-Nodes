@@ -32,7 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Show the saved crop ratio when opening Resource Studio crop dialogs, selecting the matching preset or Free otherwise.
+- Persist each image’s applied crop ratio across Load Image and Resource Studio workflow reloads, including Free, and discard draft ratio changes on cancellation without inferring from crop dimensions.
 - Fix Resource Studio keyframe and reference creation in browsers without `crypto.randomUUID`, including HTTP connections.
 - Restore each Arisu node's saved dimensions when reopening a workflow, including manually minimized nodes.
 

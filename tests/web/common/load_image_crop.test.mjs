@@ -1,7 +1,7 @@
 // Load Image (Browse)'s crop button: the dialog it opens on the picked file, how a drag, a ratio,
 // apply and reset drive the hidden crop widget (the value core.parse_crop reads on the other side)
 // and the node preview, how the ratio is remembered for the picked file and starts free on another,
-// how a saved box of no preset ratio opens free and unconstrained, and how it declines a file it
+// how applied choices survive workflow saves without inferring from the box, and how it declines a file it
 // cannot show.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
@@ -162,13 +162,12 @@ test('the crop button opens a box over the picked file; drags, a ratio, apply an
   await applied;
   assert.equal(cropWidget(node).value, '400,200,400,400');
   assert.deepEqual(written, ['400,200,400,400']);
-  // the free choice comes back over the saved box; switching presets never shrinks the box, since each one is fitted
-  // to the image, not to the box before it
+  // Cancel discards the draft Free choice along with the box; switching presets fits the whole image.
   applied = cropButton(node).callback();
   await settle();
   dialog = openDialog();
   assert.equal(readout(dialog), '400 × 400 at 400, 200');
-  assert.equal(ratioMenu(dialog).value, 'free');
+  assert.equal(ratioMenu(dialog).value, '1:1');
   chooseRatio(dialog, '16:9');
   assert.equal(readout(dialog), '800 × 450 at 0, 75');
   chooseRatio(dialog, '9:16');
@@ -183,7 +182,7 @@ test('the crop button opens a box over the picked file; drags, a ratio, apply an
   await applied;
   assert.deepEqual(written, ['400,200,400,400', '']);
   assert.equal(query(node.imgs[0].src).crop, undefined);
-  // the reset ratio is what comes back; cancel leaves the widget alone but still remembers the ratio chosen meanwhile
+  // the applied reset ratio comes back; cancel leaves both the crop and the saved ratio alone
   applied = cropButton(node).callback();
   await settle();
   dialog = openDialog();
@@ -197,6 +196,62 @@ test('the crop button opens a box over the picked file; drags, a ratio, apply an
   assert.equal(cropWidget(node).value, '');
   assert.deepEqual(written, ['400,200,400,400', '']);
   assert.deepEqual(toastSeverities(), []);
+  // Every applied choice survives serialization into a fresh node, including rounded portrait and 21:9 crops.
+  // Free over a square is explicit, and a 4:3 full-image crop still remembers its mode despite the blank crop widget.
+  for (const mode of ['1:1', '3:2', '2:3', '4:3', '3:4', '16:9', '9:16', '21:9', 'free']) {
+    const original = makeLoadNode('saved.png');
+    cropWidget(original).value = '10,20,300,300';
+    let editing = cropButton(original).callback();
+    await settle();
+    chooseRatio(openDialog(), mode);
+    button(openDialog(), 'apply').onclick();
+    await editing;
+    const saved = JSON.parse(JSON.stringify({ crop: cropWidget(original).value, properties: original.properties }));
+    if (mode === '4:3') assert.equal(saved.crop, '');
+    if (mode === '9:16') assert.equal(saved.crop, '231,0,338,600');
+    const restored = makeLoadNode('saved.png');
+    cropWidget(restored).value = saved.crop;
+    restored.properties = saved.properties;
+    for (const close of ['cancel', 'escape', 'backdrop']) {
+      editing = cropButton(restored).callback();
+      await settle();
+      const opened = openDialog();
+      assert.equal(ratioMenu(opened).value, mode, `${mode}: ${close}`);
+      const before = readout(opened);
+      chooseRatio(opened, mode === '1:1' ? '16:9' : '1:1');
+      button(opened, 'reset').onclick();
+      if (close === 'cancel') button(opened, 'cancel').onclick();
+      else if (close === 'escape')
+        opened.close(); // Native Escape closes the dialog without Apply.
+      else {
+        opened.onpointerdown({ target: opened });
+        opened.onclick({ target: opened });
+      }
+      await editing;
+      assert.equal(cropWidget(restored).value, saved.crop, before);
+      assert.equal(restored.properties.arisu_crop_modes.image.ratio, mode);
+    }
+  }
+  // Existing crops and malformed/mismatched metadata always open Free, without changing their shape.
+  for (const entry of [
+    undefined,
+    null,
+    { ratio: '9:16' },
+    { root: 'photos', path: 'legacy.png', ratio: '7:3' },
+    { root: 'other', path: 'legacy.png', ratio: '1:1' },
+    { root: 'photos', path: 'other.png', ratio: '1:1' },
+  ]) {
+    const legacy = makeLoadNode('legacy.png');
+    cropWidget(legacy).value = '10,20,300,300';
+    legacy.properties.arisu_crop_modes = { image: entry };
+    const editing = cropButton(legacy).callback();
+    await settle();
+    assert.equal(ratioMenu(openDialog()).value, 'free');
+    assert.equal(readout(openDialog()), '300 × 300 at 10, 20');
+    button(openDialog(), 'cancel').onclick();
+    await editing;
+    assert.equal(cropWidget(legacy).value, '10,20,300,300');
+  }
   // picking another file in the browser drops the remembered ratio along with the crop
   api.responses.push(jsonResponse(200, { roots: [{ id: 'photos', label: 'photos' }] }));
   await extensionNamed('Arisu.Common.LoadImage').setup();
@@ -214,6 +269,7 @@ test('the crop button opens a box over the picked file; drags, a ratio, apply an
   await node.widgets.find((widget) => widget.name === 'browse').callback();
   await byClass(openDialog(), 'arisu-browser-file')[0].onclick();
   assert.equal(node.widgets[0].value, 'b.png');
+  assert.equal(node.properties.arisu_crop_modes, undefined);
   applied = cropButton(node).callback();
   await settle();
   assert.equal(ratioMenu(openDialog()).value, 'free');
@@ -242,6 +298,7 @@ test('the crop button opens a box over the picked file; drags, a ratio, apply an
   await applied;
   assert.equal(node.widgets[0].value, '');
   assert.equal(cropWidget(node).value, '');
+  assert.equal(node.properties.arisu_crop_modes, undefined);
   assert.equal(node.imgs, undefined);
   // Reset while the original file is loading for the crop dialog must not open a dialog later.
   node.widgets[0].value = 'c.png';
@@ -249,4 +306,14 @@ test('the crop button opens a box over the picked file; drags, a ratio, apply an
   await LoadImage.prototype.onConfigure.call(node);
   await applied;
   assert.equal(openDialog(), undefined);
+  // A second crop request also cancels an earlier image load within the same selection generation.
+  node.widgets[0].value = 'c.png';
+  const superseded = cropButton(node).callback();
+  const current = cropButton(node).callback();
+  await superseded;
+  await settle();
+  assert.equal(body.children.filter((element) => element.tagName === 'DIALOG').length, 1);
+  button(openDialog(), 'cancel').onclick();
+  await current;
+  assert.equal(node.properties.arisu_crop_modes, undefined);
 });

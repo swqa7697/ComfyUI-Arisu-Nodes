@@ -20,6 +20,7 @@ function sanitize(data) {
     if (!value || typeof value !== 'object') return;
     const owner = owners.get(value.type ?? value.class_type);
     if (owner) {
+      for (const name of owner.properties ?? []) if (value.properties) delete value.properties[name];
       const stored = value.widgets_values;
       for (const [name, position, replacement] of owner.fields) {
         if (Array.isArray(stored)) stored[position] = replacement;
