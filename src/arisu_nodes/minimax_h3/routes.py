@@ -70,8 +70,9 @@ def listing(root: str, path: str, tree: bool) -> Dict[str, Any]:
     base = select_root(allowed, root)
     absolute = contained_path(base, path, allow_empty=True)
     result = browse_directory(absolute, base, tree)
+    directory = contained_path(base, result.path, allow_empty=True)
     files = []
-    for name in sorted(os.listdir(absolute), key=str.casefold):
+    for name in sorted(os.listdir(directory), key=str.casefold):
         relative = "/".join(part for part in (result.path, name) if part)
         try:
             full = source_path(allowed, root, relative)

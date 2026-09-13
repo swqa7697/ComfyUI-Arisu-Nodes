@@ -41,6 +41,12 @@ def test_resource_routes_browse_probe_ranges_and_reject_untrusted_inputs(tmp_pat
             data = await response.json()
             assert data["files"] == ["image.png", "movie.mkv", "sound.wav"]
             assert data["dirs"] == ["nested"] and data["parent"] is None
+            # Studio reopens Browse at the last reference's file path, which lists its containing directory.
+            response = await client.get("/arisu/resources/browse", params={"root": "external", "path": "sound.wav"})
+            assert response.status == 200
+            again = await response.json()
+            assert again["path"] == "" and again["parent"] is None
+            assert again["files"] == data["files"] and again["dirs"] == data["dirs"]
             response = await client.get("/arisu/resources/metadata", params={"root": "external", "path": "sound.wav"})
             info = await response.json()
             assert info["kind"] == "audio" and info["duration"] == 1 and info["has_audio"]
