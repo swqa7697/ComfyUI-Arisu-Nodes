@@ -33,6 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Center-crop the first keyframe of the MiniMax H3 Hybrid nodes to the canvas by default instead of stretching it; API-format exports must supply the eight `first_frame_*` / `last_frame_*` keys.
 - Enlarge Resource Studio icon buttons and reference-row text, and colour each mute button in its resource kind.
 - Show an insertion line while dragging a Resource Studio reference and drop it above or below the row under the pointer.
+- Rebuild the Resource Studio clip editor as a timeline with a ruler, draggable in/out brackets and playhead, a keyboard-driven transport row, a duration lock with presets, and a compact preview-free audio dialog.
 
 ### Fixed
 
