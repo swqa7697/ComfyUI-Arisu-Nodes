@@ -13,8 +13,11 @@ const SHORTCUT_SETTING = 'Arisu.PromptWorkbench.ShowAgentsShortcut';
 
 function showShortcut(visible) {
   if (!shortcut) return;
-  if (visible) app.menu.settingsGroup.element.append(shortcut);
-  else shortcut.remove();
+  // Register with the group so later toolbar rebuilds retain the shortcut.
+  const group = app.menu.actionsGroup;
+  if (visible) {
+    if (!group.buttons.includes(shortcut)) group.append(shortcut);
+  } else group.remove(shortcut);
 }
 
 const STYLE = `

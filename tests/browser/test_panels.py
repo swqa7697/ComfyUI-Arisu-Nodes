@@ -200,6 +200,20 @@ def test_prompt_workbench():
                     expect(settings).not_to_be_visible()
                     shortcut = page.get_by_role("button", name="Manage agents", exact=True)
                     expect(shortcut).to_be_visible()
+                    # Rebuild the shared toolbar groups as other extensions do during startup.
+                    page.evaluate("""async () => {
+                        const { app } = await import('/scripts/app.js');
+                        const manager = document.createElement('button');
+                        manager.textContent = 'Manager';
+                        manager.className = 'comfy-btn';
+                        app.menu.settingsGroup.append(manager);
+                        app.menu.actionsGroup.update();
+                    }""")
+                    expect(shortcut).to_be_visible()
+                    manager = page.get_by_role("button", name="Manager", exact=True)
+                    shortcut_box = shortcut.bounding_box()
+                    manager_box = manager.bounding_box()
+                    assert shortcut_box["x"] + shortcut_box["width"] <= manager_box["x"]
                     expect(shortcut.locator("img")).to_be_visible()
                     assert shortcut.locator("img").evaluate("image => image.complete && image.naturalWidth > 0")
                     screenshot(page, name, "agents-shortcut")
@@ -210,6 +224,12 @@ def test_prompt_workbench():
                     page.keyboard.press("Escape")
                     expect(shortcut).to_be_focused()
                     page.reload()
+                    expect(shortcut).to_be_visible()
+                    page.evaluate("""async () => {
+                        const { app } = await import('/scripts/app.js');
+                        app.menu.settingsGroup.update();
+                        app.menu.actionsGroup.update();
+                    }""")
                     expect(shortcut).to_be_visible()
                     page.get_by_role("button", name="Settings (Ctrl + ,)", exact=True).click()
                     settings.get_by_text("Arisu Nodes", exact=True).click()

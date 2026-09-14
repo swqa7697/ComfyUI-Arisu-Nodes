@@ -45,6 +45,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Keep the Agents toolbar shortcut visible after refresh and place it before the Manager section.
+
 - Keep ComfyUI Settings open while interacting with Prompt Workbench agent management and removal confirmation.
 - Place Prompt Workbench agent settings under the existing Arisu Nodes settings tab.
 - Preserve MiniMax H3 Hybrid to Video dimensions when reopening workflows with resource advertising, and fit height without changing width when resource ownership changes.

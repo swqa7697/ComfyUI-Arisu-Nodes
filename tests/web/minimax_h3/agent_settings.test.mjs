@@ -25,7 +25,21 @@ test('settings manage shared accounts, supported effort choices, logs and confir
   responses();
   const extension = extensionNamed('Arisu.MiniMaxH3.AgentSettings');
   const menu = document.createElement('div');
-  app.menu = { settingsGroup: { element: menu } };
+  const group = {
+    buttons: [],
+    append(button) {
+      this.buttons.push(button);
+      this.update();
+    },
+    remove(button) {
+      this.buttons = this.buttons.filter((item) => item !== button);
+      this.update();
+    },
+    update() {
+      menu.replaceChildren(...this.buttons);
+    },
+  };
+  app.menu = { actionsGroup: group };
   body.append(menu);
   extension.setup();
   assert.equal(menu.children.length, 0);
@@ -33,6 +47,10 @@ test('settings manage shared accounts, supported effort choices, logs and confir
   visibility.onChange(true);
   const shortcut = find(menu, 'Manage agents');
   assert(shortcut);
+  // Other extensions rebuild toolbar groups after startup; keep one registered shortcut.
+  visibility.onChange(true);
+  group.update();
+  assert.deepEqual(menu.children, [shortcut]);
   visibility.onChange(false);
   assert.equal(menu.children.length, 0);
   visibility.onChange(true);
