@@ -8,6 +8,14 @@ let pending;
 let cached;
 let checked = 0;
 let active;
+let shortcut;
+const SHORTCUT_SETTING = 'Arisu.PromptWorkbench.ShowAgentsShortcut';
+
+function showShortcut(visible) {
+  if (!shortcut) return;
+  if (visible) app.menu.settingsGroup.element.append(shortcut);
+  else shortcut.remove();
+}
 
 const STYLE = `
 .arisu-agents{width:min(700px,94vw);max-height:90vh;padding:0;border:1px solid var(--border-color,#444);border-radius:10px;
@@ -59,7 +67,7 @@ export async function workbenchRequest(path, value) {
   return data;
 }
 
-async function confirmRemoval(agent) {
+async function confirmRemoval(agent, parent) {
   const dialog = el('dialog', { className: 'arisu-agents' });
   let confirmed = false;
   dialog.append(
@@ -86,13 +94,13 @@ async function confirmRemoval(agent) {
       dialog.remove();
       resolve(confirmed);
     };
-    document.body.append(dialog);
+    parent.append(dialog);
     dialog.showModal();
   });
 }
 
 /** Open the same management dialog from Settings or any Workbench node. */
-export function openAgentSettings(selected = 'codex') {
+export function openAgentSettings(selected = 'codex', parent = document.body) {
   if (active) {
     active.focus();
     return;
@@ -109,7 +117,7 @@ export function openAgentSettings(selected = 'codex') {
   const sections = el('div');
   const logName = el('p');
   async function action(agent, operation, extra = {}) {
-    if (operation === 'remove' && !(await confirmRemoval(agent === 'codex' ? 'Codex' : 'Grok Build'))) return;
+    if (operation === 'remove' && !(await confirmRemoval(agent === 'codex' ? 'Codex' : 'Grok Build', dialog))) return;
     busy = true;
     error.textContent = '';
     try {
@@ -227,7 +235,7 @@ export function openAgentSettings(selected = 'codex') {
     dialog.remove();
     active = null;
   };
-  document.body.append(dialog);
+  parent.append(dialog);
   dialog.showModal();
   void refresh(true);
   timer = setInterval(() => void refresh(), 2000);
@@ -235,13 +243,55 @@ export function openAgentSettings(selected = 'codex') {
 
 app.registerExtension({
   name: 'Arisu.MiniMaxH3.AgentSettings',
+  setup() {
+    shortcut = el(
+      'button',
+      {
+        className: 'comfy-btn arisu-agents-shortcut',
+        title: 'Manage Prompt Workbench agents',
+        ariaLabel: 'Manage agents',
+        type: 'button',
+        onclick: () => openAgentSettings(),
+      },
+      [
+        el('img', { src: new URL('../../assets/icon.svg', import.meta.url).href, alt: '', width: 20, height: 20 }),
+        el('span', { textContent: 'Agents' }),
+      ],
+    );
+    document.body.append(
+      el('style', {
+        textContent: `
+      .arisu-agents-shortcut{display:inline-flex;align-items:center;gap:6px;white-space:nowrap;
+        min-height:32px;padding:6px 10px;border-radius:6px;font:inherit;cursor:pointer;}
+      .arisu-agents-shortcut img{display:block;width:20px;height:20px;flex-shrink:0;}
+      .arisu-agents-shortcut:focus-visible{outline:2px solid var(--fg-color);outline-offset:2px;}
+    `,
+      }),
+    );
+    showShortcut(app.extensionManager.setting.get(SHORTCUT_SETTING) === true);
+  },
   settings: [
     {
       id: 'Arisu.PromptWorkbench.Agents',
       name: 'Prompt Workbench agents',
-      category: ['Arisu', 'Prompt Workbench', 'Agents'],
-      type: () =>
-        el('div', {}, [el('button', { className: 'comfy-btn', textContent: 'Manage agents…', onclick: () => openAgentSettings() })]),
+      category: ['Arisu Nodes', 'Prompt Workbench', 'Agents'],
+      type: () => {
+        // Keep native modals inside Settings so its outside-click handler sees them as descendants.
+        const container = el('div');
+        container.append(
+          el('button', { className: 'comfy-btn', textContent: 'Manage agents…', onclick: () => openAgentSettings('codex', container) }),
+        );
+        return container;
+      },
+    },
+    {
+      id: SHORTCUT_SETTING,
+      name: 'Show Agents shortcut',
+      category: ['Arisu Nodes', 'Prompt Workbench', 'Show Agents shortcut'],
+      type: 'boolean',
+      defaultValue: false,
+      tooltip: 'Show an Agents button in the ComfyUI menu to open agent management.',
+      onChange: (value) => showShortcut(value === true),
     },
   ],
 });

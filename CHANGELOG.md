@@ -9,8 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Add an optional Agents menu shortcut to open shared agent management, hidden by default.
+- Create the custom `user/__arisu_nodes/skills/` directory on startup when missing.
 - Add MiniMax H3 Prompt Workbench with editable finalized text, selected resource and motion-context preparation, Docker-isolated Codex/Grok agents, shared settings, and draft review before Apply.
-
 - Add MiniMax H3 Resource Studio with keyframe cropping, mixed references, clip editing, and original-source Hybrid processing.
 - Add aspect-ratio outputs to both MiniMax H3 Video Settings nodes.
 - Add a `video_settings` bundle output to both MiniMax H3 Video Settings nodes and an optional `video_settings` input to both Hybrid to Video nodes; a wired bundle overrides width, height and length (and the target size from the Upscale variant) and greys those widgets as advertising does.
@@ -20,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Refresh the Arisu icon and add a light variant for the Agents shortcut.
 - Remove custom light-mode color overrides from Prompt Workbench, Resource Studio, and the clip editor, keeping functional colors consistent while inheriting ComfyUI styling.
 - Replace Resource Studio replace buttons with keyframe canvas selection, and open Browse references at the final reference’s folder in list order.
 - Move Resource Studio’s Browse beside the Media references heading, hide zero counters, and show clip-start stills for video references and a waveform marker for audio.
@@ -43,6 +45,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Keep ComfyUI Settings open while interacting with Prompt Workbench agent management and removal confirmation.
+- Place Prompt Workbench agent settings under the existing Arisu Nodes settings tab.
 - Preserve MiniMax H3 Hybrid to Video dimensions when reopening workflows with resource advertising, and fit height without changing width when resource ownership changes.
 - Persist each image’s applied crop ratio across Load Image and Resource Studio workflow reloads, including Free, and discard draft ratio changes on cancellation without inferring from crop dimensions.
 - Fix Resource Studio keyframe and reference creation in browsers without `crypto.randomUUID`, including HTTP connections.
@@ -53,7 +57,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Show the selected Load Image filename above Browse, with the full name available on hover.
-
 - Add Codex project support with shared agent rules, a release PR skill, and a linked ComfyUI environment template.
 
 ### Changed
@@ -63,7 +66,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Handle static images only in Load Image (Browse): Browse no longer lists animated PNG, WebP or AVIF files, and the output is always one image.
 - Show the browse dialog's current path as read-only text; navigate with the tree, up, roots, saved locations and thumbnails.
 - Clear Load Image selections silently, including when removing legacy location wires.
-
 - Preserve Load Image selections when reopening saved workflows or existing tabs, and require Browse reselection after workflow imports, insertion, or node/workflow duplication.
 
 ### Fixed

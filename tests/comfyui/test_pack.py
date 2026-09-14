@@ -69,8 +69,16 @@ def test_pack_loads_like_comfyui(pack: ModuleType, tmp_path: Path, monkeypatch: 
     config = tmp_path / "__arisu_nodes" / "config.arisu.jsonc"
     assert config.is_file()
     original = config.read_bytes()
+    skills = config.parent / "skills"
+    assert skills.is_dir() and not list(skills.iterdir())
+    custom = skills / "my-skill"
+    custom.mkdir()
+    definition = custom / "SKILL.md"
+    definition.write_text("Keep my custom skill")
+    monkeypatch.setattr(sys.modules[pack.initialize_roots.__module__], "_roots", None)
     asyncio.run(extension.on_load())
     assert config.read_bytes() == original
+    assert definition.read_text() == "Keep my custom skill"
 
     nodes = asyncio.run(extension.get_node_list())
     # Browser fixtures must describe the same nodes that the real loader registers.

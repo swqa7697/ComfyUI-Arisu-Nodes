@@ -198,9 +198,11 @@ video frames, with at most 12 ordered stills. Audio length **0–240** is descri
 **0** means follow video context. Lengths use frames at 24 fps; audio latents are not decoded.
 Unsupported latent producers are refused before they can run.
 
-Open **ComfyUI Settings → Arisu → Prompt Workbench → Agents** to build/update an image, perform
+Open **ComfyUI Settings → Arisu Nodes → Prompt Workbench → Agents** to build/update an image, perform
 device-code login/logout, choose an account-supported model and low/medium/high effort, inspect
 status/logs, or completely remove a provider. The node's **Setup** button opens this same panel.
+Enable **Show Agents shortcut** in the same settings section to add an Arisu-icon **Agents**
+button to the ComfyUI menu. The shortcut is hidden by default.
 Without usable Docker, generation controls are disabled and finalized text remains editable.
 
 Both images use **`python:3.13-slim-trixie`** with **Python 3.13** for the wrapper and MCP server.
@@ -217,7 +219,8 @@ root filesystem and staged-input mounts, limited scratch/resources, and no GPU, 
 host networking, or ComfyUI installation mount. Codex uses automatic execution review; Grok uses
 `permission_mode = "auto"`. An incompatible CLI must be updated before generation.
 
-The bundled **`bundled:hybrid2va`** skill is a working feasibility stub. To add a custom skill,
+The bundled **`bundled:hybrid2va`** skill is a working feasibility stub. Startup creates an empty
+`user/__arisu_nodes/skills/` directory if missing and preserves existing skills. To add a custom skill,
 place a directory containing `SKILL.md` under the administrator-owned
 `user/__arisu_nodes/skills/<name>/`; it appears as `custom:<name>`. Symlinked/escaping skills are
 not loaded. Only the selected skill and the job's prepared media are mounted read-only. The minimal

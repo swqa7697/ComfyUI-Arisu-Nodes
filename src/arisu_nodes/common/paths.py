@@ -136,6 +136,12 @@ def initialize_roots(directory: Path):
         if directory.is_symlink():
             raise ValueError("configuration directory must not be a symlink")
         directory.mkdir(exist_ok=True)
+        skills = directory / "skills"
+        try:
+            if not skills.is_symlink():
+                skills.mkdir(exist_ok=True)
+        except OSError:
+            logger.exception("Cannot create the custom skills directory in the system-user directory.")
         config = directory / CONFIG_NAME
         if config.is_symlink() or config.resolve().parent != directory:
             raise ValueError("configuration file must remain in the system directory")

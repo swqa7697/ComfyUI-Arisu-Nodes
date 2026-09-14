@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { openAgentSettings } from '../../../web/js/minimax_h3/agent_settings.js';
 import { api, jsonResponse, resetApi } from '../support/api.mjs';
-import { extensionNamed } from '../support/app.mjs';
+import { app, extensionNamed } from '../support/app.mjs';
 import { body, descendants, resetDom } from '../support/dom.mjs';
 
 const find = (root, label) => descendants(root).find((item) => item.textContent === label || item.ariaLabel === label);
@@ -23,14 +23,35 @@ test('settings manage shared accounts, supported effort choices, logs and confir
   const responses = () =>
     api.responses.push(jsonResponse(200, status), jsonResponse(200, { container: 'named-log', lines: ['[job test] preparing'] }));
   responses();
-  const setting = extensionNamed('Arisu.MiniMaxH3.AgentSettings').settings[0].type();
+  const extension = extensionNamed('Arisu.MiniMaxH3.AgentSettings');
+  const menu = document.createElement('div');
+  app.menu = { settingsGroup: { element: menu } };
+  body.append(menu);
+  extension.setup();
+  assert.equal(menu.children.length, 0);
+  const visibility = extension.settings.find((item) => item.type === 'boolean');
+  visibility.onChange(true);
+  const shortcut = find(menu, 'Manage agents');
+  assert(shortcut);
+  visibility.onChange(false);
+  assert.equal(menu.children.length, 0);
+  visibility.onChange(true);
+  shortcut.onclick();
+  await settle();
+  await settle();
+  const shortcutDialog = descendants(body).find((item) => item.open);
+  assert(shortcutDialog);
+  shortcutDialog.close();
+  responses();
+  const setting = extension.settings[0].type();
+  body.append(setting);
   find(setting, 'Manage agents…').onclick();
   await settle();
   await settle();
-  const dialog = body.children.find((item) => item.open);
+  const dialog = descendants(setting).find((item) => item.open);
   try {
     openAgentSettings();
-    assert.equal(body.children.filter((item) => item.open).length, 1);
+    assert.equal(descendants(body).filter((item) => item.open).length, 1);
     assert.equal(find(dialog, 'Codex model').value, 'm1');
     assert.deepEqual(
       find(dialog, 'Codex effort').children.map((item) => item.value),
@@ -50,13 +71,13 @@ test('settings manage shared accounts, supported effort choices, logs and confir
     const calls = api.calls.length;
     find(current, 'Remove completely').onclick();
     await settle();
-    const confirm = body.children.find((item) => item !== dialog && item.open);
+    const confirm = descendants(dialog).find((item) => item.open);
     find(confirm, 'Cancel').onclick();
     await settle();
     assert.equal(api.calls.length, calls);
     find(current, 'Remove completely').onclick();
     await settle();
-    const approved = body.children.find((item) => item !== dialog && item.open);
+    const approved = descendants(dialog).find((item) => item.open);
     api.responses.push(jsonResponse(200, { accepted: true }));
     status.agents.codex = { installed: false };
     responses();
