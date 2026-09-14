@@ -311,6 +311,9 @@ make build            # wheel + sdist into dist/
 | `make test-unit` | The unit lane (`tests/unit`) alone. `ARGS="-k name"` passes flags through. |
 | `make test-web` | The web lane (`tests/web`) alone, on Node's built-in runner. `ARGS="--test-name-pattern=name"` passes flags through. |
 | `make test-comfyui` | The ComfyUI lane on ComfyUI's interpreter. `ARGS="-v -k name"` passes flags through. |
+| `make browser-install` | Install browser tooling and refresh the latest stable ComfyUI frontend in an isolated local environment. |
+| `make test-browser` | Run Chromium rendering and interaction scenarios; accepts pytest flags through `ARGS`. |
+| `make inspect-browser` | Open the fixture frontend in Chromium for interactive inspection. |
 | `make test-count` | Selected test cases per lane, to compare with the budgets in `CLAUDE.md`. |
 | `make comfyui-path` | Print the resolved ComfyUI install root the ComfyUI lane uses. |
 | `make build` | Build wheel + sdist into `dist/`. |
@@ -326,6 +329,54 @@ rest: the `core.py` / `nodes.py` split every node follows, the rules that keep t
 small, the steps for adding a node, and the release flow. Release history is in
 [CHANGELOG.md](CHANGELOG.md).
 
+
+### Local browser inspection
+
+```bash
+make browser-install
+make test-browser                       # or ARGS="-k resource_studio"
+make inspect-browser                    # requires a graphical desktop
+```
+
+All browser tooling and generated files stay beneath `.tmp/browser/` (environments, binaries,
+results, logs, and scratch checks).
+
+This optional lane loads the **latest stable ComfyUI frontend**, the real extension scripts,
+and synthetic API/media fixtures. `browser-install` refreshes the frontend on each invocation;
+tests use that installed version without downloading updates. The frontend lives outside
+`uv.lock` in `.tmp/browser/env/`; Chromium lives in `.tmp/browser/binaries/`. Ordinary
+`make install` and `make test` do not install or run browser tooling. Linux needs Chromium's
+system libraries; if launch reports missing libraries, install the named packages with your
+system package manager, then rerun setup. Setup does not install operating-system packages.
+
+Resource Studio and Prompt Workbench each have one browser journey covering 1440×900 and
+1024×768, using the default appearance and legacy node renderer (Nodes 2.0 disabled). Tests
+exercise selection, crop/clip editing, scrolling/resizing, canvas navigation, simulated prompt
+generation, review/Apply, and unavailable-agent states. They assert behavior and layout bounds,
+not pixel baselines. A frontend update that breaks these contracts fails visibly; no downgrade
+or renderer fallback occurs.
+
+Screenshots, Playwright traces, and diagnostics appear in `.tmp/browser/results/<scenario>/`, with
+frontend/browser versions, viewport, API requests, and errors. Files in that scenario directory
+are replaced on rerun. Inspect the PNGs to evaluate appearance; a green test alone is not a
+usability review. Frontend 1.52.7 emits a known `ComfyApp graph accessed before initialization`
+console diagnostic from its own setting store; that exact message/source is recorded separately.
+Other console errors, JavaScript exceptions, unexpected routes, and external connections fail.
+
+`inspect-browser` opens Studio; use ComfyUI's node search to add Prompt Workbench. Reload after
+editing extension scripts. All settings and API actions stay in the fixture server's memory;
+no live ComfyUI service, model, GPU, Docker daemon, or agent account is used. Closing the browser
+or pressing Ctrl+C stops the server. Browser dependencies, media, and diagnostics are development
+only and excluded from Registry publishing.
+
+Node-definition fixtures are checked against `GET_NODE_INFO_V1()` in the existing ComfyUI pack
+regression (`make test-comfyui ARGS="-k test_pack_loads_like_comfyui"`). When a covered schema
+changes, update its fixture alongside it, retaining the portable `custom_nodes.arisu` module name.
+
+For an agent-driven UI improvement loop, invoke `$ui-optimize` in Codex or `/ui-optimize` in
+Claude Code. The [shared skill](.claude/skills/ui-optimize/SKILL.md) compares real browser
+screenshots, makes focused UI changes, and reruns interaction checks. Before/after images stay
+under `.tmp/browser/reviews/<task>/` so scenario reruns do not overwrite the baseline.
 
 ### Optional Docker smoke check
 

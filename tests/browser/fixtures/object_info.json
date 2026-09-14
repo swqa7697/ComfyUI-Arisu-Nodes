@@ -1,0 +1,262 @@
+{
+  "ArisuMiniMaxH3PromptWorkbench": {
+    "input": {
+      "required": {
+        "agent": [
+          "COMBO",
+          {
+            "default": "codex",
+            "socketless": true,
+            "multiselect": false,
+            "options": [
+              "codex",
+              "grok"
+            ]
+          }
+        ],
+        "skill": [
+          "STRING",
+          {
+            "default": "bundled:hybrid2va",
+            "socketless": true,
+            "multiline": false
+          }
+        ],
+        "context_length": [
+          "COMBO",
+          {
+            "default": "22",
+            "socketless": true,
+            "multiselect": false,
+            "options": [
+              "22",
+              "5",
+              "39",
+              "56"
+            ]
+          }
+        ],
+        "audio_context_length": [
+          "INT",
+          {
+            "default": 24,
+            "socketless": true,
+            "min": 0,
+            "max": 240
+          }
+        ],
+        "motion_notes": [
+          "STRING",
+          {
+            "default": "",
+            "socketless": true,
+            "multiline": true
+          }
+        ],
+        "reference_notes": [
+          "STRING",
+          {
+            "default": "{}",
+            "socketless": true,
+            "multiline": false
+          }
+        ],
+        "trigger_words": [
+          "STRING",
+          {
+            "default": "",
+            "socketless": true,
+            "multiline": false
+          }
+        ],
+        "requirements": [
+          "STRING",
+          {
+            "default": "",
+            "socketless": true,
+            "multiline": true
+          }
+        ],
+        "finalized_prompt": [
+          "STRING",
+          {
+            "default": "",
+            "socketless": true,
+            "multiline": true
+          }
+        ]
+      },
+      "optional": {
+        "video_settings": [
+          "ARISU_MINIMAX_H3_VIDEO_SETTINGS",
+          {
+            "lazy": true
+          }
+        ],
+        "resources": [
+          "ARISU_MINIMAX_H3_RESOURCES",
+          {
+            "lazy": true
+          }
+        ],
+        "context_latent": [
+          "LATENT",
+          {
+            "lazy": true
+          }
+        ],
+        "vae": [
+          "VAE",
+          {
+            "lazy": true
+          }
+        ],
+        "prepare_job": [
+          "STRING",
+          {
+            "default": "",
+            "socketless": true,
+            "multiline": false
+          }
+        ]
+      },
+      "hidden": {
+        "unique_id": [
+          "UNIQUE_ID"
+        ],
+        "prompt": [
+          "PROMPT"
+        ],
+        "extra_pnginfo": [
+          "EXTRA_PNGINFO"
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "agent",
+        "skill",
+        "context_length",
+        "audio_context_length",
+        "motion_notes",
+        "reference_notes",
+        "trigger_words",
+        "requirements",
+        "finalized_prompt"
+      ],
+      "optional": [
+        "video_settings",
+        "resources",
+        "context_latent",
+        "vae",
+        "prepare_job"
+      ],
+      "hidden": [
+        "unique_id",
+        "prompt",
+        "extra_pnginfo"
+      ]
+    },
+    "is_input_list": false,
+    "output": [
+      "STRING"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "output_name": [
+      "prompt"
+    ],
+    "output_tooltips": [
+      null
+    ],
+    "output_matchtypes": null,
+    "name": "ArisuMiniMaxH3PromptWorkbench",
+    "display_name": "MiniMax H3 Prompt Workbench",
+    "description": "",
+    "python_module": "custom_nodes.arisu",
+    "category": "Arisu Nodes/MiniMax H3",
+    "output_node": true,
+    "deprecated": false,
+    "experimental": false,
+    "dev_only": false,
+    "api_node": false,
+    "price_badge": null,
+    "search_aliases": null,
+    "essentials_category": null,
+    "has_intermediate_output": false
+  },
+  "ArisuMiniMaxH3ResourceStudio": {
+    "input": {
+      "required": {
+        "aspect_ratio": [
+          "COMBO",
+          {
+            "default": "16:9 (Widescreen)",
+            "multiselect": false,
+            "options": [
+              "1:1 (Square)",
+              "2:3 (Portrait Photo)",
+              "3:2 (Photo)",
+              "3:4 (Portrait Standard)",
+              "4:3 (Standard)",
+              "9:16 (Portrait Widescreen)",
+              "16:9 (Widescreen)",
+              "21:9 (Ultrawide)"
+            ]
+          }
+        ],
+        "advertise_resources": [
+          "BOOLEAN",
+          {
+            "tooltip": "Hand this bundle to every MiniMax H3 Hybrid to Video node in the root graph without a link; their resources socket greys out. Off by default. Read by the frontend.",
+            "default": false
+          }
+        ],
+        "resources_json": [
+          "STRING",
+          {
+            "default": "{\"version\":1,\"keyframes\":{\"first\":null,\"last\":null},\"references\":[]}",
+            "socketless": true,
+            "multiline": false
+          }
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "aspect_ratio",
+        "advertise_resources",
+        "resources_json"
+      ]
+    },
+    "is_input_list": false,
+    "output": [
+      "ARISU_MINIMAX_H3_RESOURCES"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "output_name": [
+      "resources"
+    ],
+    "output_tooltips": [
+      null
+    ],
+    "output_matchtypes": null,
+    "name": "ArisuMiniMaxH3ResourceStudio",
+    "display_name": "MiniMax H3 Resource Studio",
+    "description": "",
+    "python_module": "custom_nodes.arisu",
+    "category": "Arisu Nodes/MiniMax H3",
+    "output_node": false,
+    "deprecated": false,
+    "experimental": false,
+    "dev_only": false,
+    "api_node": false,
+    "price_badge": null,
+    "search_aliases": null,
+    "essentials_category": null,
+    "has_intermediate_output": false
+  }
+}

@@ -11,10 +11,10 @@ bash scripts/ensure_deps.sh
 
 if [[ "${LOCKED:-0}" == "1" ]]; then
     log_info "syncing dev dependencies from uv.lock (--locked)..."
-    uv sync --locked --all-groups
+    uv sync --locked --group dev
 else
     log_info "syncing dev dependencies..."
-    uv sync --all-groups
+    uv sync --group dev
 fi
 
 log_ok "done. virtualenv at $(pwd)/.venv"

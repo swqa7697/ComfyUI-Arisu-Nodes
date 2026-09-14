@@ -6,9 +6,10 @@ ComfyUI custom node pack on the V3 API (`comfy_entrypoint` + `io.Schema`). Pytho
 
 Claude Code reads this file directly; Codex reads the root `AGENTS.md` symlink to it.
 Keep that symlink and edit this file for shared project rules. Codex discovers
-`.agents/skills/release-pr`, a relative symlink to `.claude/skills/release-pr`;
-edit the shared skill there. Invoke it as `/release-pr` in Claude Code or
-`$release-pr` in Codex. Both agents use the same ignored `.claude/comfyui-env.md`
+skills through relative symlinks in `.agents/skills/` to `.claude/skills/`; edit the
+shared skills there. Use `/release-pr` or `/ui-optimize` in Claude Code and
+`$release-pr` or `$ui-optimize` in Codex. The UI skill drives the real-browser
+render, inspect, edit, and verify loop. Both agents use the same ignored `.claude/comfyui-env.md`
 and its tracked template; do not create a second set of machine facts for Codex.
 Run development commands from this checkout. Personal Codex settings in `.codex/`
 are ignored; this project needs no model, credential, or permission overrides.
@@ -35,7 +36,7 @@ Human-only steps, which the agent may print but never runs: manual E2E (clone a 
 - `src/arisu_nodes/<family>/core.py` — logic on the stdlib and Pillow (PyAV is also declared for media services), no ComfyUI or torch. `nodes.py` — `io.ComfyNode` classes importing `comfy_api` and torch; ends with `NODES: List[Type[io.ComfyNode]]`, which the root `__init__.py` concatenates. `routes.py` (in `common` and `minimax_h3`) — aiohttp handlers behind frontend buttons and the browse dialog, registered on `PromptServer.instance.routes` from the extension's `on_load`; validation stays in `core.py`. Families: `minimax_h3` and `common` (live), `anima` (reserved). Every subpackage needs an `__init__.py`: `find_packages` silently drops a directory without one.
 - `tests/unit/`, `tests/comfyui/`, `tests/support/`, `tests/web/` — the three lanes and their shared fakes (see Testing); `tests/web/support/` holds the web lane's resolve hook and fakes. `scripts/` — `test-comfyui.sh`, `biome.sh` (the pinned Biome release through `pnpm dlx`), `ensure_deps.sh` (uv, pnpm, node), the stdlib release CLIs (`release_*.py`), and the shell bodies of the make targets, each touching only this checkout.
 - `.github/workflows/` — `build-pipeline.yml` (PR gate), `comfyui-lane.yml` (weekly and manual, a throwaway ComfyUI clone on CPU-only torch, never a gate), `publish_node.yml` (`vX.Y.Z` tags only).
-- `.claude/` — only `skills/release-pr/SKILL.md` and `comfyui-env.example.md` are tracked. `Makefile` — every dev task (`make help`); refuses to run under `$COMFYUI_PATH`. `tidy.sh` — the formatter chain behind `make tidy`. `biome.json` — the JavaScript formatter and linter config, scoped to `web/js` and `tests/web`. `web/docs/<node_id>/en.md` — node help pages, flat by id (ComfyUI's lookup contract). `web/js/<family>/` — frontend assets, globbed `**/*.js`; served at `/extensions/<pack dir>/js/<family>/`, so a script imports the frontend core with four `../` (`../../../../scripts/app.js`), which `test_pack.py` checks.
+- `.claude/` — only the shared skills under `skills/` and `comfyui-env.example.md` are tracked. `Makefile` — every dev task (`make help`); refuses to run under `$COMFYUI_PATH`. `tidy.sh` — the formatter chain behind `make tidy`. `biome.json` — the JavaScript formatter and linter config, scoped to `web/js` and `tests/web`. `web/docs/<node_id>/en.md` — node help pages, flat by id (ComfyUI's lookup contract). `web/js/<family>/` — frontend assets, globbed `**/*.js`; served at `/extensions/<pack dir>/js/<family>/`, so a script imports the frontend core with four `../` (`../../../../scripts/app.js`), which `test_pack.py` checks.
 - `.comfyignore` — the paths `comfy node publish` leaves out of the registry archive, which is otherwise every git-tracked file; it ships `__init__.py`, `src/`, `web/`, `assets/`, `pyproject.toml`, `README.md`, `CHANGELOG.md`, `LICENSE`, and `example_workflows/`, and nothing else. A new top-level dev-only file or directory has to be added to it (`biome.json` is), or it lands in every ComfyUI-Manager install and in front of the registry's security scan.
 
 ## Security and vulnerability prevention
@@ -83,6 +84,25 @@ Run `make tidy`, then `make lint test`, then `make build`, and commit whatever `
 - The two `conftest.py` files do `sys.path` wiring, collection control, and the interpreter setup that must land before the lane's modules import (the CPU-mode shim); no fixtures or fakes go there.
 - The ComfyUI lane must be green before asking the user to run a manual E2E. Its `GET_SCHEMA()` test is the only early warning that the node will load.
 - Fix code, not tests, when a test fails.
+
+### Optional browser lane
+
+`make browser-install` installs the optional `browser` dependency group into `.tmp/browser/env/`
+and refreshes the latest stable `comfyui-frontend-package` there, outside `uv.lock`. Chromium lives
+in `.tmp/browser/binaries/`. Never reuse the live ComfyUI environment for this setup. `make test-browser`
+runs two grouped journeys under `tests/browser/`; ordinary pytest collection ignores that directory
+unless the launcher sets `ARISU_BROWSER_TEST=1`. `make inspect-browser` runs the same fixture host
+with visible Chromium. No browser CI or pixel baselines. Keep the browser count at two unless a new
+behavior cannot extend a journey; `make test-count` reports it separately when installed.
+
+The loopback host serves real frontend/extension assets with synthetic API and media responses;
+HTTP and WebSocket requests cannot reach the live service or external hosts. Diagnostic screenshots
+and traces are explicitly part of this lane and belong in ignored `.tmp/browser/results/`. Keep all
+browser environments, binaries, logs, and scratch checks beneath `.tmp/browser/`, never directly in
+`.tmp/`. Inspect screenshots
+before claiming visual verification. Keep shared browser support under `tests/browser/support/`,
+never under shipped `web/`. Node-definition fixture drift is checked by the existing ComfyUI pack
+regression. Preserve default appearance and legacy rendering; fail visibly on frontend incompatibility.
 
 ### Test growth rules
 
