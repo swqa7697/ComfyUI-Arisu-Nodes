@@ -14,6 +14,8 @@ const HYBRID_WIDGETS = {
 };
 const RESOURCE_NAMES = ['first_frame', 'last_frame', 'ref_images', 'ref_videos', 'ref_video_audios', 'ref_audios'];
 const ADVERTISE = { settings: 'advertise_settings', resources: 'advertise_resources' };
+// The hybrid sockets each category fills: the advertiser's output at queue time, or an explicit wire.
+const BUNDLE = { settings: 'video_settings', resources: 'resources' };
 const states = new WeakMap();
 const pending = new Set();
 const promptOwnership = new WeakMap();
@@ -81,17 +83,44 @@ function exclusive(keep) {
   }
   if (demoted.length) toast('warn', 'Only one source in each category advertises; the latest switch wins.');
 }
+function inputOf(node, name) {
+  return node.inputs?.find((input) => input.name === name);
+}
+function slotOf(node, name) {
+  return node.outputs.findIndex((out) => out.name === name);
+}
+function advertiserFor(node, kind) {
+  return node.graph === rootGraph() ? source(kind) : null;
+}
+function linkSource(node, input) {
+  if (input?.link == null) return null;
+  const links = node.graph?.links;
+  const link = links?.get?.(input.link) ?? links?.[input.link];
+  return link ? String(link.origin_id) : null;
+}
+function linkOrigin(node, input) {
+  const id = linkSource(node, input);
+  return id == null ? null : ((node.graph?.nodes ?? node.graph?._nodes ?? []).find((origin) => String(origin.id) === id) ?? null);
+}
+// The node a consumer takes its settings from: the root-graph advertiser, else the origin of its
+// video_settings wire. `undefined` is none; `null` is a wire from a node this graph cannot see.
+function settingsSource(node) {
+  const advertiser = advertiserFor(node, 'settings');
+  if (advertiser || node.type === STUDIO) return advertiser ?? undefined;
+  const input = inputOf(node, BUNDLE.settings);
+  return input?.link == null ? undefined : linkOrigin(node, input);
+}
+// The widgets the settings source owns: the keys its bundle carries that the node has; an unseen source owns them all.
 function handedKeys(node) {
-  if (node.graph !== rootGraph()) return [];
-  const settings = source('settings');
-  if (!settings) return [];
-  return node.type === STUDIO ? ['aspect_ratio'] : SETTINGS_KEYS[settings.type].filter((key) => HYBRID_WIDGETS[node.type]?.includes(key));
+  const settings = settingsSource(node);
+  if (settings === undefined) return [];
+  if (node.type === STUDIO) return ['aspect_ratio'];
+  const controlled = HYBRID_WIDGETS[node.type] ?? [];
+  const carried = settings ? SETTINGS_KEYS[settings.type] : null;
+  return carried ? carried.filter((key) => controlled.includes(key)) : controlled;
 }
 function resourceOwned(node) {
-  return !!(
-    node.type in HYBRID_WIDGETS &&
-    ((node.graph === rootGraph() && source('resources')) || node.inputs?.find((input) => input.name === 'resources')?.link != null)
-  );
+  return !!(node.type in HYBRID_WIDGETS && (advertiserFor(node, 'resources') || inputOf(node, BUNDLE.resources)?.link != null));
 }
 function schemaSeeds(nodeData) {
   const seeds = [];
@@ -165,7 +194,19 @@ function scheduleSockets(node, owned) {
     if (state.transition === task) state.transition = null;
   });
 }
+// An advertiser owns the socket: greyed, and unwired. Reports whether a wire was dropped.
+function ownSocket(node, name, advertiser) {
+  const socket = inputOf(node, name);
+  if (!socket) return false;
+  socket.disabled = !!advertiser;
+  socket.color_on = advertiser ? '#777' : undefined;
+  socket.color_off = advertiser ? '#777' : undefined;
+  if (!advertiser || socket.link == null) return false;
+  node.disconnectInput(node.inputs.indexOf(socket));
+  return true;
+}
 function refreshNode(node) {
+  // decide before mutating: a disconnect re-enters refresh, which the guard turns away
   const keys = handedKeys(node);
   const controlled = node.type === STUDIO ? ['aspect_ratio'] : (HYBRID_WIDGETS[node.type] ?? []);
   let dropped = false;
@@ -175,9 +216,8 @@ function refreshNode(node) {
       node.disconnectInput(i);
       dropped = true;
     }
-  if (dropped) toast('info', 'Links into advertised controls were removed.');
   if (node.type === STUDIO) {
-    const settings = node.graph === rootGraph() ? source('settings') : null;
+    const settings = advertiserFor(node, 'settings');
     // A linked settings ratio is not the source node's stale local widget.
     node.arisuEffectiveAspect = settings
       ? settings.inputs?.some((input) => input.name === 'aspect_ratio' && input.link != null)
@@ -187,16 +227,11 @@ function refreshNode(node) {
     node.arisuRefreshAspect?.();
   }
   if (node.type in HYBRID_WIDGETS) {
-    const advertised = node.graph === rootGraph() && source('resources');
-    const socket = node.inputs?.find((input) => input.name === 'resources');
-    if (socket) {
-      socket.disabled = !!advertised;
-      socket.color_on = advertised ? '#777' : undefined;
-      socket.color_off = advertised ? '#777' : undefined;
-      if (advertised && socket.link != null) node.disconnectInput(node.inputs.indexOf(socket));
-    }
+    dropped = ownSocket(node, BUNDLE.resources, advertiserFor(node, 'resources')) || dropped;
+    dropped = ownSocket(node, BUNDLE.settings, advertiserFor(node, 'settings')) || dropped;
     scheduleSockets(node, resourceOwned(node));
   }
+  if (dropped) toast('info', 'Links into advertised controls were removed.');
   node.setDirtyCanvas(true, true);
 }
 function refresh(force) {
@@ -237,12 +272,6 @@ async function reconcile() {
   refresh();
   while (pending.size) await Promise.all([...pending]);
 }
-function linkSource(node, input) {
-  if (input?.link == null) return null;
-  const links = node.graph?.links;
-  const link = links?.get?.(input.link) ?? links?.[input.link];
-  return link ? String(link.origin_id) : null;
-}
 function ownership() {
   return JSON.stringify(
     allNodes()
@@ -279,38 +308,46 @@ function executionNodes() {
   }
   return result;
 }
+// Point the prompt entry's input at the advertiser's output of the same name.
+function bindAdvertised(entry, output, advertiser, name, label) {
+  const id = String(advertiser.id);
+  if (!output[id]) throw new Error(`The active ${label} source is absent from this prompt.`);
+  const slot = slotOf(advertiser, name);
+  if (slot < 0) throw new Error(`The ${label} output ${name} is unavailable.`);
+  entry.inputs[name] = [id, slot];
+}
+// An explicit wire must reach a live source in the prompt; the serializer pruning it is an error, not a fallback.
+function checkExplicit(node, entry, dto, output, name, label) {
+  const explicit = inputOf(node, name);
+  if (explicit?.link == null) return false;
+  const explicitId = dto ? entry.inputs[name]?.[0] : linkSource(node, explicit);
+  const origin = linkOrigin(node, explicit);
+  if ((origin && !active(origin)) || !explicitId || !output[explicitId] || !entry.inputs[name])
+    throw new Error(`The explicitly connected ${label} source is muted, bypassed, or absent.`);
+  return true;
+}
+// A hybrid's bundle socket in the prompt: the advertiser's output, else its own wire. Reports whether it is fed.
+function bindBundle(node, entry, dto, output, name, advertiser, label) {
+  if (!advertiser) return checkExplicit(node, entry, dto, output, name, label);
+  bindAdvertised(entry, output, advertiser, name, label);
+  return true;
+}
 function inject(output) {
   for (const { node, id: executionId, dto } of executionNodes()) {
     if (!active(node)) continue;
     const entry = output[executionId];
     if (!entry) continue;
-    const settings = node.graph === rootGraph() ? source('settings') : null;
-    const keys = handedKeys(node);
-    if (keys.length) {
-      if (!output[String(settings.id)]) throw new Error('The active settings source is absent from this prompt.');
-      for (const key of keys) {
-        const slot = settings.outputs.findIndex((out) => out.name === key);
-        if (slot < 0) throw new Error(`Settings output ${key} is unavailable.`);
-        entry.inputs[key] = [String(settings.id), slot];
-      }
+    const settings = advertiserFor(node, 'settings');
+    if (node.type === STUDIO) {
+      // the Studio takes the advertised ratio on its own selector
+      if (settings) bindAdvertised(entry, output, settings, 'aspect_ratio', 'settings');
+      continue;
     }
     if (!(node.type in HYBRID_WIDGETS)) continue;
-    const advertiser = node.graph === rootGraph() ? source('resources') : null;
-    const explicit = node.inputs?.find((input) => input.name === 'resources');
-    const explicitId = dto ? entry.inputs.resources?.[0] : linkSource(node, explicit);
-    const directId = linkSource(node, explicit);
-    const directNode = (node.graph?.nodes ?? node.graph?._nodes ?? []).find((source) => String(source.id) === directId);
-    if (advertiser) {
-      const id = String(advertiser.id);
-      if (!output[id]) throw new Error('The active resource source is absent from this prompt.');
-      const slot = advertiser.outputs.findIndex((out) => out.name === 'resources');
-      if (slot < 0) throw new Error('Resource output is unavailable.');
-      entry.inputs.resources = [id, slot];
-    } else if (explicit?.link != null) {
-      if ((directNode && !active(directNode)) || !explicitId || !output[explicitId] || !entry.inputs.resources)
-        throw new Error('The explicitly connected resource source is muted, bypassed, or absent.');
-    }
-    if (advertiser || explicit?.link != null) for (const name of Object.keys(entry.inputs)) if (group(name)) delete entry.inputs[name];
+    if (bindBundle(node, entry, dto, output, BUNDLE.resources, advertiserFor(node, 'resources'), 'resource'))
+      for (const name of Object.keys(entry.inputs)) if (group(name)) delete entry.inputs[name];
+    // the individual size and length values stay in the prompt: required inputs the bundle overrides on the backend
+    bindBundle(node, entry, dto, output, BUNDLE.settings, settings, 'settings');
   }
   checkCycles(output);
 }
@@ -400,7 +437,8 @@ app.registerExtension({
       if (
         handedKeys(this).includes(input?.name) ||
         (owned && individual(input)) ||
-        (input?.name === 'resources' && this.graph === rootGraph() && source('resources'))
+        (input?.name === BUNDLE.resources && advertiserFor(this, 'resources')) ||
+        (input?.name === BUNDLE.settings && advertiserFor(this, 'settings'))
       ) {
         toast('warn', 'This input is owned by the active resource or settings source.');
         return false;

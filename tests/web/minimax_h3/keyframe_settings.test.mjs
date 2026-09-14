@@ -38,6 +38,7 @@ function nodeData(name, targets = {}) {
   }
   const optional = {
     audio_vae: ['VAE', {}],
+    video_settings: ['ARISU_MINIMAX_H3_VIDEO_SETTINGS', {}],
     resources: ['ARISU_MINIMAX_H3_RESOURCES', {}],
     first_frame: ['IMAGE', {}],
     last_frame: ['IMAGE', {}],
@@ -47,7 +48,7 @@ function nodeData(name, targets = {}) {
 
 const HYBRID = nodeData('ArisuMiniMaxH3HybridToVideo');
 const ADVANCED = nodeData('ArisuMiniMaxH3HybridToVideoAdvanced', { target_width: SIZE, target_height: SIZE });
-const NO_WIDGET = new Set(['CLIP', 'VAE', 'IMAGE', 'ARISU_MINIMAX_H3_RESOURCES']);
+const NO_WIDGET = new Set(['CLIP', 'VAE', 'IMAGE', 'ARISU_MINIMAX_H3_VIDEO_SETTINGS', 'ARISU_MINIMAX_H3_RESOURCES']);
 
 const Hybrid = { prototype: {} };
 const Advanced = { prototype: {} };

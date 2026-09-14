@@ -583,9 +583,9 @@ test('Studio keyframes auto-crop on effective ratio changes and preserve manual 
     type: 'ArisuMiniMaxH3VideoSettings',
     graph: app.graph,
     widgets: [{ name: 'aspect_ratio', value: '1:1 (Square)' }],
-    outputs: ['width', 'height', 'length', 'aspect_ratio'],
+    outputs: ['video_settings', 'width', 'height', 'length', 'aspect_ratio'],
   });
-  app.graph.links = { 7: { origin_id: 2, origin_slot: 3 } };
+  app.graph.links = { 7: { origin_id: 2, origin_slot: 4 } };
   node.inputs.push({ name: 'aspect_ratio', link: 7, widget: { name: 'aspect_ratio' } });
   definition.prototype.onConnectionsChange.call(node);
   await settle();

@@ -38,6 +38,7 @@ from .core import (
     REF_IMAGE_SIZE_MODES,
     VIDEO_LATENT_CHANNELS,
     ResourceBundle,
+    VideoSettings,
     align_clip_frames,
     canvas_from_megapixels,
     frame_needs_resize,
@@ -349,6 +350,14 @@ def _hybrid_inputs_head() -> List[io.Input]:
             optional=True,
             tooltip="Audio VAE, needed only when a reference audio or a reference video soundtrack is connected.",
         ),
+        io.Custom("ARISU_MINIMAX_H3_VIDEO_SETTINGS").Input(
+            "video_settings",
+            optional=True,
+            tooltip=(
+                "Bundle from a MiniMax H3 Video Settings node. Overrides width, height and length, and the target size "
+                "when it carries one; the frontend greys those widgets while it is wired or advertised."
+            ),
+        ),
         io.Custom("ARISU_MINIMAX_H3_RESOURCES").Input("resources", optional=True),
         io.String.Input("prompt", multiline=True, dynamic_prompts=True),
         io.Int.Input("width", default=1344, min=32, max=MAX_RESOLUTION, step=32),
@@ -526,6 +535,7 @@ class ArisuMiniMaxH3HybridToVideo(io.ComfyNode):
         ref_video_audios: Optional[Dict[str, Optional[Dict[str, Any]]]] = None,
         ref_audios: Optional[Dict[str, Optional[Dict[str, Any]]]] = None,
         resources: Optional[ResourceBundle] = None,
+        video_settings: Optional[VideoSettings] = None,
     ) -> io.NodeOutput:
         """Encode the hybrid conditioning and build the matching AV latent.
 
@@ -553,11 +563,15 @@ class ArisuMiniMaxH3HybridToVideo(io.ComfyNode):
             ref_videos: Autogrow slot dict of reference clips.
             ref_video_audios: Autogrow slot dict of reference clip soundtracks.
             ref_audios: Autogrow slot dict of standalone reference audios.
+            resources: A Resource Studio bundle replacing every individual keyframe and reference input.
+            video_settings: A Video Settings bundle whose canvas and length replace ``width``, ``height`` and ``length``.
 
         Returns:
             ``(positive, latent)``: the conditioning for the generation canvas and
             the empty AV latent built for it.
         """
+        if video_settings is not None:
+            width, height, length = video_settings.width, video_settings.height, video_settings.length
         if resources is not None:
             first_frame, last_frame, ref_images, ref_videos, ref_video_audios, ref_audios = _consume_resources(
                 resources, length, first_frame, last_frame, ref_images, ref_videos, ref_video_audios, ref_audios, audio_vae
@@ -691,6 +705,7 @@ class ArisuMiniMaxH3HybridToVideoAdvanced(io.ComfyNode):
         ref_video_audios: Optional[Dict[str, Optional[Dict[str, Any]]]] = None,
         ref_audios: Optional[Dict[str, Optional[Dict[str, Any]]]] = None,
         resources: Optional[ResourceBundle] = None,
+        video_settings: Optional[VideoSettings] = None,
     ) -> io.NodeOutput:
         """Encode one conditioning per keyframe canvas and build the AV latent.
 
@@ -720,6 +735,9 @@ class ArisuMiniMaxH3HybridToVideoAdvanced(io.ComfyNode):
             ref_videos: Autogrow slot dict of reference clips.
             ref_video_audios: Autogrow slot dict of reference clip soundtracks.
             ref_audios: Autogrow slot dict of standalone reference audios.
+            resources: A Resource Studio bundle replacing every individual keyframe and reference input.
+            video_settings: A Video Settings bundle whose canvas and length replace ``width``, ``height`` and
+                ``length``, and whose target, when it carries one, replaces ``target_width`` and ``target_height``.
 
         Returns:
             ``(positive, latent, positive_target)``: the conditioning for the
@@ -727,6 +745,10 @@ class ArisuMiniMaxH3HybridToVideoAdvanced(io.ComfyNode):
             whose keyframes are encoded at the target size. When the target size
             equals the generation size both conditionings are the same object.
         """
+        if video_settings is not None:
+            width, height, length = video_settings.width, video_settings.height, video_settings.length
+            if video_settings.target_width is not None and video_settings.target_height is not None:
+                target_width, target_height = video_settings.target_width, video_settings.target_height
         if resources is not None:
             first_frame, last_frame, ref_images, ref_videos, ref_video_audios, ref_audios = _consume_resources(
                 resources, length, first_frame, last_frame, ref_images, ref_videos, ref_video_audios, ref_audios, audio_vae
@@ -810,8 +832,9 @@ def _settings_inputs_tail() -> List[io.Input]:
             "advertise_settings",
             default=False,
             tooltip=(
-                "Drive every MiniMax H3 Hybrid to Video node in this graph: their size and length widgets grey out at once, "
-                "refuse links, and take these values. Off by default. Read by the frontend; the outputs stay available either way."
+                "Drive every MiniMax H3 Hybrid to Video node in this graph through their video_settings input: their size and "
+                "length widgets grey out at once and refuse links. Off by default. Read by the frontend; the outputs stay "
+                "available either way."
             ),
         ),
     ]
@@ -823,6 +846,12 @@ def _settings_outputs_head() -> List[io.Output]:
         io.Int.Output("height", tooltip="Canvas height in pixels, a multiple of 32."),
         io.Int.Output("length", tooltip="Frame count on the 17k+5 grid, for the hybrid nodes' length input."),
     ]
+
+
+def _settings_bundle_output() -> io.Output:
+    return io.Custom("ARISU_MINIMAX_H3_VIDEO_SETTINGS").Output(
+        "video_settings", tooltip="Every other output in one bundle, for the hybrid nodes' video_settings input."
+    )
 
 
 class ArisuMiniMaxH3VideoSettings(io.ComfyNode):
@@ -839,7 +868,7 @@ class ArisuMiniMaxH3VideoSettings(io.ComfyNode):
 
         Returns:
             The schema taking an aspect ratio, a pixel budget and a duration, and returning
-            width, height and length.
+            the bundle first, then width, height, length and the ratio label.
         """
         return io.Schema(
             node_id="ArisuMiniMaxH3VideoSettings",
@@ -847,11 +876,15 @@ class ArisuMiniMaxH3VideoSettings(io.ComfyNode):
             category="Arisu Nodes/MiniMax H3",
             description=(
                 "Canvas size from an aspect ratio and a megapixel budget, and frame count from a duration in seconds, "
-                "on MiniMax H3's grids. Wire the outputs into the hybrid nodes, or switch advertise_settings on and every "
-                "MiniMax H3 Hybrid to Video node in this graph takes them automatically."
+                "on MiniMax H3's grids. Wire video_settings into the hybrid nodes, or switch advertise_settings on and every "
+                "MiniMax H3 Hybrid to Video node in this graph takes it automatically."
             ),
             inputs=[*_settings_inputs_head(), *_settings_inputs_tail()],
-            outputs=[*_settings_outputs_head(), io.Combo.Output("aspect_ratio", options=list(ASPECT_RATIO_LABELS))],
+            outputs=[
+                _settings_bundle_output(),
+                *_settings_outputs_head(),
+                io.Combo.Output("aspect_ratio", options=list(ASPECT_RATIO_LABELS)),
+            ],
         )
 
     @classmethod
@@ -865,10 +898,11 @@ class ArisuMiniMaxH3VideoSettings(io.ComfyNode):
             advertise_settings: Frontend-only flag; the backend does not read it.
 
         Returns:
-            ``(width, height, length)``.
+            ``(video_settings, width, height, length, aspect_ratio)``.
         """
         width, height = canvas_from_megapixels(aspect_ratio, megapixels)
-        return io.NodeOutput(width, height, frames_for_duration(duration), aspect_ratio)
+        length = frames_for_duration(duration)
+        return io.NodeOutput(VideoSettings(width, height, length, aspect_ratio), width, height, length, aspect_ratio)
 
 
 class ArisuMiniMaxH3VideoSettingsUpscale(io.ComfyNode):
@@ -879,8 +913,8 @@ class ArisuMiniMaxH3VideoSettingsUpscale(io.ComfyNode):
         """Declare the node's id, category, inputs and outputs.
 
         Returns:
-            The settings schema with an ``upscale_factor`` input and the upscale factor and
-            target size added to the outputs.
+            The settings schema with an ``upscale_factor`` input, the bundle first among the
+            outputs, and the upscale factor and target size added to them.
         """
         return io.Schema(
             node_id="ArisuMiniMaxH3VideoSettingsUpscale",
@@ -903,6 +937,7 @@ class ArisuMiniMaxH3VideoSettingsUpscale(io.ComfyNode):
                 *_settings_inputs_tail(),
             ],
             outputs=[
+                _settings_bundle_output(),
                 *_settings_outputs_head(),
                 io.Float.Output("upscale_factor", tooltip="The factor, for a latent upscaler's multiplier input."),
                 io.Int.Output("target_width", tooltip="Upscaled width in pixels, a multiple of 32."),
@@ -925,11 +960,13 @@ class ArisuMiniMaxH3VideoSettingsUpscale(io.ComfyNode):
             advertise_settings: Frontend-only flag; the backend does not read it.
 
         Returns:
-            ``(width, height, length, upscale_factor, target_width, target_height)``.
+            ``(video_settings, width, height, length, upscale_factor, target_width, target_height, aspect_ratio)``.
         """
         width, height = canvas_from_megapixels(aspect_ratio, megapixels)
         target_width, target_height = scaled_canvas(width, height, upscale_factor)
-        return io.NodeOutput(width, height, frames_for_duration(duration), upscale_factor, target_width, target_height, aspect_ratio)
+        length = frames_for_duration(duration)
+        bundle = VideoSettings(width, height, length, aspect_ratio, upscale_factor, target_width, target_height)
+        return io.NodeOutput(bundle, width, height, length, upscale_factor, target_width, target_height, aspect_ratio)
 
 
 def _resource_roots() -> Dict[str, str]:

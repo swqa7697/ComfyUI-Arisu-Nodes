@@ -17,7 +17,7 @@ from comfy_api.latest import io
 from PIL import Image
 
 from src.arisu_nodes.minimax_h3 import nodes as h3
-from src.arisu_nodes.minimax_h3.core import EMPTY_RESOURCES, video_latent_t
+from src.arisu_nodes.minimax_h3.core import EMPTY_RESOURCES, VideoSettings, video_latent_t
 from src.arisu_nodes.minimax_h3.media import StaleResource
 from src.arisu_nodes.minimax_h3.nodes import ArisuMiniMaxH3HybridToVideo, ArisuMiniMaxH3HybridToVideoAdvanced
 from tests.support.comfy import StubAudioVae, StubClip, StubVae, audio_input, image
@@ -95,6 +95,15 @@ def test_first_and_last_frames_only_pin_keyframes():
     assert torch.equal(padded[:, :, -288:], red)
     # the fitted frame is resampled at its own size, so it comes back 8-bit quantized rather than byte-equal
     assert torch.allclose(padded[:, :, 288:-288], kwargs["first_frame"], atol=1 / 255)
+
+    # a video_settings bundle beats the width / height / length widgets, which the frontend only greys
+    _clip, result = _run(
+        first_frame=image(768, 1344), last_frame=image(768, 1344), video_settings=VideoSettings(512, 512, 39, "1:1 (Square)")
+    )
+    values = _cond_values(result)
+    assert [kf["resolved_frame_index"] for kf in values["minimax_keyframes"]] == [0, 38]
+    assert all(kf["latent"].shape == (1, 24, 1, 32, 32) for kf in values["minimax_keyframes"])
+    assert tuple(result[1]["samples"].tensors[0].shape) == (1, 24, 12, 32, 32)
 
 
 def test_frame_picture_tags_order_frames_around_references():
@@ -200,6 +209,16 @@ def test_advanced_encodes_keyframes_on_both_canvases_and_collapses_an_equal_targ
     positive, _latent, upscaled = result
     assert upscaled is positive
     assert len(kwargs["vae"].encoded) == 2
+
+    # an Upscale settings bundle owns the target as well as the canvas; a plain bundle leaves the node's own target in force
+    upscale_bundle = h3.ArisuMiniMaxH3VideoSettingsUpscale.execute("1:1 (Square)", 0.25, 2.0, 5.0, False)[0]
+    _kwargs, result = _run_advanced(first_frame=image(64, 64), video_settings=upscale_bundle)
+    positive, latent, upscaled = result
+    assert tuple(latent["samples"].tensors[0].shape) == (1, 24, 37, 32, 32)
+    assert upscaled[0][1]["minimax_keyframes"][0]["latent"].shape == (1, 24, 1, 64, 64)
+    plain_bundle = h3.ArisuMiniMaxH3VideoSettings.execute("1:1 (Square)", 0.25, 5.0, False)[0]
+    _kwargs, result = _run_advanced(first_frame=image(64, 64), video_settings=plain_bundle, target_width=768, target_height=768)
+    assert result[2][0][1]["minimax_keyframes"][0]["latent"].shape == (1, 24, 1, 48, 48)
 
 
 def test_advanced_sizes_a_large_reference_per_canvas_under_match_and_shares_it_under_max():

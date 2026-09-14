@@ -26,7 +26,7 @@ Everything from **MiniMax H3 Hybrid to Video** (see its help page) plus:
 
 | Parameter                         | Type | Description                                                                                  |
 |-----------------------------------|------|----------------------------------------------------------------------------------------------|
-| `target_width`, `target_height`   | INT  | Size of the upscaled video in pixels, multiples of 32 (default 2688 x 1536). Set them to what the latent upscaler outputs. An advertising **MiniMax H3 Video Settings (Upscale)** node drives them like the canvas; the plain settings variant leaves them manual. |
+| `target_width`, `target_height`   | INT  | Size of the upscaled video in pixels, multiples of 32 (default 2688 x 1536). Set them to what the latent upscaler outputs. A **MiniMax H3 Video Settings (Upscale)** bundle on `video_settings`, wired or advertised, drives them like the canvas and greys the widgets; the plain settings variant's bundle carries no target and leaves them manual. |
 
 ## Outputs
 

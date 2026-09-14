@@ -16,9 +16,11 @@ sets both on one conditioning.
 | `clip`               | CLIP   | The MiniMax H3 text encoder (Qwen3-VL).                                                            |
 | `vae`                | VAE    | Video VAE; encodes keyframes and visual references.                                                |
 | `audio_vae`          | VAE    | Optional. Audio VAE, needed only when a reference audio or a reference video soundtrack is connected. |
+| `video_settings`     | ARISU_MINIMAX_H3_VIDEO_SETTINGS | Optional. The bundle of a **MiniMax H3 Video Settings** node; its canvas and length replace `width`, `height` and `length`, whose widgets grey out while it is wired or advertised. Its aspect ratio is not used here. |
+| `resources`          | ARISU_MINIMAX_H3_RESOURCES | Optional. A **MiniMax H3 Resource Studio** bundle replacing every keyframe and reference input; see the end of this page. |
 | `prompt`             | STRING | Prompt. Refer to references with the same `<Picture i>` / `<Video k>` / `<Audio j>` tags.          |
-| `width`, `height`    | INT    | Canvas in pixels, multiples of 32 (default 1344 x 768). Wire them from a **MiniMax H3 Video Settings** node, or let one advertise; see the notes. |
-| `length`             | INT    | Frame count at 24 fps, snapped up to the 17k+5 grid (default 124, about 5 s). Same sources as the canvas. |
+| `width`, `height`    | INT    | Canvas in pixels, multiples of 32 (default 1344 x 768). Overridden by `video_settings`; otherwise wire any INT source. |
+| `length`             | INT    | Frame count at 24 fps, snapped up to the 17k+5 grid (default 124, about 5 s). Overridden by `video_settings` likewise. |
 | `ref_image_size`     | COMBO  | `match` scales each reference image down to the generation's pixel area; `max` caps its short edge at 2048 px. |
 | `frame_picture_tags` | COMBO  | How the keyframes appear to the text encoder; see below.                                           |
 | `first_frame`        | IMAGE  | Optional keyframe pinned at frame 0. Fitted to the canvas as its keyframe settings say.            |
@@ -69,10 +71,14 @@ may trim one.
 
 ## Notes
 
-- When a **MiniMax H3 Video Settings** node in the same graph advertises, `width`, `height` and
-  `length` come from it: the widgets grey out, a link into them is refused, and one already there is
-  removed with a notice. Inside a subgraph, wire the settings node's outputs into these inputs
-  instead; advertising covers the root graph only.
+- When `video_settings` is wired, or a **MiniMax H3 Video Settings** node in the root graph
+  advertises, `width`, `height` and `length` come from the bundle: the widgets grey out, a link into
+  them is refused, and one already there is removed with a notice. While a settings node advertises,
+  the `video_settings` socket is greyed too and an explicit wire into it is dropped. Inside a
+  subgraph, wire `video_settings` explicitly; advertising covers the root graph only.
+- A bundle from a muted, bypassed or missing settings node rejects the prompt at queue time; the
+  greyed widget values are never a fallback. API-format prompts may carry the bundle or the individual
+  values; when both are present the bundle wins.
 - Reference order in the prompt is fixed: images, then videos (each soundtrack's `<Audio j>` right
   before its `<Video k>`), then standalone audio. Ordinals are 1-based per type.
 - The output conditioning is compatible with **Add Guide for MiniMax H3**, which can be chained

@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Add MiniMax H3 Resource Studio with keyframe cropping, mixed references, clip editing, and original-source Hybrid processing.
 - Add aspect-ratio outputs to both MiniMax H3 Video Settings nodes.
+- Add a `video_settings` bundle output to both MiniMax H3 Video Settings nodes and an optional `video_settings` input to both Hybrid to Video nodes; a wired bundle overrides width, height and length (and the target size from the Upscale variant) and greys those widgets as advertising does.
 - Add inline names and renaming for saved Load Image browse paths.
 - Add a ComfyUI setting for the default Load Image browse location when no image is selected: a root or a saved path by name, reset to `input` with a warning when a chosen saved path is gone.
 - Add a keyframes settings dialog to both MiniMax H3 Hybrid to Video nodes: resize method, crop, pad or stretch, pad colour and crop position in a first frame and a last frame section, on the model's 32-pixel canvas grid.
@@ -24,6 +25,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Limit Resource Studio clip times to one decimal, removing the clip editor's free-precision snapping.
 - Remove the Resource Studio height cap so the node grows freely, and pass wheel zoom and middle-button canvas drags through its panel, scrolling an overflowing reference list instead.
 - Coordinate MiniMax H3 settings and resource advertising across queueing and API exports, rejecting missing sources and conflicting resource inputs.
+- Inject advertised MiniMax H3 settings into the hybrid nodes' `video_settings` input as one link instead of one per widget; API-format exports carry that link, and a muted or missing wired settings node rejects the prompt.
+- Place the `video_settings` bundle at output 0 of both MiniMax H3 Video Settings nodes, moving every other output down one slot; saved wires into those outputs need re-wiring, and the example workflow is updated.
 - Move the Load Image input and output directory shortcuts beside up in the browse toolbar to free sidebar space.
 - Rename the MiniMax H3 Video Settings `advertise` switch to `advertise_settings` and the Resource Studio switch to `advertise_resources`; saved workflows keep the flag by position, API-format exports must use the new key.
 - Auto-crop Resource Studio keyframes from a wired aspect ratio when the upstream Video Settings selector is readable, and drop the auto-crop notification.

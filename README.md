@@ -145,8 +145,8 @@ ComfyUI serves the same page in-app from a node's right-click **Help**.
 | [MiniMax H3 Resource Studio](web/docs/ArisuMiniMaxH3ResourceStudio/en.md) | MiniMax H3 | Browse, crop, trim, mute, and arrange keyframes and mixed references in one resource bundle. |
 | [MiniMax H3 Hybrid to Video](web/docs/ArisuMiniMaxH3HybridToVideo/en.md) | MiniMax H3 | Keyframes and image/video/audio references in one conditioning, plus the AV latent; each keyframe's crop, pad or stretch fit in a dialog. |
 | [MiniMax H3 Hybrid to Video (Advanced)](web/docs/ArisuMiniMaxH3HybridToVideoAdvanced/en.md) | MiniMax H3 | The same, plus a `positive (upscaled)` conditioning for two-sampler latent upscaling. |
-| [MiniMax H3 Video Settings](web/docs/ArisuMiniMaxH3VideoSettings/en.md) | MiniMax H3 | Canvas from an aspect ratio and a megapixel budget, length from a duration in seconds. |
-| [MiniMax H3 Video Settings (Upscale)](web/docs/ArisuMiniMaxH3VideoSettingsUpscale/en.md) | MiniMax H3 | The same, plus the target size of a latent-upscale pass from an upscale factor. |
+| [MiniMax H3 Video Settings](web/docs/ArisuMiniMaxH3VideoSettings/en.md) | MiniMax H3 | Canvas from an aspect ratio and a megapixel budget, length from a duration in seconds; one `video_settings` bundle for the hybrid nodes. |
+| [MiniMax H3 Video Settings (Upscale)](web/docs/ArisuMiniMaxH3VideoSettingsUpscale/en.md) | MiniMax H3 | The same, plus the target size of a latent-upscale pass from an upscale factor, carried in the bundle. |
 
 Categories are `Arisu Nodes/Common` and `Arisu Nodes/MiniMax H3`.
 
@@ -180,7 +180,8 @@ Studio stores source descriptions. Hybrid decodes originals and performs generat
 A MiniMax H3 workflow with the pack in it:
 
 1. Drop in **MiniMax H3 Video Settings** and set the aspect ratio, megapixels, and duration; switch
-   `advertise_settings` on so the hybrid nodes take them.
+   `advertise_settings` on so the hybrid nodes take its `video_settings` bundle, or wire that output
+   into each hybrid node.
 2. Replace the stock conditioning node with **MiniMax H3 Hybrid to Video**. Feed it `clip` and
    `vae` from your H3 loaders, plus `audio_vae` if any audio reference is connected.
 3. Connect keyframes (`first_frame` / `last_frame`) and references (`ref_image_*`, `ref_video_*`,

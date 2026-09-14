@@ -12,10 +12,14 @@ const SETTINGS = 'ArisuMiniMaxH3VideoSettings';
 const SETTINGS_UPSCALE = 'ArisuMiniMaxH3VideoSettingsUpscale';
 const HYBRID = 'ArisuMiniMaxH3HybridToVideo';
 const HYBRID_ADVANCED = 'ArisuMiniMaxH3HybridToVideoAdvanced';
-// the widgets and outputs the backend declares: the plain nodes carry the size keys, the
-// Upscale settings node and the Advanced hybrid add the target size
+// the widgets the backend declares: the plain hybrid carries the size keys, the Advanced hybrid adds the target size
 const SIZE_KEYS = ['width', 'height', 'length'];
 const TARGET_KEYS = ['target_width', 'target_height'];
+// the outputs the backend declares, in schema order: the bundle first, so the injected link always points at slot 0
+const OUTPUTS = {
+  [SETTINGS]: ['video_settings', ...SIZE_KEYS, 'aspect_ratio'],
+  [SETTINGS_UPSCALE]: ['video_settings', ...SIZE_KEYS, 'upscale_factor', ...TARGET_KEYS, 'aspect_ratio'],
+};
 
 const extension = extensionNamed('Arisu.MiniMaxH3.SettingsBroadcast');
 const prototypes = {};
@@ -30,17 +34,20 @@ app.graphToPrompt = async function () {
 extension.setup();
 
 function keysOf(type) {
-  return type === SETTINGS || type === HYBRID ? SIZE_KEYS : [...SIZE_KEYS, ...TARGET_KEYS];
+  return type === HYBRID ? SIZE_KEYS : [...SIZE_KEYS, ...TARGET_KEYS];
 }
 
 /** A settings node LiteGraph just added to `graph`, its switch already at `advertise` (a duplicate restores widgets first). */
 function addSettings(graph, id, type = SETTINGS, advertise = false) {
-  const node = makeNode({ id, type, graph, widgets: [{ name: 'advertise_settings', value: advertise }], outputs: keysOf(type) });
+  const node = makeNode({ id, type, graph, widgets: [{ name: 'advertise_settings', value: advertise }], outputs: OUTPUTS[type] });
   prototypes[type].onAdded.call(node);
   return node;
 }
 
-/** A hybrid node LiteGraph just added to `graph`, with links into the named inputs. */
+/**
+ * A hybrid node LiteGraph just added to `graph`, with links into the named inputs: link 1 into a widget input,
+ * link 2 into `video_settings` (its origin is whatever `graph.links[2]` says).
+ */
 function addHybrid(graph, id, type = HYBRID, links = []) {
   const keys = keysOf(type);
   const node = makeNode({
@@ -48,10 +55,20 @@ function addHybrid(graph, id, type = HYBRID, links = []) {
     type,
     graph,
     widgets: keys.map((name) => ({ name, value: 1 })),
-    inputs: keys.map((name) => ({ name, link: links.includes(name) ? 1 : null })),
+    inputs: [
+      { name: 'video_settings', link: links.includes('video_settings') ? 2 : null },
+      ...keys.map((name) => ({ name, link: links.includes(name) ? 1 : null })),
+    ],
   });
   prototypes[type].onAdded.call(node);
   return node;
+}
+
+/** Wire `video_settings` on `hybrid` from `origin` (a node, or a bare id for one this graph cannot see). */
+function wireSettings(graph, hybrid, origin) {
+  graph.links = { ...graph.links, 2: { origin_id: origin.id ?? origin, origin_slot: 0 } };
+  hybrid.inputs.find((input) => input.name === 'video_settings').link = 2;
+  prototypes[hybrid.type].onConnectionsChange.call(hybrid);
 }
 
 /** The node's advertising switch: `advertise_resources` on the Studio, `advertise_settings` on a settings node. */
@@ -152,6 +169,37 @@ test('the handed-over widgets are the keys both nodes carry: greyed, unlinked, a
   assert.deepEqual(disabledWidgets(hybrid), SIZE_KEYS);
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.deepEqual(disabledWidgets(hybrid), []);
+  // a wired video_settings owns the same keys as advertising would: a plain settings node hands over the size keys,
+  // the wire into width goes, and the target_width wire stays
+  const wired = addSettings(graph, 4);
+  hybrid.inputs.find((input) => input.name === 'width').link = 1;
+  wireSettings(graph, hybrid, wired);
+  assert.deepEqual(disabledWidgets(hybrid), SIZE_KEYS);
+  assert.deepEqual(linkedInputs(hybrid), ['video_settings', 'target_width']);
+  // a wire from a node this graph cannot see (a subgraph input) owns every key; unplugging releases them
+  wireSettings(graph, hybrid, 99);
+  assert.deepEqual(disabledWidgets(hybrid), [...SIZE_KEYS, ...TARGET_KEYS]);
+  hybrid.inputs.find((input) => input.name === 'video_settings').link = null;
+  prototypes[HYBRID_ADVANCED].onConnectionsChange.call(hybrid);
+  assert.deepEqual(disabledWidgets(hybrid), []);
+  // the wire works inside a subgraph, where advertising never reaches
+  const sub = inner.graph;
+  graph.subgraphs = new Map([[sub.id, sub]]);
+  wireSettings(sub, inner, addSettings(sub, 5));
+  assert.deepEqual(disabledWidgets(inner), SIZE_KEYS);
+  assert.deepEqual(linkedInputs(inner), ['video_settings']);
+  // an advertiser takes the socket over: greyed, its wire dropped, and released without the wire when it goes
+  wireSettings(graph, hybrid, wired);
+  flip(wired, true);
+  const socket = hybrid.inputs.find((input) => input.name === 'video_settings');
+  assert.equal(socket.disabled, true);
+  assert.equal(socket.color_on, '#777');
+  assert.equal(socket.link, null);
+  assert.deepEqual(disabledWidgets(hybrid), SIZE_KEYS);
+  flip(wired, false);
+  assert.equal(socket.disabled, false);
+  assert.equal(socket.link, null);
+  assert.deepEqual(disabledWidgets(hybrid), []);
 });
 
 test("a link into a handed-over widget is refused, and chained hooks keep either side's veto", () => {
@@ -161,13 +209,16 @@ test("a link into a handed-over widget is refused, and chained hooks keep either
   flip(settings, true);
   const hybrid = addHybrid(graph, 2, HYBRID_ADVANCED);
   const onConnectInput = prototypes[HYBRID_ADVANCED].onConnectInput;
-  // width comes from the advertiser: refused with a warning; target_width is free
+  // width comes from the advertiser: refused with a warning; target_width is free; the socket itself is owned too
   assert.equal(onConnectInput.call(hybrid, inputIndex(hybrid, 'width')), false);
   assert.deepEqual(toastSeverities(), ['warn']);
   assert.notEqual(onConnectInput.call(hybrid, inputIndex(hybrid, 'target_width')), false);
+  assert.equal(onConnectInput.call(hybrid, inputIndex(hybrid, 'video_settings')), false);
+  assert.deepEqual(toastSeverities(), ['warn', 'warn']);
   // with advertising off nothing is refused
   flip(settings, false);
   assert.notEqual(onConnectInput.call(hybrid, inputIndex(hybrid, 'width')), false);
+  assert.notEqual(onConnectInput.call(hybrid, inputIndex(hybrid, 'video_settings')), false);
   // a hook installed before ours keeps its own veto (ours never runs: no warning), and its
   // result stands when neither side refuses
   const vetoing = { prototype: { onConnectInput: () => false } };
@@ -177,9 +228,9 @@ test("a link into a handed-over widget is refused, and chained hooks keep either
   const plain = addHybrid(graph, 3, HYBRID);
   flip(settings, true);
   assert.equal(vetoing.prototype.onConnectInput.call(plain, inputIndex(plain, 'width')), false);
-  assert.deepEqual(toastSeverities(), ['warn']);
-  assert.equal(allowing.prototype.onConnectInput.call(plain, inputIndex(plain, 'width')), false);
   assert.deepEqual(toastSeverities(), ['warn', 'warn']);
+  assert.equal(allowing.prototype.onConnectInput.call(plain, inputIndex(plain, 'width')), false);
+  assert.deepEqual(toastSeverities(), ['warn', 'warn', 'warn']);
   flip(settings, false);
   assert.equal(allowing.prototype.onConnectInput.call(plain, inputIndex(plain, 'width')), true);
 });
@@ -205,14 +256,8 @@ test("queueing a prompt points the handed-over widgets at the advertiser's outpu
     [muted.id]: entry({ width: 1 }),
   };
   const result = await api.queuePrompt(0, { output, workflow: {} });
-  assert.deepEqual(output[hybrid.id].inputs, { width: ['1', 0], height: ['1', 1], length: ['1', 2], clip: ['9', 0] });
-  assert.deepEqual(output[advanced.id].inputs, {
-    width: ['1', 0],
-    height: ['1', 1],
-    length: ['1', 2],
-    target_width: ['1', 3],
-    target_height: ['1', 4],
-  });
+  assert.deepEqual(output[hybrid.id].inputs, { width: 1, height: 1, length: 1, clip: ['9', 0], video_settings: ['1', 0] });
+  assert.deepEqual(output[advanced.id].inputs, { width: 1, target_width: 1, video_settings: ['1', 0] });
   assert.deepEqual(output[muted.id].inputs, { width: 1 });
   assert.deepEqual(toastSeverities(), []);
   // the call still reaches the frontend's queuePrompt with the same prompt, and its answer comes back
@@ -228,6 +273,16 @@ test("queueing a prompt points the handed-over widgets at the advertiser's outpu
   // a call without a prompt passes straight through
   await api.queuePrompt(0, undefined);
   assert.equal(api.queued.length, 2);
+  // an explicit wire is left to the serializer while its source is live, and is an error once the source is muted
+  flip(settings, false);
+  wireSettings(graph, hybrid, settings);
+  assert.deepEqual(disabledWidgets(hybrid), SIZE_KEYS);
+  const wired = { [settings.id]: entry({}), [hybrid.id]: entry({ width: 1, video_settings: ['1', 0] }) };
+  await api.queuePrompt(0, { output: wired, workflow: {} });
+  assert.deepEqual(wired[hybrid.id].inputs, { width: 1, video_settings: ['1', 0] });
+  settings.mode = 2;
+  await assert.rejects(api.queuePrompt(0, { output: { [hybrid.id]: entry({ width: 1 }) }, workflow: {} }), /explicitly connected/);
+  settings.mode = 0;
   // Both ownership categories coexist, and API exports contain real dependencies.
   resetApp(makeGraph());
   resetApi();

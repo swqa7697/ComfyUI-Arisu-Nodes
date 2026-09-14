@@ -15,29 +15,29 @@ Everything from **MiniMax H3 Video Settings** plus:
 
 ## Outputs
 
-| Output           | Type  | Description                                              |
-|------------------|-------|----------------------------------------------------------|
-| `width`, `height`, `length` | INT | As in **MiniMax H3 Video Settings**.             |
-| `upscale_factor` | FLOAT | The factor, for a latent upscaler's multiplier input.     |
-| `target_width`   | INT   | Upscaled width, a multiple of 32.                         |
-| `target_height`  | INT   | Upscaled height, a multiple of 32.                        |
-| `aspect_ratio` | COMBO | Exact ratio label, appended at output index 6. |
+| Output           | Type                            | Description                                                          |
+|------------------|---------------------------------|----------------------------------------------------------------------|
+| `video_settings` | ARISU_MINIMAX_H3_VIDEO_SETTINGS | Every other output in one bundle, output index 0, target size included. |
+| `width`, `height`, `length` | INT                  | As in **MiniMax H3 Video Settings**.                                 |
+| `upscale_factor` | FLOAT                           | The factor, for a latent upscaler's multiplier input.                |
+| `target_width`   | INT                             | Upscaled width, a multiple of 32.                                    |
+| `target_height`  | INT                             | Upscaled height, a multiple of 32.                                   |
+| `aspect_ratio`   | COMBO                           | Exact ratio label, output index 7.                                   |
 
 ## Wiring
 
 ```
-Video Settings (Upscale) ─ width / height / length ─▶ (width / height / length) Hybrid to Video (Advanced)
-                         ├ target_width / target_height ─▶ (target_width / target_height) Hybrid to Video (Advanced)
+Video Settings (Upscale) ─ video_settings ─▶ (video_settings) Hybrid to Video (Advanced)   canvas, length and target in one link
                          ├ upscale_factor ─▶ Latent Upscaler (multiplier)
                          └ target_width / target_height ─▶ Resize nodes for keyframes, previews, ...
 ```
 
 ## Notes
 
-- Advertising drives the Advanced node's `target_width` / `target_height` too; the plain
-  **MiniMax H3 Hybrid to Video** has no target and takes the canvas and length only. The plain
-  **MiniMax H3 Video Settings** advertises no target, so the Advanced node's target widgets stay
-  manual with it.
+- This bundle carries the target, so wired or advertised it drives the Advanced node's
+  `target_width` / `target_height` too; the plain **MiniMax H3 Hybrid to Video** has no target and
+  takes the canvas and length only. The plain **MiniMax H3 Video Settings** bundle carries no target,
+  so the Advanced node's target widgets stay manual with it.
 - Make sure the latent upscaler lands on the same target size: with **Minimax H3 Latent Upscaler
   (3D)** in multiplier mode the 32-pixel alignment matches this node's rounding; in target mode, wire
   `target_width` / `target_height` into it.
@@ -46,4 +46,4 @@ Video Settings (Upscale) ─ width / height / length ─▶ (width / height / le
 
 ## Resource Studio integration
 
-The appended `aspect_ratio` combo output connects to **MiniMax H3 Resource Studio**; existing output indexes are unchanged. Advertising also owns Studio's aspect selector, dropping its wire and applying the effective ratio. Keyframes are auto-cropped when that ratio changes. API exports include the same dependencies as queueing; a missing active source rejects the prompt instead of falling back to local values. Advertising is root-graph only; use explicit wires in subgraphs.
+The `aspect_ratio` combo output connects to **MiniMax H3 Resource Studio**. Advertising also owns Studio's aspect selector, dropping its wire and applying the effective ratio. Keyframes are auto-cropped when that ratio changes. API exports include the same dependencies as queueing; a missing active source rejects the prompt instead of falling back to local values. Advertising is root-graph only; use explicit wires in subgraphs.

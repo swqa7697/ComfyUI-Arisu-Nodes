@@ -375,6 +375,22 @@ def frames_for_duration(seconds: float) -> int:
 
 
 @dataclass(frozen=True)
+class VideoSettings:
+    """Everything one settings node derived, for the hybrid nodes' ``video_settings`` input.
+
+    The plain node leaves the target fields ``None``; the Upscale node fills them.
+    """
+
+    width: int
+    height: int
+    length: int
+    aspect_ratio: str
+    upscale_factor: Optional[float] = None
+    target_width: Optional[int] = None
+    target_height: Optional[int] = None
+
+
+@dataclass(frozen=True)
 class Resource:
     """Immutable source description; locations are relative and never capabilities."""
 
