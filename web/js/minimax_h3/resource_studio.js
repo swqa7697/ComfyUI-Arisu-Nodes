@@ -71,7 +71,6 @@ const STYLE = `
  background:var(--hover);border:1px solid color-mix(in srgb,var(--line),var(--strong) 10%);color:var(--text);font-size:11px;}
 .arisu-studio .browse::before{content:'+';font-size:12px;line-height:1;margin-top:-1px;}
 .arisu-studio .browse:hover{background:color-mix(in srgb,var(--row),var(--strong) 12%);border-color:var(--label);color:var(--strong);}
-@media(prefers-color-scheme:light){.arisu-studio{--image:#2a6db5;--video:#986600;--audio:#7950aa;--dim:#666;}}
 `;
 const CROP_ICON =
   '<svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.2" aria-hidden="true">' +

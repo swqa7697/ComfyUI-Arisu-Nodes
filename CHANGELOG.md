@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Remove custom light-mode color overrides from Prompt Workbench, Resource Studio, and the clip editor, keeping functional colors consistent while inheriting ComfyUI styling.
 - Replace Resource Studio replace buttons with keyframe canvas selection, and open Browse references at the final reference’s folder in list order.
 - Move Resource Studio’s Browse beside the Media references heading, hide zero counters, and show clip-start stills for video references and a waveform marker for audio.
 - Stack Resource Studio keyframes in a left column beside the media reference list, with taller reference rows and larger thumbnails.

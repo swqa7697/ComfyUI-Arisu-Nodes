@@ -60,7 +60,6 @@ const STYLE = `
 .arisu-workbench .review{border-color:var(--accent);}.arisu-workbench .footer{margin-top:auto;}
 @container(max-width:530px){.arisu-workbench .columns{grid-template-columns:1fr;overflow:auto;}.arisu-workbench .generation{overflow:visible;}.arisu-workbench .generation-fields{overflow:visible;flex:none;}
  .arisu-workbench .final{min-height:320px;}.arisu-workbench .final textarea{resize:vertical;}}
-@media(prefers-color-scheme:light){.arisu-workbench{--image:#2a6db5;--video:#986600;--audio:#7950aa;--accent:#57aa99;}}
 @media(pointer:coarse){.arisu-workbench input,.arisu-workbench select,.arisu-workbench button{min-height:44px;}
  .arisu-workbench .reference{grid-template-columns:4px minmax(60px,100px) minmax(0,1fr);}}
 @media(prefers-reduced-motion:reduce){.arisu-workbench *{transition:none!important;animation:none!important;}}

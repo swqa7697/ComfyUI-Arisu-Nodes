@@ -80,7 +80,6 @@ const STYLE = `
 .arisu-clip-foot { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--line); }
 .arisu-clip-apply { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 25%, var(--surface)); }
 @keyframes arisu-clip-enter { from { opacity: 0; transform: translateY(12px) scale(0.97); } }
-@media (prefers-color-scheme: light) { .arisu-clip { --video: #986600; --audio: #7950aa; --dim: #666; } }
 @media (prefers-reduced-motion: reduce) {
   .arisu-clip, .arisu-clip::backdrop, .arisu-clip * { animation: none !important; transition: none !important; }
 }
