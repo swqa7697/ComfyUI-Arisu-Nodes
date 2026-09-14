@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Add MiniMax H3 Prompt Workbench with editable finalized text, selected resource and motion-context preparation, Docker-isolated Codex/Grok agents, shared settings, and draft review before Apply.
+
 - Add MiniMax H3 Resource Studio with keyframe cropping, mixed references, clip editing, and original-source Hybrid processing.
 - Add aspect-ratio outputs to both MiniMax H3 Video Settings nodes.
 - Add a `video_settings` bundle output to both MiniMax H3 Video Settings nodes and an optional `video_settings` input to both Hybrid to Video nodes; a wired bundle overrides width, height and length (and the target size from the Upscale variant) and greys those widgets as advertising does.

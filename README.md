@@ -24,7 +24,7 @@ Nodes that take the friction out of building and running ComfyUI workflows: fewe
 wire, fewer numbers to keep in sync by hand, fewer runs queued just to save one image. Some are
 general-purpose utilities, others belong to a model family — today MiniMax H3, with more to come.
 
-- **No runtime installers.** Pillow and PyAV are declared installation dependencies; nodes never download tools or install packages while running.
+- **Explicit agent setup.** Pillow and PyAV are declared dependencies. Prompt Workbench builds standalone agent images only through explicit settings actions; ordinary node execution never installs tools.
 - **In-app help.** Right-click a node and open its help for the full input reference; the same
   pages live under [`web/docs/`](web/docs).
 - **No `NODE_CLASS_MAPPINGS`, no monkey-patching.** Pure V3 (`comfy_entrypoint` + `io.Schema`)
@@ -142,6 +142,7 @@ ComfyUI serves the same page in-app from a node's right-click **Help**.
 | [Preview & Save Image (Upscale)](web/docs/ArisuPreviewSaveImageUpscale/en.md) | Common | The same, upscaling the images with the selected model as they are saved. |
 | [Load Image (Browse)](web/docs/ArisuLoadImage/en.md) | Common | Browse images in configured directories, including external disks or shares, and optionally crop them; nothing is uploaded. |
 | [Resize Image](web/docs/ArisuResizeImage/en.md) | Common | Crop, pad, fit or stretch an image batch to a size on a pixel grid, with the options in a dialog and the result previewed on the node. |
+| [MiniMax H3 Prompt Workbench](web/docs/ArisuMiniMaxH3PromptWorkbench/en.md) | MiniMax H3 | Edit prompt text, or prepare selected context for a Docker agent and review its draft before applying. |
 | [MiniMax H3 Resource Studio](web/docs/ArisuMiniMaxH3ResourceStudio/en.md) | MiniMax H3 | Browse, crop, trim, mute, and arrange keyframes and mixed references in one resource bundle. |
 | [MiniMax H3 Hybrid to Video](web/docs/ArisuMiniMaxH3HybridToVideo/en.md) | MiniMax H3 | Keyframes and image/video/audio references in one conditioning, plus the AV latent; each keyframe's crop, pad or stretch fit in a dialog. |
 | [MiniMax H3 Hybrid to Video (Advanced)](web/docs/ArisuMiniMaxH3HybridToVideoAdvanced/en.md) | MiniMax H3 | The same, plus a `positive (upscaled)` conditioning for two-sampler latent upscaling. |
@@ -157,10 +158,11 @@ Categories are `Arisu Nodes/Common` and `Arisu Nodes/MiniMax H3`.
 | Requirement | Version | Notes |
 |---|---|---|
 | ComfyUI | >= 0.30.0 | The release that added MiniMax H3 support. Developed against 0.34.5. |
-| MiniMax H3 models | — | For the MiniMax H3 nodes only: the same checkpoint, CLIP, video VAE, and audio VAE the stock H3 nodes need. |
+| MiniMax H3 models | — | For conditioning and motion decoding; Prompt Workbench text editing needs no models: the same checkpoint, CLIP, video VAE, and audio VAE the stock H3 nodes need. |
 | Python | >= 3.10 | The nodes run on ComfyUI's own interpreter; this is the floor for the dev tooling. |
 | [Pillow](https://python-pillow.org/) | any (AVIF needs >= 11.2) | Declared image dependency; AVIF decoding depends on the installed Pillow version. |
 | [PyAV](https://pyav.org/) | supplied by ComfyUI | Declared media dependency without an additional version constraint. Uses its bundled codecs; no FFmpeg command-line executable is needed. |
+| Docker | Linux containers, x86_64 or aarch64 | Optional: Workbench generation only. Install Docker separately and give the ComfyUI server process access to its local daemon. |
 | [uv](https://docs.astral.sh/uv/) | any | Development only. `make install` installs it if missing. |
 | [pnpm](https://pnpm.io/) | any | Development only: runs the JavaScript formatter and linter. `make install` installs it if missing. |
 | [Node.js](https://nodejs.org/) | >= 22.15 | Development only: the web test lane. `make install` installs it (via pnpm) if missing. |
@@ -175,6 +177,60 @@ Resource Studio targets the legacy node renderer (Nodes 2.0 disabled), against C
 **Resource Studio:** select optional first/last keyframes and browse a mixed reference list. Keyframes auto-crop to the effective aspect ratio; click their canvas to select or replace an image and their crop icon to edit it. Click a reference name to open its crop or clip editor, and drag its handle to reorder; a line marks where the card will land. The clip editor is a timeline with a ruler, in/out brackets and a playhead: drag them or use Space, I, O and the arrow keys, lock a duration or pick a preset, and audio opens without a preview. **Browse**, beside the Media references heading, opens at the final reference’s folder in the current list order, or the configured default location for an empty list, highlighting every file already in the list and showing poster stills for videos and waveform tiles for audio. Video rows show a still from the clip start and audio rows a waveform marker. Each row lists its dimensions, or its clip length beside the source length, then video resolution or audio sample rate, and file size. Apply commits edits, while Mute retains them without sending the resource to Hybrid. The node resizes freely; wheel and middle-button drags over the panel zoom and pan the canvas, and a plain wheel over an overflowing reference list scrolls the list. Connect `resources` to either Hybrid variant or enable root-graph advertising. Video Settings can advertise its aspect ratio to Studio too. Taking ownership drops competing wires; releasing ownership restores empty sockets, and Undo can restore the earlier graph.
 
 Studio stores source descriptions. Hybrid decodes originals and performs generation resizing; video selections are sampled at 24 fps and aligned down to H3's frame grid. Playback uses originals when possible and on-demand VP9/Opus proxies otherwise, with one conversion worker, a 2 GiB cache, a ten-minute deadline, and thirty-minute idle expiry. Proxies retain display dimensions and never become generation inputs. Saved workflows retain selections; imports and duplicates require reselection.
+
+
+### Prompt Workbench
+
+**Finalized prompt** is an editable string output. A normal workflow run returns it unchanged.
+**Generate prompt** explicitly prepares the accepted Video Settings and Resource Studio bundles,
+then runs Codex or Grok Build in Docker. Review the editable draft and choose **Apply** for one
+undoable replacement, or **Discard** to retain your text.
+
+The two-column editor follows the ComfyUI theme and stacks at narrow widths. **Reference notes**
+follow active Studio references across reordering; replacing a source does not transfer its notes.
+Keyframes have no notes. Prepared inputs reflect applied crops, selected video/audio intervals,
+muted references, and each video's audio switch. Advertisers take precedence over explicit wires.
+
+Connect **H3 Motion Context Load Latent** from Motion Context to `context_latent` and a **Load VAE**
+node to `vae`. Both connections enable motion controls. Loader index **0** produces `None` for the
+first clip, so no VAE is evaluated. Saved contexts use the phase-aligned tail for **5, 22, 39, or 56**
+video frames, with at most 12 ordered stills. Audio length **0–240** is descriptive metadata;
+**0** means follow video context. Lengths use frames at 24 fps; audio latents are not decoded.
+Unsupported latent producers are refused before they can run.
+
+Open **ComfyUI Settings → Arisu → Prompt Workbench → Agents** to build/update an image, perform
+device-code login/logout, choose an account-supported model and low/medium/high effort, inspect
+status/logs, or completely remove a provider. The node's **Setup** button opens this same panel.
+Without usable Docker, generation controls are disabled and finalized text remains editable.
+
+Both images use **`python:3.13-slim-trixie`** with **Python 3.13** for the wrapper and MCP server.
+Explicit build/update actions run the official Codex and Grok installers in a disposable Docker
+build stage; failed validation retains the previous image. Installer dependencies stay out of the
+final images. Authentication lives in a separate provider Docker volume and survives updates.
+Complete removal asks for destructive-action confirmation and deletes only that installation's
+owned provider images, containers, and authentication volume.
+
+Accounts and settings are **shared by trusted users of the ComfyUI instance**. There is no additional
+Workbench login or per-user agent session. Agent generation uses the provider's network service and
+account usage. Credentials are kept outside workflows. Containers run unprivileged with a read-only
+root filesystem and staged-input mounts, limited scratch/resources, and no GPU, Docker socket,
+host networking, or ComfyUI installation mount. Codex uses automatic execution review; Grok uses
+`permission_mode = "auto"`. An incompatible CLI must be updated before generation.
+
+The bundled **`bundled:hybrid2va`** skill is a working feasibility stub. To add a custom skill,
+place a directory containing `SKILL.md` under the administrator-owned
+`user/__arisu_nodes/skills/<name>/`; it appears as `custom:<name>`. Symlinked/escaping skills are
+not loaded. Only the selected skill and the job's prepared media are mounted read-only. The minimal
+MCP exposes context metadata and manifest-listed images.
+
+One generation runs at a time, with a ten-minute deadline; builds have a thirty-minute deadline.
+Cancellation waits for this job's workers and container to exit and does not interrupt unrelated
+queued work. Context changes, node removal, and workflow closure invalidate pending drafts.
+Prepared media is cached under ComfyUI temp, bounded to 2 GiB, and expires after 30 idle minutes.
+
+Activity in agent settings shows build progress and CLI-emitted summaries. The named
+`arisu-workbench-…-logs` container is visible in `docker ps`; use `docker logs -f <container>`
+for the same rotating stream.
 
 
 A MiniMax H3 workflow with the pack in it:
@@ -269,6 +325,24 @@ that install, reading `COMFYUI_PATH` (default `~/apps/comfyui`). [CLAUDE.md](CLA
 rest: the `core.py` / `nodes.py` split every node follows, the rules that keep the test suite
 small, the steps for adding a node, and the release flow. Release history is in
 [CHANGELOG.md](CHANGELOG.md).
+
+
+### Optional Docker smoke check
+
+From this development checkout, after `make install` and with Docker available:
+
+```bash
+uv run --no-sync python scripts/smoke-workbench.py
+```
+
+This builds both official standalone agents with temporary fixtures and fresh authentication volumes.
+It verifies Auto capability, native skill discovery, MCP initialization/context/image access and
+unlisted-image refusal, unprivileged read-only mounts, and readable Docker logs, then removes its
+owned containers, images, volumes, and fixtures. It does not use an existing account or modify ComfyUI.
+
+Device login, account model discovery, and real prompt generation need the provider's configured
+account. After the ComfyUI lane passes, the owner can test those in the browser with a first clip
+and a saved motion context, then review Apply/Discard and cancellation using their own VAE/GPU.
 
 ### Claude Code and Codex
 

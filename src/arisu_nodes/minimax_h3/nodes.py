@@ -12,6 +12,7 @@ Image**'s geometry (``common.core.resize_plan``) and pixel path
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import asdict
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Type, Union
 
@@ -24,6 +25,7 @@ import torch
 import torchaudio
 from comfy_api.latest import io
 from nodes import MAX_RESOLUTION
+from PIL import Image
 
 from ..common.core import CROP_POSITIONS, DEFAULT_PAD_COLOR, KEYFRAME_MODES, RESIZE_METHODS, FrameFit, resize_plan
 from ..common.nodes import apply_resize_plan, pad_color_error
@@ -35,8 +37,10 @@ from .core import (
     CANVAS_MULTIPLE,
     EMPTY_RESOURCES,
     FRAME_TAG_MODES,
+    MOTION_WINDOWS,
     REF_IMAGE_SIZE_MODES,
     VIDEO_LATENT_CHANNELS,
+    PreparationError,
     ResourceBundle,
     VideoSettings,
     align_clip_frames,
@@ -45,6 +49,7 @@ from .core import (
     frames_for_duration,
     keyframe_canvases,
     latent_size,
+    motion_tail,
     order_picture_items,
     parse_resources,
     qwen_sample_indices,
@@ -55,8 +60,11 @@ from .core import (
     soundtrack_key,
     temporal_shape,
     validate_bundle,
+    workbench_samples,
 )
 from .media import build_bundle, read_audio, read_image, read_video, source_fingerprint, validate_source
+from .workbench import motion_key
+from .workbench import service as workbench_service
 
 RefItem = Dict[str, Any]
 RefBlock = Dict[str, Any]
@@ -1063,7 +1071,120 @@ class ArisuMiniMaxH3ResourceStudio(io.ComfyNode):
         return source_fingerprint(_resource_roots(), resources_json, aspect_ratio)
 
 
+class ArisuMiniMaxH3PromptWorkbench(io.ComfyNode):
+    """Editable text on normal runs; explicitly authorized preparation on button clicks."""
+
+    @classmethod
+    def define_schema(cls) -> io.Schema:
+        """Expose native bundle sockets and persisted socketless editing controls."""
+        return io.Schema(
+            node_id="ArisuMiniMaxH3PromptWorkbench",
+            display_name="MiniMax H3 Prompt Workbench",
+            category="Arisu Nodes/MiniMax H3",
+            is_output_node=True,
+            hidden=[io.Hidden.unique_id],
+            inputs=[
+                io.Custom("ARISU_MINIMAX_H3_VIDEO_SETTINGS").Input("video_settings", optional=True, lazy=True),
+                io.Custom("ARISU_MINIMAX_H3_RESOURCES").Input("resources", optional=True, lazy=True),
+                io.Latent.Input("context_latent", optional=True, lazy=True),
+                io.Vae.Input("vae", optional=True, lazy=True),
+                io.Combo.Input("agent", options=["codex", "grok"], default="codex", socketless=True),
+                io.String.Input("skill", default="bundled:hybrid2va", socketless=True),
+                io.Combo.Input("context_length", options=list(MOTION_WINDOWS), default="22", socketless=True),
+                io.Int.Input("audio_context_length", default=24, min=0, max=240, socketless=True),
+                io.String.Input("motion_notes", default="", multiline=True, socketless=True),
+                io.String.Input("reference_notes", default="{}", socketless=True),
+                io.String.Input("trigger_words", default="", socketless=True),
+                io.String.Input("requirements", default="", multiline=True, socketless=True),
+                io.String.Input("finalized_prompt", default="", multiline=True, socketless=True),
+                io.String.Input("prepare_job", default="", optional=True, socketless=True),
+            ],
+            outputs=[io.String.Output("prompt")],
+        )
+
+    @classmethod
+    def check_lazy_status(cls, prepare_job: str = "", context_latent: Optional[Dict[str, Any]] = None, **kwargs: Any) -> List[str]:
+        """A normal string run never evaluates generation inputs, including the VAE."""
+        if not prepare_job:
+            return []
+        job = workbench_service().preparation(prepare_job, getattr(cls.hidden, "unique_id", None))
+        inputs = job.graph[job.node_id]["inputs"]
+        needed = [name for name in ("video_settings", "resources", "context_latent") if name in inputs]
+        if context_latent is not None and "vae" in inputs:
+            needed.append("vae")
+        return needed
+
+    @classmethod
+    def execute(
+        cls,
+        agent: str,
+        skill: str,
+        context_length: str,
+        audio_context_length: int,
+        motion_notes: str,
+        reference_notes: str,
+        trigger_words: str,
+        requirements: str,
+        finalized_prompt: str,
+        video_settings: Optional[VideoSettings] = None,
+        resources: Optional[ResourceBundle] = None,
+        context_latent: Optional[Dict[str, Any]] = None,
+        vae: Optional[comfy.sd.VAE] = None,
+        prepare_job: str = "",
+    ) -> io.NodeOutput:
+        """Return finalized text; an authorized queue request may prepare context only."""
+        if not prepare_job:
+            return io.NodeOutput(finalized_prompt)
+        owner = workbench_service()
+        job = owner.take(prepare_job, getattr(cls.hidden, "unique_id", None))
+        try:
+            job.settings, job.resources, job.roots = video_settings, resources, _resource_roots()
+            if context_latent is not None:
+                if vae is None:
+                    raise PreparationError("connect a video VAE for motion context")
+                samples = context_latent.get("samples") if isinstance(context_latent, dict) else None
+                if not isinstance(samples, (list, tuple)) or not samples:
+                    raise PreparationError("expected H3 Motion Context Load Latent output")
+                video = samples[0]
+                if not isinstance(video, torch.Tensor) or video.ndim not in (4, 5):
+                    raise PreparationError("invalid H3 context video tensor")
+                if video.ndim == 4:
+                    video = video.unsqueeze(0)
+                if video.shape[0] != 1:
+                    raise PreparationError("motion context requires one video")
+                start, end = motion_tail(video.shape[2], job.options["context_length"])
+                tail = video[:, :, start:end].contiguous()
+                if not all(tail.shape) or not torch.isfinite(tail).all():
+                    raise PreparationError("motion context contains empty dimensions or non-finite values")
+                digest = hashlib.sha256(tail.detach().float().cpu().contiguous().numpy().tobytes()).hexdigest()
+                key = motion_key(job, tail.shape, str(id(vae)) + digest)
+                if not owner.cache_motion(job, key):
+                    if job.cancelled.is_set():
+                        raise PreparationError("generation cancelled")
+                    decoded = vae.decode(tail)
+                    if decoded.ndim == 5 and decoded.shape[0] == 1:
+                        decoded = decoded[0]
+                    if decoded.ndim != 4 or decoded.shape[0] != job.options["context_length"] or decoded.shape[-1] != 3:
+                        raise PreparationError("video VAE returned an unexpected motion shape")
+                    indices = workbench_samples(decoded.shape[0])
+                    images = (decoded[indices].detach().float().cpu().clamp(0, 1).numpy() * 255).round().astype("uint8")
+                    owner.cache_motion(job, key, [Image.fromarray(image) for image in images])
+            owner.enforce_budget()
+        except Exception as error:
+            job.error = (
+                str(error)
+                if isinstance(error, PreparationError)
+                else "Motion or resource preparation failed; check inputs and server logs."
+            )
+            raise
+        finally:
+            job.preparation_done.set()
+            job.prepared.set()
+        return io.NodeOutput(finalized_prompt)
+
+
 NODES: List[Type[io.ComfyNode]] = [
+    ArisuMiniMaxH3PromptWorkbench,
     ArisuMiniMaxH3ResourceStudio,
     ArisuMiniMaxH3HybridToVideo,
     ArisuMiniMaxH3HybridToVideoAdvanced,

@@ -9,6 +9,7 @@ const SETTINGS_KEYS = {
   ArisuMiniMaxH3VideoSettingsUpscale: ['width', 'height', 'length', 'target_width', 'target_height'],
 };
 const HYBRID_WIDGETS = {
+  ArisuMiniMaxH3PromptWorkbench: [],
   ArisuMiniMaxH3HybridToVideo: ['width', 'height', 'length'],
   ArisuMiniMaxH3HybridToVideoAdvanced: ['width', 'height', 'length', 'target_width', 'target_height'],
 };
@@ -232,6 +233,7 @@ function refreshNode(node) {
     scheduleSockets(node, resourceOwned(node));
   }
   if (dropped) toast('info', 'Links into advertised controls were removed.');
+  node.arisuRefreshSources?.();
   node.setDirtyCanvas(true, true);
 }
 function refresh(force) {
@@ -478,3 +480,66 @@ app.registerExtension({
     );
   },
 });
+
+/** Effective bundle owners for the Workbench's descriptive UI; server validation remains authoritative. */
+/** Resolve the same execution instance used by the advertising-aware serializer. */
+export function executionTarget(node) {
+  const matches = executionNodes().filter((entry) => entry.node === node);
+  if (matches.length > 1)
+    throw new Error('This Workbench is shared by multiple subgraph instances; use a separate Workbench for each context.');
+  return matches[0];
+}
+
+/** Follow explicit bundle ports across reroutes and subgraph boundaries for UI metadata. */
+export function effectiveBundles(node) {
+  function explicit(name) {
+    const input = inputOf(node, name);
+    if (input?.link == null) return null;
+    const parents = [];
+    let graph = rootGraph();
+    try {
+      for (const id of executionTarget(node)?.dto?.subgraphNodePath ?? []) {
+        const parent = (graph?.nodes ?? graph?._nodes ?? []).find((item) => String(item.id) === String(id));
+        if (!parent?.subgraph) return null;
+        parents.push(parent);
+        graph = parent.subgraph;
+      }
+    } catch {
+      return null;
+    }
+    const seen = new Set();
+    function output(origin, slot, scopes) {
+      if (!origin || !active(origin) || seen.has(origin)) return null;
+      seen.add(origin);
+      if (origin.resolveSubgraphOutputLink && origin.subgraph) {
+        const resolved = origin.resolveSubgraphOutputLink(slot);
+        return resolved ? output(resolved.outputNode, resolved.link.origin_slot, [...scopes, origin]) : null;
+      }
+      if (origin.type === 'Reroute') return follow(origin, origin.inputs?.[0], scopes);
+      return origin;
+    }
+    function follow(consumer, socket, scopes) {
+      if (socket?.link == null) return null;
+      const links = consumer.graph?.links;
+      const link = links?.get?.(socket.link) ?? links?.[socket.link];
+      if (!link) return null;
+      if (link.originIsIoNode && scopes.length) {
+        const parent = scopes.at(-1);
+        return follow(parent, parent.inputs?.[link.origin_slot], scopes.slice(0, -1));
+      }
+      return output(linkOrigin(consumer, socket), link.origin_slot, scopes);
+    }
+    try {
+      return follow(node, input, parents);
+    } catch {
+      // The serializer reports broken links; a stale source never receives notes.
+      return null;
+    }
+  }
+  return {
+    settings: advertiserFor(node, 'settings') ?? explicit('video_settings'),
+    resources: advertiserFor(node, 'resources') ?? explicit('resources'),
+    motion: explicit('context_latent'),
+    vae: explicit('vae'),
+  };
+}

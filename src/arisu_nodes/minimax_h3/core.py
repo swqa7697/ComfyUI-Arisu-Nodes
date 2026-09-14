@@ -9,8 +9,10 @@ multiple, and the reference sizing rules.
 
 from __future__ import annotations
 
+import copy
 import json
 import math
+import re
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple, TypeVar
 
@@ -568,3 +570,162 @@ def validate_bundle(bundle: ResourceBundle):
             if item.id in ids:
                 raise ValueError("resource IDs must be unique")
             ids.add(item.id)
+
+
+# Prompt Workbench contracts contain descriptions only; authorization and I/O stay in services.
+WORKBENCH_ID = "ArisuMiniMaxH3PromptWorkbench"
+MOTION_WINDOWS = ("22", "5", "39", "56")
+AGENT_IDS = ("codex", "grok")
+BASIC_EFFORTS = ("low", "medium", "high")
+
+
+class PreparationError(ValueError):
+    """A safe, actionable preparation error that may be displayed to the user."""
+
+
+def motion_tail(total_steps: int, length: int) -> Tuple[int, int]:
+    """Return a phase-aligned H3 tail slice, refusing incomplete windows."""
+    if str(length) not in MOTION_WINDOWS:
+        raise PreparationError("unsupported context length")
+    steps = 2 + ((length - 5) // 17) * 5
+    start = total_steps - steps
+    if start < 0 or start % 5:
+        raise PreparationError("context latent is too short or its temporal phase is invalid")
+    return start, total_steps
+
+
+def workbench_samples(count: int, limit: int = 12) -> List[int]:
+    """Keep evenly spaced ordered frames, including both endpoints."""
+    if count < 1 or limit < 1:
+        raise ValueError("empty frame sequence")
+    kept = min(count, limit)
+    return [round(i * (count - 1) / (kept - 1)) for i in range(kept)] if kept > 1 else [0]
+
+
+def finalized_markdown(text: str) -> str:
+    """Extract only a single fenced final response, never progress or thoughts."""
+    match = re.fullmatch(r"\s*```markdown[ \t]*\r?\n([\s\S]*?)\r?\n```\s*", text)
+    if not match or not match[1].strip() or "```" in match[1]:
+        raise ValueError("agent must return one nonempty fenced markdown block")
+    if len(match[1]) > 65536:
+        raise ValueError("agent prompt is too large")
+    return match[1].strip()
+
+
+def workbench_options(value: Any) -> Dict[str, Any]:
+    """Validate the generation snapshot without allowing executable configuration."""
+    if not isinstance(value, dict):
+        raise TypeError("invalid workbench settings")
+    result = {}
+    for key, default, limit in (
+        ("agent", "codex", 16),
+        ("skill", "bundled:hybrid2va", 160),
+        ("motion_notes", "", 16384),
+        ("trigger_words", "", 16384),
+        ("requirements", "", 32768),
+        ("source_id", "", 256),
+    ):
+        item = value.get(key, default)
+        if not isinstance(item, str) or len(item) > limit or "\x00" in item:
+            raise ValueError("invalid " + key)
+        result[key] = item
+    if result["agent"] not in AGENT_IDS:
+        raise ValueError("unsupported agent")
+    length = str(value.get("context_length", "22"))
+    audio = value.get("audio_context_length", 24)
+    if length not in MOTION_WINDOWS or type(audio) is not int or not 0 <= audio <= 240:
+        raise ValueError("invalid motion lengths")
+    result.update(context_length=int(length), audio_context_length=audio)
+    notes = value.get("reference_notes", {})
+    if not isinstance(notes, dict) or len(notes) > 256:
+        raise ValueError("invalid reference notes")
+    if any(not isinstance(k, str) or len(k) > 8192 or not isinstance(v, str) or len(v) > 4096 for k, v in notes.items()):
+        raise ValueError("invalid reference note")
+    result["reference_notes"] = dict(notes)
+    return result
+
+
+def preparation_graph(prompt: Any, node_id: str) -> Dict[str, Any]:
+    """Prune to fixed preparation nodes, refusing samplers and output side effects."""
+    if not isinstance(prompt, dict) or node_id not in prompt or len(prompt) > 10000:
+        raise ValueError("workbench is absent from the prompt")
+    root = prompt[node_id]
+    if not isinstance(root, dict) or root.get("class_type") != WORKBENCH_ID:
+        raise ValueError("invalid workbench target")
+    allowed = {
+        WORKBENCH_ID,
+        "ArisuMiniMaxH3ResourceStudio",
+        "ArisuMiniMaxH3VideoSettings",
+        "ArisuMiniMaxH3VideoSettingsUpscale",
+        "MiniMaxH3MotionContextLoadLatent",
+        "VAELoader",
+        "PrimitiveNode",
+        "PrimitiveInt",
+        "PrimitiveFloat",
+        "PrimitiveString",
+        "Reroute",
+    }
+    selected: Dict[str, Any] = {}
+    visiting: Set[str] = set()
+
+    def origin(link: Any) -> str:
+        if not isinstance(link, list) or len(link) != 2 or not isinstance(link[0], str) or type(link[1]) is not int:
+            raise ValueError("invalid preparation link")
+        return link[0]
+
+    def entry_type(key: str) -> str:
+        entry = prompt.get(key)
+        if not isinstance(entry, dict):
+            raise TypeError("missing preparation source")
+        return entry.get("class_type", "")
+
+    def follow(link: Any) -> str:
+        current = origin(link)
+        seen: Set[str] = set()
+        while entry_type(current) == "Reroute":
+            if current in seen:
+                raise ValueError("cyclic preparation graph")
+            seen.add(current)
+            inputs = list(prompt[current].get("inputs", {}).values())
+            if len(inputs) != 1:
+                raise ValueError("invalid reroute")
+            current = origin(inputs[0])
+        return entry_type(current)
+
+    expected = {
+        "context_latent": {"MiniMaxH3MotionContextLoadLatent"},
+        "vae": {"VAELoader"},
+        "resources": {"ArisuMiniMaxH3ResourceStudio"},
+        "video_settings": {"ArisuMiniMaxH3VideoSettings", "ArisuMiniMaxH3VideoSettingsUpscale"},
+    }
+    root = copy.deepcopy(root)
+    inputs = root.get("inputs", {})
+    if not isinstance(inputs, dict):
+        raise TypeError("invalid node inputs")
+    if not all(name in inputs for name in ("context_latent", "vae")):
+        inputs.pop("context_latent", None)
+        inputs.pop("vae", None)
+    for name, types in expected.items():
+        if name in inputs and follow(inputs[name]) not in types:
+            raise ValueError("unsupported source for " + name)
+    prompt = {**prompt, node_id: root}
+
+    def visit(key: str):
+        if key in visiting:
+            raise ValueError("cyclic preparation graph")
+        if key in selected:
+            return
+        entry = prompt.get(key)
+        if not isinstance(entry, dict) or entry.get("class_type") not in allowed or not isinstance(entry.get("inputs"), dict):
+            raise ValueError("unsupported preparation dependency")
+        if key != node_id and entry["class_type"] == WORKBENCH_ID:
+            raise ValueError("nested workbench dependency")
+        visiting.add(key)
+        for value in entry["inputs"].values():
+            if isinstance(value, list):
+                visit(origin(value))
+        visiting.remove(key)
+        selected[key] = copy.deepcopy(entry)
+
+    visit(node_id)
+    return selected
