@@ -247,10 +247,7 @@ function refresh(force) {
   }
 }
 function arrive(node) {
-  if (!app.configuringGraph && on(node)) {
-    switchOf(node).value = false;
-    toast('info', 'Advertising is off on pasted or duplicated nodes.');
-  }
+  if (!app.configuringGraph && on(node)) exclusive(node);
 }
 function watchMode(node) {
   const descriptor = Object.getOwnPropertyDescriptor(node, 'mode');
@@ -353,11 +350,8 @@ function inject(output) {
   }
   checkCycles(output);
 }
-for (const [type, position] of [
-  ['ArisuMiniMaxH3VideoSettings', 3],
-  ['ArisuMiniMaxH3VideoSettingsUpscale', 4],
-])
-  registerSelectionOwner(type, { fields: [[ADVERTISE.settings, position, false]] });
+// Advertising booleans travel with workflows; keep the shared workflow guards installed.
+for (const type of Object.keys(SETTINGS_KEYS)) registerSelectionOwner(type, { fields: [] });
 app.registerExtension({
   name: 'Arisu.MiniMaxH3.SettingsBroadcast',
   init: installSelectionGuards,

@@ -97,6 +97,34 @@ function inputIndex(node, name) {
 }
 
 test('advertising ownership survives switching, restoration, wires and removal', async () => {
+  // Saved and imported workflows (including API JSON) keep both boolean values.
+  app.loadGraphData = async (data) => data;
+  app.loadApiJson = async (data) => data;
+  extension.init();
+  for (const type of [SETTINGS, SETTINGS_UPSCALE, 'ArisuMiniMaxH3ResourceStudio']) {
+    const name = type === 'ArisuMiniMaxH3ResourceStudio' ? 'advertise_resources' : 'advertise_settings';
+    const position = type === SETTINGS ? 3 : type === SETTINGS_UPSCALE ? 4 : 1;
+    for (const value of [true, false]) {
+      const values = Array(position + 1).fill(null);
+      values[position] = value;
+      const data = { nodes: [{ type, widgets_values: values }] };
+      for (const context of [{ isPersisted: true }, 'import.json']) {
+        const loaded = await app.loadGraphData(data, true, true, context);
+        assert.equal(loaded.nodes[0].widgets_values[position], value);
+      }
+      const loadedApi = await app.loadApiJson({ 1: { class_type: type, inputs: { [name]: value } } });
+      assert.equal(loadedApi[1].inputs[name], value);
+      resetApp(makeGraph());
+      const node = makeNode({ id: 1, type, graph: app.graph, widgets: [{ name, value }] });
+      prototypes[type].onAdded.call(node);
+      prototypes[type].onConfigure.call(node);
+      assert.equal(advertiseWidget(node).value, value);
+      const copied = makeNode({ id: 2, type, graph: app.graph, widgets: [{ name, value }] });
+      prototypes[type].onAdded.call(copied);
+      assert.equal(advertiseWidget(copied).value, value);
+      assert.equal(advertiseWidget(node).value, false);
+    }
+  }
   {
     const graph = makeGraph();
     resetApp(graph);
@@ -115,15 +143,16 @@ test('advertising ownership survives switching, restoration, wires and removal',
     // switching it off releases the widgets
     flip(second, false);
     assert.deepEqual(disabledWidgets(hybrid), []);
-    // a duplicate arrives with its switch already on: switched off on arrival
+    // A duplicate retains its enabled switch and takes over the category.
     const duplicate = addSettings(graph, 4, SETTINGS, true);
-    assert.equal(advertiseWidget(duplicate).value, false);
-    assert.deepEqual(toastSeverities(), ['warn', 'info']);
+    assert.equal(advertiseWidget(duplicate).value, true);
+    assert.deepEqual(toastSeverities(), ['warn']);
     // a paste restores the switch after the node was added: onConfigure catches it
     const pasted = addSettings(graph, 5);
     advertiseWidget(pasted).value = true;
     prototypes[SETTINGS].onConfigure.call(pasted);
-    assert.equal(advertiseWidget(pasted).value, false);
+    assert.equal(advertiseWidget(pasted).value, true);
+    assert.equal(advertiseWidget(duplicate).value, false);
     // a loading workflow keeps every switch until afterConfigureGraph, which keeps the first in node order
     const loaded = makeGraph();
     resetApp(loaded);

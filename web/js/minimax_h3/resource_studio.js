@@ -637,10 +637,7 @@ function render(node) {
 }
 registerSelectionOwner(TYPE, {
   properties: ['arisu_crop_modes'],
-  fields: [
-    ['resources_json', 2, EMPTY],
-    ['advertise_resources', 1, false],
-  ],
+  fields: [['resources_json', 2, EMPTY]],
   invalidate,
 });
 app.registerExtension({

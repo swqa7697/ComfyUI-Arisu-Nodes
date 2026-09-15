@@ -19,7 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Coordinate MiniMax H3 settings and resource advertising across queueing and API exports, rejecting missing sources and conflicting resource inputs.
+- Coordinate MiniMax H3 settings and resource advertising across queueing and API exports, retain toggles across workflow loading and duplication, resolve competing advertisers per category, and reject missing sources or conflicting resource inputs.
 - Place `video_settings` at output 0 of both Video Settings nodes; rewire existing outputs to their shifted slots or use the updated example workflow.
 - Rename Video Settings `advertise` to `advertise_settings`; saved workflows retain the flag, but API-format exports must use the new key.
 - Center-crop the first Hybrid keyframe by default instead of stretching it; API-format exports must supply the eight `first_frame_*` / `last_frame_*` fitting keys.

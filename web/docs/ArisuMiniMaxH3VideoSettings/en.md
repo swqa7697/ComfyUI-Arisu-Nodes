@@ -55,8 +55,9 @@ Video Settings (advertise_settings on)   ...   Hybrid to Video           no link
 - Advertising covers the root graph only. Inside a subgraph, wire `video_settings` explicitly; the
   link works everywhere and owns the same hybrid widgets as advertising does.
 - Only one settings node per graph advertises at a time, muted or not. Switching a second one on
-  hands it the slot and switches the previous one off with a warning; a pasted node that arrives
-  switched on is switched off; a loaded workflow with several keeps the first in node order.
+  hands it the slot and switches the previous one off with a warning. Saved and imported workflows
+  retain the toggle; an enabled pasted or duplicated node takes the slot. A loaded workflow with
+  several enabled nodes keeps the first in node order.
 - Greyed widgets keep their old numbers but they are not used; the bundle always wins. A link into a
   greyed widget is refused, and one that was already there is removed with a notice. While a source
   advertises, the hybrids' `video_settings` socket is greyed too and an explicit wire into it is dropped.

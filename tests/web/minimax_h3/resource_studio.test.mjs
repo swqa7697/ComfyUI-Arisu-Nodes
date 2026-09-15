@@ -412,6 +412,7 @@ test('Studio keyframes auto-crop on effective ratio changes and preserve manual 
   app.loadGraphData = (graphData) => {
     const saved = graphData.nodes[0];
     const restored = create(JSON.parse(saved.widgets_values[2]));
+    widget(restored, 'advertise_resources').value = saved.widgets_values[1];
     restored.properties = structuredClone(saved.properties ?? {});
     app.configuringGraph = true;
     try {
@@ -423,13 +424,13 @@ test('Studio keyframes auto-crop on effective ratio changes and preserve manual 
   };
   extension.init();
   const workflow = { isPersisted: true };
-  const restore = (saved, context = workflow) =>
+  const restore = (saved, context = workflow, advertise = false) =>
     app.loadGraphData(
       {
         nodes: [
           {
             type: TYPE,
-            widgets_values: ['16:9 (Widescreen)', false, JSON.stringify(saved.resources)],
+            widgets_values: ['16:9 (Widescreen)', advertise, JSON.stringify(saved.resources)],
             properties: saved.properties,
           },
         ],
@@ -438,6 +439,15 @@ test('Studio keyframes auto-crop on effective ratio changes and preserve manual 
       true,
       context,
     );
+  // Importing keeps the toggle while still clearing media selections and crop metadata.
+  for (const advertise of [true, false]) {
+    const imported = await restore({ resources: data, properties: { arisu_crop_modes: { first: 'Free' } } }, 'import.json', advertise);
+    assert.equal(widget(imported, 'advertise_resources').value, advertise);
+    assert.deepEqual(state(imported), empty());
+    assert.equal(imported.properties.arisu_crop_modes, undefined);
+    const reopened = await restore({ resources: empty() }, workflow, advertise);
+    assert.equal(widget(reopened, 'advertise_resources').value, advertise);
+  }
   const cropMenu = (dialog) => descendants(dialog).find((element) => element.className === 'arisu-cropper-ratio');
   const choose = (dialog, ratio) => {
     cropMenu(dialog).value = ratio;
