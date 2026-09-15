@@ -201,6 +201,16 @@ def test_prompt_workbench():
                     expect(activity.get_by_role("button", name="Resume auto-scroll")).to_be_visible()
                     expect(terminal).to_contain_text("Live update 2")
                     assert terminal.evaluate("e => e.scrollTop < 30")
+                    details = terminal.locator("details").first
+                    expect(details).not_to_have_attribute("open", "")
+                    expect(terminal).to_contain_text("Preserve the folded silhouette.")
+                    assert '"type": "reasoning"' not in terminal.inner_text()
+                    details.locator("summary").click()
+                    expect(details).to_have_attribute("open", "")
+                    expect(details).to_contain_text("Synthetic reference details")
+                    details.locator("summary").click()
+                    terminal.hover()
+                    page.mouse.wheel(0, -10000)
                     screenshot(page, name, "activity-reading")
                     activity.get_by_role("button", name="Resume auto-scroll").click()
                     assert terminal.evaluate("e => e.scrollHeight - e.clientHeight - e.scrollTop < 30")
@@ -228,7 +238,29 @@ def test_prompt_workbench():
                     final.press("Control+End")
                     expect(final).to_be_focused()
                     assert final.evaluate("e => e.scrollHeight > e.clientHeight && e.scrollTop > 0")
+                    scale = page.evaluate("window.comfyAPI.app.app.canvas.ds.scale")
+                    final.hover()
+                    page.mouse.wheel(0, -200)
+                    page.wait_for_function("e => e.scrollTop < e.scrollHeight - e.clientHeight - 30", arg=final.element_handle())
+                    assert page.evaluate("window.comfyAPI.app.app.canvas.ds.scale") == scale
                     screenshot(page, name, "long-text")
+                    # Wheel zoom and middle-button pan work over the Workbench's controls.
+                    saved_view = page.evaluate(
+                        "({scale: window.comfyAPI.app.app.canvas.ds.scale, offset: Array.from(window.comfyAPI.app.app.canvas.ds.offset)})"
+                    )
+                    page.get_by_label("Requirements", exact=True).hover()
+                    page.mouse.wheel(0, 150)
+                    page.wait_for_function("scale => window.comfyAPI.app.app.canvas.ds.scale !== scale", arg=scale)
+                    offset = page.evaluate("Array.from(window.comfyAPI.app.app.canvas.ds.offset)")
+                    page.mouse.down(button="middle")
+                    page.mouse.move(425, 365, steps=5)
+                    page.mouse.up(button="middle")
+                    assert page.evaluate("Array.from(window.comfyAPI.app.app.canvas.ds.offset)") != offset
+                    screenshot(page, name, "canvas")
+                    page.evaluate(
+                        "view => { const app = window.comfyAPI.app.app; app.canvas.ds.scale = view.scale; app.canvas.ds.offset[0] = view.offset[0]; app.canvas.ds.offset[1] = view.offset[1]; app.canvas.setDirty(true, true); }",
+                        saved_view,
+                    )
                     # Narrow the node with its real resize handle; the stacked editor stays reachable.
                     corner = page.evaluate(
                         """id => {

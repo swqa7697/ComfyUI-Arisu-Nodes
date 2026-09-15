@@ -1,6 +1,7 @@
 // A compact prompt workbench: generation is explicit and every draft requires Apply.
 import { api } from '../../../../scripts/api.js';
 import { app } from '../../../../scripts/app.js';
+import { forwardToCanvas, keepScrollWheel } from '../common/canvas_gestures.js';
 import { closeOnBackdropClick, el } from '../common/dom.js';
 import { hideWidget, setWidget } from '../common/widgets.js';
 import { ACTIVITY_STYLE, openAgentActivity } from './agent_activity.js';
@@ -332,6 +333,7 @@ function render(node) {
       placeholder,
       ariaLabel: label,
       oninput: () => edit(node, name, input.value),
+      onwheel: keepScrollWheel,
     });
     return el('label', { className: 'field ' + name }, [el('span', { className: 'label', textContent: label }), input]);
   }
@@ -389,7 +391,7 @@ function render(node) {
     el('span', { className: 'label', textContent: 'Reference notes' }),
     el(
       'div',
-      { className: 'references' },
+      { className: 'references', onwheel: keepScrollWheel },
       rows.length ? rows : [el('span', { className: 'hint', textContent: 'Connect or advertise Resource Studio references.' })],
     ),
   ]);
@@ -441,7 +443,7 @@ function render(node) {
   state.statusElement = statusElement;
   const left = el('fieldset', { className: 'generation', disabled: !state.agents?.docker }, [
     el('div', { className: 'section-title', textContent: 'Prompt direction' }),
-    el('div', { className: 'generation-fields' }, [
+    el('div', { className: 'generation-fields', onwheel: keepScrollWheel }, [
       el('div', { className: 'selectors' }, [
         el('label', { className: 'field' }, [
           el('span', { className: 'label', textContent: 'Agent' }),
@@ -518,8 +520,7 @@ app.registerExtension({
     }
     chain('onNodeCreated', function () {
       const body = el('div', { className: 'arisu-workbench' });
-      // Keep typing, selection and scrolling inside the editor; the node header remains draggable.
-      for (const name of ['pointerdown', 'keydown', 'wheel']) body.addEventListener(name, (event) => event.stopPropagation());
+      forwardToCanvas(body);
       const state = { body, epoch: 0, workflow: identity(), status: '', running: false, draft: '', sourceSignature: '' };
       nodes.set(this, state);
       state.hide = () => {

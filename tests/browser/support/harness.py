@@ -177,7 +177,12 @@ class FixtureServer:
             job = request.query.get("job", "")
             lines = (
                 [
-                    "[analysis] " + "Inspecting the selected reference, motion and lighting. " * 200,
+                    json.dumps({"item": {"type": "reasoning", "text": "Inspecting the selected reference, motion and lighting. " * 200}}),
+                    "[tool] workbench.get_context",
+                    *json.dumps(
+                        {"references": [{"id": i, "notes": "Synthetic reference details " * 20} for i in range(20)]}, indent=2
+                    ).splitlines(),
+                    json.dumps({"message": {"content": [{"type": "thinking", "thinking": "Preserve the folded silhouette."}]}}),
                     '[tool · item.completed] workbench.read_image\n{"asset_id": "reference-1"}',
                     "[agent] The reference shows a paper boat with warm reflected light.",
                 ]

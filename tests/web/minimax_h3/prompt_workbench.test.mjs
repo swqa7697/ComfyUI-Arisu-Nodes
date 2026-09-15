@@ -157,11 +157,38 @@ test('Workbench keeps finalized text independent of setup, source notes and revi
     await settle();
     assert.equal(find(panel(node), 'Agent activity').disabled, false);
     api.responses.push(
-      jsonResponse(200, { session: 'job3', cursor: 1, lines: ['[analysis] Inspecting selected reference'], state: 'running' }),
+      jsonResponse(200, {
+        session: 'job3',
+        cursor: 1,
+        lines: [
+          JSON.stringify({ item: { type: 'reasoning', text: 'Inspecting selected reference' } }),
+          'More reasoning. '.repeat(100),
+          '[tool] workbench.get_context',
+          '{',
+          '  "references": []',
+          '}',
+          JSON.stringify({ message: { content: [{ type: 'thinking', thinking: 'Keep the warm lighting' }] } }),
+          JSON.stringify({ event: { delta: { type: 'thinking_delta', thinking: 'Preserve the silhouette' } } }),
+          '[agent] <img src=x onerror=alert(1)>',
+          '{malformed json',
+        ],
+        state: 'running',
+      }),
     );
     find(panel(node), 'Agent activity').onclick();
     await settle();
-    assert(find(body, 'Generation activity'));
+    const activity = find(body, 'Generation activity');
+    assert(activity);
+    assert(find(activity, '[analysis] Inspecting selected reference'));
+    assert.equal(find(activity, 'More reasoning. '.repeat(100)).parent.parent, activity);
+    assert(find(activity, '[analysis] Keep the warm lighting'));
+    assert(find(activity, '[analysis] Preserve the silhouette'));
+    assert(find(activity, '[agent] <img src=x onerror=alert(1)>'));
+    assert(find(activity, '{malformed json'));
+    const details = descendants(activity).find((item) => item.tagName === 'DETAILS');
+    assert(details && !details.open);
+    assert(find(details, '  "references": []'));
+
     api.responses.push(jsonResponse(200, { released: true }), jsonResponse(200, { released: true }));
     widget(node, 'finalized_prompt').value = 'restored';
     widget(node, 'prepare_job').value = 'imported';

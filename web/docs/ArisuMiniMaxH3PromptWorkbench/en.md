@@ -77,3 +77,7 @@ after 30 idle minutes. Closing/removing the workflow releases its interests.
 The MCP offers `get_context` and `read_image` for manifest-listed images only.
 See the README’s optional Docker smoke check for standalone CLI, skill, MCP, mount,
 log, and cleanup verification without using a provider account.
+
+Scroll over the panel to zoom the graph; hold the middle mouse button to pan. Overflowing editors keep normal vertical scrolling; Ctrl+wheel zooms the graph there.
+
+Agent activity displays provider-exposed thoughts as readable text. Expand tool and other detail sections to inspect their full output.

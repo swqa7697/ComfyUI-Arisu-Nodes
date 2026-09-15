@@ -23,6 +23,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Parse structured agent activity into readable thoughts and collapse verbose tool output into expandable details.
+- Allow wheel zoom and middle-button graph dragging over Prompt Workbench while preserving scrolling in overflowing editors.
+
 - Organize agent management into tabs with expanded colored logs, clickable device-login links, and pausable auto-scroll.
 - Replace the separate Docker log container with paginated current-operation output, retaining complete messages within the operation budget.
 
