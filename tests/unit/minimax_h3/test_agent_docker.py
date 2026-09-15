@@ -14,6 +14,7 @@ from typing import Any, List
 
 import pytest
 
+from src.arisu_nodes.common.paths import CONFIG_TEMPLATE, parse_configuration
 from src.arisu_nodes.minimax_h3.agent_docker import DockerAgents
 from src.arisu_nodes.minimax_h3.core import finalized_markdown, motion_tail, preparation_graph, workbench_options, workbench_samples
 
@@ -91,7 +92,12 @@ def test_generation_contract_prunes_side_effects_and_parses_only_final_markdown(
 def test_agent_update_preserves_working_image_and_settings_reject_unavailable_models(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
 ):
+    config = tmp_path / "config.arisu.jsonc"
+    config.write_text(CONFIG_TEMPLATE)
     agents = DockerAgents(tmp_path)
+    # Startup leaves the shared configuration unchanged until preferences are saved.
+    assert agents.preferences == {}
+    assert config.read_text() == CONFIG_TEMPLATE
     tagged: List[str] = []
     # Docker is usable before either image exists; inspect represents absence with [].
     monkeypatch.setattr(shutil, "which", lambda value: "/test/docker")
@@ -122,7 +128,15 @@ def test_agent_update_preserves_working_image_and_settings_reject_unavailable_mo
         agents, "status", lambda: {"agents": {"codex": {"models": [{"id": "available", "efforts": ["low", "medium", "high"]}]}}}
     )
     agents.configure("codex", "available", "medium")
-    assert json.loads((tmp_path / "workbench.json").read_text())["codex"] == {"model": "available", "effort": "medium"}
+    assert parse_configuration(config.read_text())["workbench"]["codex"] == {"model": "available", "effort": "medium"}
+    assert DockerAgents(tmp_path).preferences == agents.preferences
+    saved = config.read_text()
+    config.write_text("{ broken")
+    with pytest.raises(ValueError):
+        agents.configure("codex", "available", "high")
+    assert agents.preferences["codex"]["effort"] == "medium"
+    assert config.read_text() == "{ broken"
+    config.write_text(saved)
     for model, effort in (("invented", "medium"), ("available", "ultra"), ("available", "max")):
         with pytest.raises(ValueError):
             agents.configure("codex", model, effort)

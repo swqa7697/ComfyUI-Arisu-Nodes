@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Consolidate Workbench model and reasoning preferences into `config.arisu.jsonc`, preserving comments and media-root settings.
+
 ### Security
 
 - Restrict Prompt Workbench agents to verified read-only sandboxes and Workbench readers, block execution/edit/web/delegation tools, and isolate saved credentials from disposable CLI configuration.

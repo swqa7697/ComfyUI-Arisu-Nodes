@@ -38,38 +38,43 @@ git clone https://github.com/swqa7697/ComfyUI-Arisu-Nodes.git
 Ensure Pillow and PyAV are available in ComfyUI's Python environment, then restart ComfyUI.
 Find the nodes under **Add Node → Arisu Nodes**.
 
-### Optional setup
+#### Configuration
 
-- **MiniMax H3:** use the checkpoint, CLIP, video VAE, and audio VAE required by the stock H3 nodes.
-- **Agent generation:** install Docker with Linux container support and give the ComfyUI process access to its daemon.
-  Open **Settings → Arisu Nodes → Prompt Workbench → Agents** to build an agent image and sign in.
-  Provider accounts and settings are shared by users of the ComfyUI instance.
-  Update existing agent images for restricted generation. The Docker host must support the native
-  CLI sandbox's user namespaces; incompatible hosts show a setup error and cannot generate.
-  Agents can read only the prepared context, listed images, and selected skill documents through
-  Workbench tools. Shell/edit/web/delegation tools are blocked; provider login and API connectivity remain available.
-  Credentials persist separately from disposable CLI state, and drafts return through output streams.
-- **Custom prompt skills:** place each skill folder, including its `SKILL.md` and supporting files, at
-  `user/__arisu_nodes/skills/<skill-name>/` under ComfyUI's user directory. The pack creates the `skills`
-  directory on startup; administrators manage its contents. Select `custom:<skill-name>` in Prompt Workbench.
-
-### External media directories
-
-The pack reads from ComfyUI's `input` and `output` directories by default. To add a media library,
-edit `user/__arisu_nodes/config.arisu.jsonc`, created on first startup under ComfyUI's user directory:
+The pack creates `user/__arisu_nodes/config.arisu.jsonc` on first startup.
+Use this file for the pack's server settings. To add external media directories,
+edit `roots` with existing absolute paths (`"D:/Photos"` on Windows), then restart ComfyUI:
 
 ```jsonc
 {
+  // Edit these directories manually, then restart ComfyUI.
   "roots": {
     "photos": "/data/photos",
     "references": "/mnt/library/references"
-  }
+  },
+  // Managed by the Agents settings UI; manual editing is not recommended.
+  "workbench": {}
 }
 ```
 
-Use existing absolute directories (`"D:/Photos"` on Windows), then restart ComfyUI.
-Choose only libraries you intend to share with clients of this server.
-The old `arisu_paths.json` is no longer read; copy its root entries into this file manually.
+ComfyUI's `input` and `output` directories are available by default.
+Choose only media directories you intend to share with clients of this server.
+JSONC supports comments; omit trailing commas.
+
+Manage agent models and reasoning effort through
+**Settings → Arisu Nodes → Prompt Workbench → Agents**.
+These preferences are saved under `workbench` while preserving comments and other settings.
+Credentials are stored in Docker authentication volumes.
+
+#### Optional setup
+
+- **MiniMax H3:** use the checkpoint, CLIP, video VAE, and audio VAE required by the stock H3 nodes.
+- **Agent generation:** install Docker with Linux container support and give the ComfyUI process access to its daemon.
+  The Docker host must support the native CLI sandbox's user namespaces.
+  Open **Settings → Arisu Nodes → Prompt Workbench → Agents** to build an agent image, sign in,
+  and select a model and reasoning effort. Provider accounts and settings are shared by users of the ComfyUI instance.
+- **Custom prompt skills:** place each skill folder, including its `SKILL.md` and supporting files, at
+  `user/__arisu_nodes/skills/<skill-name>/` under ComfyUI's user directory. The pack creates the `skills`
+  directory on startup; administrators manage its contents. Select `custom:<skill-name>` in Prompt Workbench.
 
 ## Nodes
 

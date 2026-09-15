@@ -5,7 +5,6 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import os
 import re
 import shutil
 import subprocess
@@ -15,6 +14,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
+from ..common.paths import read_configuration, save_workbench_preferences
 from .core import AGENT_IDS, BASIC_EFFORTS
 
 logger = logging.getLogger(__name__)
@@ -47,14 +47,14 @@ class DockerAgents:
         self.preferences: Dict[str, Any] = {}
         self._status: Dict[str, Any] = {}
         self._checked = 0.0
-        path = directory / "workbench.json"
-        if path.is_file() and not path.is_symlink() and not directory.is_symlink():
-            try:
-                data = json.loads(path.read_text())
-                if isinstance(data, dict):
-                    self.preferences = {key: value for key, value in data.items() if key in AGENT_IDS and isinstance(value, dict)}
-            except (OSError, ValueError):
-                logger.warning("Unable to read Workbench preferences")
+        try:
+            config = read_configuration(directory)
+            data = config.get("workbench", {})
+            if not isinstance(data, dict):
+                raise ValueError("invalid Workbench preferences")  # noqa: TRY004 - invalid JSON data
+            self.preferences = {key: value for key, value in data.items() if key in AGENT_IDS and isinstance(value, dict)}
+        except (OSError, UnicodeError, ValueError):
+            logger.warning("Unable to read Workbench preferences from config.arisu.jsonc")
 
     def image(self, agent: str) -> str:
         """Return the fixed provider image name."""
@@ -269,22 +269,9 @@ class DockerAgents:
             raise ValueError("unsupported model or effort")
         if effort and effort not in BASIC_EFFORTS:
             raise ValueError("unsupported reasoning effort")
-        self.preferences[agent] = {"model": model, "effort": effort}
-        self.save_preferences()
-        self._checked = 0
-
-    def save_preferences(self):
-        """Atomically save model choices without touching authentication."""
-        self.directory.mkdir(parents=True, exist_ok=True)
-        if self.directory.is_symlink() or (self.directory / "workbench.json").is_symlink():
-            raise ValueError("invalid configuration destination")
-        temp = self.directory / ("workbench-" + uuid.uuid4().hex + ".json")
-        try:
-            with temp.open("x") as output:
-                json.dump(self.preferences, output)
-            os.replace(temp, self.directory / "workbench.json")
-        finally:
-            temp.unlink(missing_ok=True)
+        preferences = {"model": model, "effort": effort}
+        save_workbench_preferences(self.directory, {agent: preferences})
+        self.preferences[agent] = preferences
         self._checked = 0
 
     def stream(
@@ -407,8 +394,9 @@ class DockerAgents:
                 for identifier in set(retired):
                     if self.owned("image", identifier):
                         self.command(["image", "rm", identifier])
+                save_workbench_preferences(self.directory, {agent: {}})
                 self.preferences.pop(agent, None)
-                self.save_preferences()
+                self._checked = 0
             else:
                 if not self.owned("image", self.image(agent)) or not self.owned("volume", self.volume(agent)):
                     raise ValueError("build this agent first")
