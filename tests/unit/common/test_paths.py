@@ -104,11 +104,29 @@ def test_external_roots_are_local_validated_and_cached(tmp_path: Path, monkeypat
         config.unlink()
     assert outside.read_bytes() == sentinel
     assert not (tmp_path / "missing.jsonc").exists()
+    # Startup leaves existing skills and symlink destinations alone, including dangling links.
+    skills = directory / "skills"
+    skills.rmdir()
+    config.write_text(json.dumps({"roots": {"photos": str(photos)}}))
+    for target in [photos, tmp_path / "missing-skills"]:
+        skills.symlink_to(target, target_is_directory=True)
+        restart()
+        assert skills.is_symlink()
+        assert paths.external_roots() == {"photos": str(photos)}
+        skills.unlink()
+    assert not (tmp_path / "missing-skills").exists()
+    skills.write_text("existing file")
+    restart()
+    assert skills.read_text() == "existing file"
+    assert paths.external_roots() == {"photos": str(photos)}
+    skills.unlink()
+    config.unlink()
     directory.rmdir()
     directory.symlink_to(photos, target_is_directory=True)
     restart()
     assert paths.external_roots() == {}
     assert not (photos / config.name).exists()
+    assert not (photos / "skills").exists()
     directory.unlink()
     # Simulate an unwritable directory independent of the test runner's UID.
     original_mkdir = Path.mkdir

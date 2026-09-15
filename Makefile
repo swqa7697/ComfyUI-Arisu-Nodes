@@ -1,7 +1,7 @@
 SHELL := /bin/bash
 .SHELLFLAGS := -euo pipefail -c
 .DEFAULT_GOAL := help
-.PHONY: help install uninstall clean build test test-unit test-web test-comfyui test-count comfyui-path lint format tidy upgrade bump-major bump-minor bump-patch release-commit tag
+.PHONY: browser-install test-browser inspect-browser help install uninstall clean build test test-unit test-web test-comfyui test-count comfyui-path lint format tidy upgrade bump-major bump-minor bump-patch release-commit tag
 
 # Hard boundary (CLAUDE.md): never run project commands inside the live ComfyUI
 # install, including a clone of this repo under its custom_nodes/.
@@ -65,6 +65,7 @@ test-count: ## Selected cases per lane; compare with the budgets in CLAUDE.md
 	@printf 'unit lane:    '; uv run pytest --collect-only -q | $(_SELECTED)
 	@printf 'comfyui lane: '; bash scripts/test-comfyui.sh --collect-only -q 2>/dev/null | $(_SELECTED) || $(INFO) "skipped (no ComfyUI install)"
 	@printf 'web lane:     '; $(_NODE_TEST) --test-reporter=tap $(_WEB_TESTS) | awk '/^# tests/ {print $$3}'
+	@if [[ -x .tmp/browser/env/bin/python ]]; then printf 'browser lane: '; bash scripts/browser.sh test --collect-only -q | $(_SELECTED); else $(INFO) "browser lane not installed (make browser-install)"; fi
 
 comfyui-path: ## Print the resolved ComfyUI install root (the CLAUDE.md hard boundary)
 	@printf '%s\n' '$(COMFYUI_ABS)'
@@ -105,3 +106,12 @@ release-commit: ## On a release branch: commit + push the bump as 'release arisu
 
 tag: ## On the latest main: annotated tag v<pyproject version> after a CAPTCHA, then push (triggers publish_node.yml)
 	@$(_PY) scripts/release_tag.py
+
+browser-install: ## Install browser tooling and refresh the latest stable ComfyUI frontend locally
+	@bash scripts/browser.sh install
+
+test-browser: ## Run local Chromium scenarios (ARGS="-k studio")
+	@bash scripts/browser.sh test $(ARGS)
+
+inspect-browser: ## Open the isolated ComfyUI frontend for interactive inspection
+	@bash scripts/browser.sh inspect

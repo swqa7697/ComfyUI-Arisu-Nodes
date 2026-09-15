@@ -1,0 +1,5 @@
+*
+!Dockerfile
+!install_agent.sh
+!runner.py
+!mcp_server.py

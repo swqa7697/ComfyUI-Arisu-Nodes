@@ -15,6 +15,7 @@ import re
 import string
 from dataclasses import dataclass
 from datetime import datetime
+from io import BytesIO
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from PIL import Image
@@ -36,6 +37,7 @@ _PREVIEW_KEYS = ("filename", "subfolder", "type")
 # under (raster formats every browser decodes natively; no TIFF, GIF, SVG or
 # document formats), and the thumbnail bounds.
 BROWSE_ROUTE = "/arisu/browse"
+ROOTS_ROUTE = "/arisu/roots"
 VIEW_ROUTE = "/arisu/view"
 IMAGE_TYPES: Dict[str, str] = {
     "png": "image/png",
@@ -47,6 +49,13 @@ IMAGE_TYPES: Dict[str, str] = {
 }
 MIN_THUMBNAIL = 16
 MAX_THUMBNAIL = 4096
+# Rendered previews (``max`` thumbnails, ``crop`` previews at the crop's own size, video posters): WEBP, the
+# format /view's own previews use. libwebp's fastest method encodes a 3 MP crop in a third of the default's
+# time for the same size at this quality; these are previews.
+PREVIEW_CONTENT_TYPE = "image/webp"
+_PREVIEW_FORMAT = "WEBP"
+_PREVIEW_QUALITY = 80
+_PREVIEW_METHOD = 0
 # The crop widget: ``left,top,width,height`` in pixels, blank for the whole image.
 CROP_SEPARATOR = ","
 CROP_FORMAT_ERROR = "crop must be left,top,width,height in pixels"
@@ -54,6 +63,8 @@ CROP_FORMAT_ERROR = "crop must be left,top,width,height in pixels"
 # the size bounds, the ``[1, 64, 64]`` zeros ComfyUI's loaders emit for "no mask", and the pad colour forms.
 RESIZE_METHODS = ("nearest-exact", "bilinear", "area", "bicubic", "lanczos")
 RESIZE_MODES = ("crop", "pad", "resize", "stretch")
+# The MiniMax H3 Hybrid keyframes' subset: a keyframe must land on exactly the canvas, so no "resize".
+KEYFRAME_MODES = ("crop", "pad", "stretch")
 CROP_POSITIONS = ("center", "top", "bottom", "left", "right")
 MAX_RESOLUTION = 16384
 MAX_DIVISIBLE_BY = 512
@@ -145,6 +156,22 @@ class ResizePlan:
     scaled: Tuple[int, int]
     canvas: Tuple[int, int]
     offset: Tuple[int, int]
+
+
+@dataclass(frozen=True)
+class FrameFit:
+    """How one image is fitted to a canvas: the **Resize Image** settings a MiniMax H3 Hybrid keyframe carries.
+
+    ``resize_method`` is one of ``RESIZE_METHODS``, ``mode`` one of
+    ``KEYFRAME_MODES``, ``pad_color`` the ``pad`` fill in a form
+    ``parse_pad_color`` or Pillow reads, and ``crop_position`` one of
+    ``CROP_POSITIONS``.
+    """
+
+    resize_method: str
+    mode: str
+    pad_color: str
+    crop_position: str
 
 
 def join_path(segments: Sequence[str]) -> str:
@@ -333,6 +360,19 @@ def open_raster_image(path: str) -> Image.Image:
     Image.init()
     formats = ("AVIF", "BMP", "JPEG", "PNG", "WEBP")
     return Image.open(path, formats=[name for name in formats if name in Image.OPEN])
+
+
+def encode_preview(image: Image.Image, max_size: Optional[int]) -> bytes:
+    """``image`` as a WEBP preview, shrunk in place to fit ``max_size`` when one is given.
+
+    Only a bounded thumbnail is ever resized. WEBP refuses a side above 16383 pixels,
+    which callers report as an undecodable image.
+    """
+    if max_size is not None:
+        image.thumbnail((max_size, max_size))
+    buffer = BytesIO()
+    image.save(buffer, format=_PREVIEW_FORMAT, quality=_PREVIEW_QUALITY, method=_PREVIEW_METHOD)
+    return buffer.getvalue()
 
 
 def is_animated_image(path: str) -> bool:

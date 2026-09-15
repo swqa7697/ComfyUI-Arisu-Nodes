@@ -4,7 +4,9 @@
 // by field name, and resolves to the edited values, or `null` when the dialog is
 // cancelled: cancel, ✕, Escape, or a click on the backdrop (a press there too, so a drag
 // out of a field that ends on the backdrop is not one). A field is
-// `{ name, kind, values, min, max, step, default, tooltip }`. `combo` is a <select>
+// `{ name, label, section, kind, values, min, max, step, default, tooltip }`; the row
+// shows `label` (`name` when missing) and a run of fields sharing a `section` sits under
+// a heading of that name, a rule above every section after the first. `combo` is a <select>
 // over `values`; `number` an <input type="number"> whose result is a rounded integer
 // held to min..max (a blank or unreadable field keeps the value it opened with);
 // `text` a text field; `color` a text field with a colour picker beside it, kept in
@@ -38,6 +40,9 @@ const STYLE = `
   border-bottom: 1px solid var(--border-color, #444); }
 .arisu-settings-title { margin: 0; font-size: 14px; font-weight: 600; }
 .arisu-settings-body { display: grid; grid-template-columns: max-content 1fr; align-items: center; gap: 10px 12px; padding: 14px 16px; }
+.arisu-settings-heading { grid-column: 1 / -1; margin: 0; font-size: 12px; font-weight: 600; text-transform: uppercase;
+  letter-spacing: 0.06em; color: var(--descrip-text, #999); }
+.arisu-settings-heading:not(:first-child) { margin-top: 6px; padding-top: 14px; border-top: 1px solid var(--border-color, #444); }
 .arisu-settings-label { color: var(--descrip-text, #999); text-align: right; }
 .arisu-settings-field { display: flex; gap: 8px; min-width: 0; }
 .arisu-settings-field > :where(input, select) { flex: 1; }
@@ -140,11 +145,14 @@ export function editSettings(title, fields, values) {
     field,
     ...controlFor(field, values[field.name] ?? field.default, `arisu-settings-${field.name}`),
   }));
-  const rows = controls.flatMap(({ field, elements }) => [
+  const rows = controls.flatMap(({ field, elements }, index) => [
+    ...(field.section != null && field.section !== controls[index - 1]?.field.section
+      ? [el('h3', { className: 'arisu-settings-heading', textContent: field.section })]
+      : []),
     el('label', {
       className: 'arisu-settings-label',
       htmlFor: `arisu-settings-${field.name}`,
-      textContent: field.name,
+      textContent: field.label ?? field.name,
       title: field.tooltip ?? '',
     }),
     el('div', { className: 'arisu-settings-field' }, elements),

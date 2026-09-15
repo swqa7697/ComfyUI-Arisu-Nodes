@@ -1,4 +1,4 @@
-name: 📦 Publish to Comfy registry
+name: Publish to Comfy registry
 on:
   push:
     tags:

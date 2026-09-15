@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "arisu_nodes"
-version = "1.1.2"
+version = "1.2.0"
 description = "A package of useful ComfyUI nodes optimizing user experience."
 authors = [{ name = "swqa7697" }]
 readme = "README.md"
@@ -12,9 +12,10 @@ license = "GPL-3.0-only"
 license-files = ["LICENSE"]
 requires-python = ">=3.10"
 classifiers = []
-dependencies = ["pillow"]
+dependencies = ["av", "pillow"]
 
 [dependency-groups]
+browser = ["aiohttp>=3.14.3", "pillow>=12.3.0", "playwright>=1.62.0", "pytest>=9.1.1"]
 dev = ["beautysh>=6.4.3", "mbake>=1.4.6", "pytest>=9.1.1", "ruff>=0.16.7", "uv-sort>=0.8.0"]
 
 [project.urls]
@@ -31,7 +32,10 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-m 'not comfyui'"
-markers = ["comfyui: needs ComfyUI's interpreter and source tree on sys.path"]
+markers = [
+    "browser: local Chromium rendering lane",
+    "comfyui: needs ComfyUI's interpreter and source tree on sys.path",
+]
 
 [tool.ruff]
 target-version = "py310"
