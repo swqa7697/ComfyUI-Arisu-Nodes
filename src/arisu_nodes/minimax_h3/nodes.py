@@ -611,6 +611,10 @@ class ArisuMiniMaxH3HybridToVideo(io.ComfyNode):
         first_frame_pad_color: Optional[str] = None,
         last_frame_mode: Optional[str] = None,
         last_frame_pad_color: Optional[str] = None,
+        ref_images: Optional[Dict[str, Any]] = None,
+        ref_videos: Optional[Dict[str, Any]] = None,
+        ref_video_audios: Optional[Dict[str, Any]] = None,
+        ref_audios: Optional[Dict[str, Any]] = None,
     ) -> Union[bool, str]:
         """Refuse a keyframe pad colour its ``pad`` mode cannot fill with.
 
@@ -619,6 +623,10 @@ class ArisuMiniMaxH3HybridToVideo(io.ComfyNode):
             first_frame_pad_color: Likewise; only checked when the mode is ``pad`` or unknown.
             last_frame_mode: Likewise, for ``last_frame``.
             last_frame_pad_color: Likewise.
+            ref_images: Autogrow group rebuilt by V3 after validation-input filtering; unused here.
+            ref_videos: Likewise, for reference videos.
+            ref_video_audios: Likewise, for reference video soundtracks.
+            ref_audios: Likewise, for standalone audio.
 
         Returns:
             ``True`` when the run can go ahead, otherwise the error to show.
@@ -789,6 +797,10 @@ class ArisuMiniMaxH3HybridToVideoAdvanced(io.ComfyNode):
         first_frame_pad_color: Optional[str] = None,
         last_frame_mode: Optional[str] = None,
         last_frame_pad_color: Optional[str] = None,
+        ref_images: Optional[Dict[str, Any]] = None,
+        ref_videos: Optional[Dict[str, Any]] = None,
+        ref_video_audios: Optional[Dict[str, Any]] = None,
+        ref_audios: Optional[Dict[str, Any]] = None,
     ) -> Union[bool, str]:
         """Refuse a keyframe pad colour its ``pad`` mode cannot fill with.
 
@@ -797,6 +809,10 @@ class ArisuMiniMaxH3HybridToVideoAdvanced(io.ComfyNode):
             first_frame_pad_color: Likewise; only checked when the mode is ``pad`` or unknown.
             last_frame_mode: Likewise, for ``last_frame``.
             last_frame_pad_color: Likewise.
+            ref_images: Autogrow group rebuilt by V3 after validation-input filtering; unused here.
+            ref_videos: Likewise, for reference videos.
+            ref_video_audios: Likewise, for reference video soundtracks.
+            ref_audios: Likewise, for standalone audio.
 
         Returns:
             ``True`` when the run can go ahead, otherwise the error to show.

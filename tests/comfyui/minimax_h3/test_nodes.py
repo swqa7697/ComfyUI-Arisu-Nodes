@@ -13,7 +13,7 @@ from typing import Any, Dict, Tuple
 
 import pytest
 import torch
-from comfy_api.latest import io
+from comfy_api.latest import _io, io
 from PIL import Image
 
 from src.arisu_nodes.minimax_h3 import nodes as h3
@@ -161,6 +161,16 @@ def test_hybrid_rejects_missing_audio_vae_and_short_reference_videos():
         _run(first_frame=image(768, 1344), first_frame_mode="resize")
     assert isinstance(ArisuMiniMaxH3HybridToVideo.validate_inputs(last_frame_mode="pad", last_frame_pad_color="nope"), str)
     assert ArisuMiniMaxH3HybridToVideoAdvanced.validate_inputs(first_frame_mode="crop", first_frame_pad_color="nope") is True
+
+    # V3 rebuilds autogrow groups AFTER filtering the custom validator's inputs,
+    # including empty groups and groups whose linked values are unavailable.
+    for node in (ArisuMiniMaxH3HybridToVideo, ArisuMiniMaxH3HybridToVideoAdvanced):
+        for live_inputs in ({}, {"ref_images.ref_image_0": ["source", 0], "ref_audios.ref_audio_0": ["sound", 0]}):
+            _, _, v3_data = _io.get_finalized_class_inputs(node.INPUT_TYPES(), live_inputs)
+            for mode, accepted in (("crop", True), ("pad", False)):
+                inputs = _io.build_nested_inputs({"last_frame_mode": mode, "last_frame_pad_color": "nope"}, v3_data)
+                result = node.validate_inputs(**inputs)
+                assert (result is True) if accepted else isinstance(result, str), f"{node.__name__}: {live_inputs}, {mode}"
 
 
 def test_matching_frames_are_not_resampled():
