@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Bundle two MiniMax H3 Prompt Workbench skills (`no-ref`, `with-ref`) that share one MCP context contract.
 - Show a generation indicator and live agent activity with complete provider-exposed analysis and reference/tool details.
 
 - Add an optional Agents menu shortcut to open shared agent management, hidden by default.
@@ -23,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Set the default Prompt Workbench skill to `bundled:with-ref` and group MCP keyframes, inspectable stills, and motion separately so agents do not read video or audio bytes.
 - Parse structured agent activity into readable thoughts and collapse verbose tool output into expandable details.
 - Allow wheel zoom and middle-button graph dragging over Prompt Workbench while preserving scrolling in overflowing editors.
 
@@ -52,6 +54,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Enlarge Resource Studio icon buttons and reference-row text, and colour each mute button in its resource kind.
 - Show an insertion line while dragging a Resource Studio reference and drop it above or below the row under the pointer.
 - Rebuild the Resource Studio clip editor as a timeline with a ruler, draggable in/out brackets and playhead, a keyboard-driven transport row, a duration lock with presets, and a compact preview-free audio dialog.
+
+### Removed
+
+- Remove the bundled `hybrid2va` Prompt Workbench feasibility stub.
 
 ### Fixed
 

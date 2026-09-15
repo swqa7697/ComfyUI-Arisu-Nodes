@@ -17,7 +17,7 @@
         "skill": [
           "STRING",
           {
-            "default": "bundled:hybrid2va",
+            "default": "bundled:with-ref",
             "socketless": true,
             "multiline": false
           }

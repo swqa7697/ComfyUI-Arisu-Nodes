@@ -30,7 +30,7 @@ test('Workbench keeps finalized text independent of setup, source notes and revi
     graph,
     widgets: Object.entries({
       agent: 'codex',
-      skill: 'bundled:hybrid2va',
+      skill: 'bundled:with-ref',
       context_length: '22',
       audio_context_length: 24,
       motion_notes: '',

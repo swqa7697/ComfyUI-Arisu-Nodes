@@ -106,7 +106,7 @@ class FixtureServer:
         return {
             "docker": True,
             "agents": {"codex": info, "grok": info},
-            "skills": [{"id": "bundled:hybrid2va", "name": "hybrid2va", "source": "bundled"}],
+            "skills": [{"id": "bundled:with-ref", "name": "with-ref", "source": "bundled"}],
         }
 
     async def handle(self, request: web.Request) -> web.StreamResponse:

@@ -1089,7 +1089,7 @@ class ArisuMiniMaxH3PromptWorkbench(io.ComfyNode):
                 io.Latent.Input("context_latent", optional=True, lazy=True),
                 io.Vae.Input("vae", optional=True, lazy=True),
                 io.Combo.Input("agent", options=["codex", "grok"], default="codex", socketless=True),
-                io.String.Input("skill", default="bundled:hybrid2va", socketless=True),
+                io.String.Input("skill", default="bundled:with-ref", socketless=True),
                 io.Combo.Input("context_length", options=list(MOTION_WINDOWS), default="22", socketless=True),
                 io.Int.Input("audio_context_length", default=24, min=0, max=240, socketless=True),
                 io.String.Input("motion_notes", default="", multiline=True, socketless=True),

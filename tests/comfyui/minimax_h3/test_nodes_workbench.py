@@ -15,9 +15,9 @@ import torch
 from PIL import Image
 
 from src.arisu_nodes.minimax_h3 import nodes, workbench
-from src.arisu_nodes.minimax_h3.core import Resource, ResourceBundle, workbench_options
+from src.arisu_nodes.minimax_h3.core import Resource, ResourceBundle, VideoSettings, workbench_options
 from src.arisu_nodes.minimax_h3.media import revision_for
-from src.arisu_nodes.minimax_h3.workbench import Generation, Workbench, skill_catalog
+from src.arisu_nodes.minimax_h3.workbench import Generation, Workbench, job_context, skill_catalog
 from src.arisu_nodes.minimax_h3.workbench_media import stage
 from tests.support.media import make_audio, make_av
 
@@ -27,7 +27,7 @@ pytestmark = pytest.mark.comfyui
 def inputs(**kwargs: Any) -> Dict[str, Any]:
     return {
         "agent": "codex",
-        "skill": "bundled:hybrid2va",
+        "skill": "bundled:with-ref",
         "context_length": "22",
         "audio_context_length": 24,
         "motion_notes": "",
@@ -200,7 +200,11 @@ def test_workbench_stages_crops_refuses_escapes_and_cancellation_retains_guard(t
 
     def generated(agent: str, directory: Path, skill: Path, *args: Any) -> str:
         context = json.loads((directory / "context.json").read_text())
+        assert context["version"] == 2 and context["keyframes"] == {"first": None, "last": None}
+        assert context["motion"]["present"] is False and context["motion"]["stills"] == []
         assert context["references"][0]["note"] == "red coat"
+        assert context["references"][0]["inspect"]["type"] == "image"
+        assert context["assets"][0]["id"] in context["references"][0]["inspect"]["asset_ids"]
         with Image.open(directory / context["assets"][0]["file"]) as prepared:
             assert prepared.size == (8, 6)
         assert (skill / "SKILL.md").is_file()
@@ -223,6 +227,45 @@ def test_workbench_stages_crops_refuses_escapes_and_cancellation_retains_guard(t
 
             monkeypatch.setattr(workbench.subprocess, "Popen", unexpected_worker)
     assert len(owner.cache) == 1 and image_path.read_bytes() == original
+    grouped_job = Generation(
+        "grouped",
+        "w",
+        "active",
+        workbench_options({"source_id": "studio", "motion_notes": "camera still pushing"}),
+        {},
+        owner.temp,
+        {},
+    )
+    grouped_job.settings = VideoSettings(1280, 720, 145, "16:9 (Widescreen)")
+    grouped_job.motion = [{"id": "motion-00", "file": "motion-00.png", "mime": "image/png", "role": "motion", "timestamp": 0.91}]
+    grouped = job_context(
+        grouped_job,
+        [
+            {
+                "id": "0",
+                "file": "0.png",
+                "mime": "image/png",
+                "resource_id": "ref",
+                "role": "first_keyframe",
+                "name": "reference.png",
+            },
+            {
+                "id": "1",
+                "file": "1.png",
+                "mime": "image/png",
+                "resource_id": "video",
+                "role": "reference_video_frame",
+                "name": "clip.mkv",
+                "timestamp": 0.0,
+            },
+        ],
+        ResourceBundle(first=image, videos=(replace(video, include_audio=False),)),
+    )
+    assert grouped["keyframes"]["first"]["asset_id"] == "0" and grouped["keyframes"]["last"] is None
+    assert grouped["references"][0]["kind"] == "video" and grouped["references"][0]["inspect"]["frames"][0]["asset_id"] == "1"
+    assert grouped["motion"]["present"] and grouped["motion"]["stills"][0]["asset_id"] == "motion-00"
+    assert grouped["duration_seconds"] == 145 / 24
+    assert grouped["motion"]["delivered_duration_seconds"] == (145 - 22) / 24
     owner.release("active")
     assert not owner.cache
     with pytest.raises(ValueError, match="closed"):

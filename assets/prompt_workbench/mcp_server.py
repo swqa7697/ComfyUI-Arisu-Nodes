@@ -40,7 +40,7 @@ def respond(message: Dict[str, Any], root: Path = ROOT) -> Dict[str, Any]:
             "tools": [
                 {
                     "name": "get_context",
-                    "description": "Read shot requirements, references and ordered motion metadata.",
+                    "description": "Read duration, aspect, requirements, trigger words, keyframes, grouped references, and motion stills.",
                     "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
                 },
                 {

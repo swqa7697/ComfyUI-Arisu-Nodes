@@ -44,7 +44,11 @@ def test_workbench_routes_reject_untrusted_requests_and_queue_only_preparation(t
         application.add_routes(server.routes)
         async with TestClient(TestServer(application)) as client:
             response = await client.get("/arisu/workbench/status")
-            assert response.status == 200 and (await response.json())["skills"][0]["id"] == "bundled:hybrid2va"
+            assert response.status == 200
+            assert (await response.json())["skills"] == [
+                {"id": "bundled:no-ref", "name": "no-ref", "source": "bundled"},
+                {"id": "bundled:with-ref", "name": "with-ref", "source": "bundled"},
+            ]
             owner.agents.begin_logs("codex", "login")
             owner.agents.log("https://example.test/device CODE")
             response = await client.get("/arisu/workbench/logs")

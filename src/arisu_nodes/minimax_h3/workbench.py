@@ -84,6 +84,78 @@ class Generation:
         return {"id": self.id, "state": self.state, "error": self.error, "draft": self.draft}
 
 
+def _keyframe(assets: List[Dict[str, Any]], role: str) -> Optional[Dict[str, Any]]:
+    """Return the MCP keyframe row for a staged first/last lock."""
+    item = next((asset for asset in assets if asset.get("role") == role), None)
+    if item is None:
+        return None
+    return {"asset_id": item["id"], "name": item.get("name", ""), "resource_id": item.get("resource_id")}
+
+
+def _inspect(item: Any, assets: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Describe what the agent may read for one Studio card."""
+    if item.kind == "image":
+        return {
+            "type": "image",
+            "asset_ids": [asset["id"] for asset in assets if asset.get("resource_id") == item.id and asset.get("role") == "reference"],
+        }
+    if item.kind == "video":
+        return {
+            "type": "stills",
+            "frames": [
+                {"asset_id": asset["id"], "timestamp": asset.get("timestamp")}
+                for asset in assets
+                if asset.get("resource_id") == item.id and asset.get("role") == "reference_video_frame"
+            ],
+        }
+    return {"type": "none"}
+
+
+def job_context(job: Generation, assets: List[Dict[str, Any]], resources: ResourceBundle) -> Dict[str, Any]:
+    """Build the version-2 Workbench MCP manifest from staged media."""
+    settings = job.settings
+    duration = settings.length / 24 if settings else None
+    present = bool(job.motion)
+    delivered = (settings.length - job.options["context_length"]) / 24 if settings and present else duration
+    references = []
+    for item in resources.images + resources.videos + resources.audios:
+        key = job.options["source_id"] + ":" + item.id + ":" + item.root + ":" + item.path
+        entry: Dict[str, Any] = {
+            "id": item.id,
+            "kind": item.kind,
+            "name": Path(item.path).name,
+            "note": job.options["reference_notes"].get(key, ""),
+            "inspect": _inspect(item, assets),
+        }
+        if item.kind == "image" and item.crop:
+            entry["selected_crop"] = item.crop
+        if item.kind != "image":
+            entry["selected_clip"] = item.clip
+        if item.kind == "video":
+            entry["include_audio"] = item.include_audio
+        references.append(entry)
+    return {
+        "version": 2,
+        "duration_seconds": duration,
+        "frame_count": settings.length if settings else None,
+        "aspect_ratio": settings.aspect_ratio if settings else None,
+        "trigger_words": job.options["trigger_words"],
+        "requirements": job.options["requirements"],
+        "motion": {
+            "present": present,
+            "context_length": job.options["context_length"],
+            "audio_context_length": job.options["audio_context_length"],
+            "sample_duration_seconds": duration,
+            "delivered_duration_seconds": delivered,
+            "notes": job.options["motion_notes"] if present else "",
+            "stills": [{"asset_id": asset["id"], "timestamp": asset.get("timestamp")} for asset in job.motion],
+        },
+        "keyframes": {"first": _keyframe(assets, "first_keyframe"), "last": _keyframe(assets, "last_keyframe")},
+        "assets": assets,
+        "references": references,
+    }
+
+
 class Workbench:
     """Own one generation until its CPU preparation and Docker container exit."""
 
@@ -329,37 +401,7 @@ class Workbench:
                 assets = json.loads(stdout)
                 self.store_assets(job, media_key, assets)
             assets = assets + job.motion
-            settings = asdict(job.settings) if job.settings else None
-            if settings:
-                settings["duration_seconds"] = job.settings.length / 24
-            context = {
-                "version": 1,
-                "video_settings": settings,
-                "requirements": job.options["requirements"],
-                "trigger_words": job.options["trigger_words"],
-                "motion": {
-                    "present": bool(job.motion),
-                    "context_length": job.options["context_length"],
-                    "audio_context_length": job.options["audio_context_length"],
-                    "notes": job.options["motion_notes"] if job.motion else "",
-                },
-                "assets": assets,
-                "references": [],
-            }
-            for item in resources.images + resources.videos + resources.audios:
-                key = job.options["source_id"] + ":" + item.id + ":" + item.root + ":" + item.path
-                context["references"].append(
-                    {
-                        "id": item.id,
-                        "kind": item.kind,
-                        "name": Path(item.path).name,
-                        "selected_clip": item.clip,
-                        "selected_crop": item.crop,
-                        "include_audio": item.include_audio,
-                        "note": job.options["reference_notes"].get(key, ""),
-                    }
-                )
-            (job.directory / "context.json").write_text(json.dumps(context, ensure_ascii=False))
+            (job.directory / "context.json").write_text(json.dumps(job_context(job, assets, resources), ensure_ascii=False))
             self.enforce_budget()
             # Snapshot the selected skill too: no symlink/administrator edits during a run.
             skill = skill_catalog(self.directory).get(job.options["skill"])

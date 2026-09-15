@@ -53,10 +53,13 @@ The existing ComfyUI access boundary is trusted; this feature adds no login.
 Provider credentials remain in dedicated Docker volumes, never workflows.
 Generation requires network access to the provider and may consume account usage.
 
-The bundled **hybrid2va** skill is a feasibility stub. Administrators can add
-`<skill-name>/SKILL.md` folders under `user/__arisu_nodes/skills`.
-Files and skills are mounted read-only for generation; the agent has no Docker
-socket, GPU, or mount of the ComfyUI installation.
+Bundled skills are **with-ref** (default; Ref2VA / Hybrid) and **no-ref** (T2VA / I2VA / FL2VA /
+L2VA). They share one MCP: `get_context` returns duration,
+aspect, requirements, trigger words, keyframes, grouped references, and motion stills;
+`read_image` serves those stills. Video references are ordered stills; audio is listed with notes
+only. Administrators can add `<skill-name>/SKILL.md` folders under `user/__arisu_nodes/skills`.
+Files and skills are mounted read-only for generation; the agent has no Docker socket, GPU, or
+mount of the ComfyUI installation.
 
 Switch **Codex / Grok Build** tabs in agent settings to leave more space for colored build
 and login logs. Device-login URLs open directly in your browser.
@@ -74,7 +77,7 @@ Use **Update CLI** for existing images to install the expanded event renderer.
 Selected media and motion stills are cached beneath ComfyUI temp, bounded to 2 GiB and expired
 after 30 idle minutes. Closing/removing the workflow releases its interests.
 
-The MCP offers `get_context` and `read_image` for manifest-listed images only.
+The MCP offers `get_context` and `read_image` for the job manifest and listed images only.
 See the README’s optional Docker smoke check for standalone CLI, skill, MCP, mount,
 log, and cleanup verification without using a provider account.
 

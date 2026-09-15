@@ -56,8 +56,8 @@ else:
     result = runner.run(['grok','--no-auto-update','inspect','--json'])
     assert result.returncode == 0
     discovery = json.loads(result.stdout)
-assert 'hybrid2va' in json.dumps(discovery), json.dumps(discovery)
-print(json.dumps({'python':sys.version.split()[0], 'mcp':'handshake/context/image/refusal passed', 'skills':'hybrid2va discovered', 'mounts':'read-only'}))
+assert 'with-ref' in json.dumps(discovery), json.dumps(discovery)
+print(json.dumps({'python':sys.version.split()[0], 'mcp':'handshake/context/image/refusal passed', 'skills':'with-ref discovered', 'mounts':'read-only'}))
 """.replace(" + '\n'", " + '\\n'")
 
 
@@ -86,7 +86,7 @@ def main():
                 print("BUILD " + agent, flush=True)
                 agents.manage(agent, "build")
                 print(json.dumps(agents.invoke(agent, "check")), flush=True)
-                skill = ASSETS / "skills" / "hybrid2va"
+                skill = ASSETS / "skills" / "with-ref"
                 name = agents.namespace + "-smoke-" + agent
                 result = agents.command(
                     [

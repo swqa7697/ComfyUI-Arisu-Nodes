@@ -354,7 +354,7 @@ function render(node) {
   const skills = state.agents?.skills?.map((item) => ({
     value: item.id,
     label: item.name + (item.source === 'custom' ? ' · custom' : ''),
-  })) ?? [{ value: 'bundled:hybrid2va', label: 'hybrid2va' }];
+  })) ?? [{ value: 'bundled:with-ref', label: 'with-ref' }];
   const audio = el('input', {
     type: 'number',
     min: '0',

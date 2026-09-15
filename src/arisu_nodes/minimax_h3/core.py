@@ -619,7 +619,7 @@ def workbench_options(value: Any) -> Dict[str, Any]:
     result = {}
     for key, default, limit in (
         ("agent", "codex", 16),
-        ("skill", "bundled:hybrid2va", 160),
+        ("skill", "bundled:with-ref", 160),
         ("motion_notes", "", 16384),
         ("trigger_words", "", 16384),
         ("requirements", "", 32768),

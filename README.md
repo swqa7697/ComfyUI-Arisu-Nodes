@@ -219,12 +219,15 @@ root filesystem and staged-input mounts, limited scratch/resources, and no GPU, 
 host networking, or ComfyUI installation mount. Codex uses automatic execution review; Grok uses
 `permission_mode = "auto"`. An incompatible CLI must be updated before generation.
 
-The bundled **`bundled:hybrid2va`** skill is a working feasibility stub. Startup creates an empty
-`user/__arisu_nodes/skills/` directory if missing and preserves existing skills. To add a custom skill,
-place a directory containing `SKILL.md` under the administrator-owned
-`user/__arisu_nodes/skills/<name>/`; it appears as `custom:<name>`. Symlinked/escaping skills are
-not loaded. Only the selected skill and the job's prepared media are mounted read-only. The minimal
-MCP exposes context metadata and manifest-listed images.
+Two bundled skills write MiniMax H3 prompts from Workbench MCP context: **`bundled:with-ref`**
+(default; Ref2VA / Hybrid) and **`bundled:no-ref`** (T2VA / I2VA / FL2VA / L2VA). They share one MCP
+(`get_context` + `read_image`): keyframes stay separate from references, video is inspected as ordered
+stills, audio is listed with notes only, and Motion Context is on only when `motion.present` is true.
+Startup creates an empty `user/__arisu_nodes/skills/` directory if missing and preserves existing
+skills. To add a custom skill, place a directory containing `SKILL.md` under the administrator-owned
+`user/__arisu_nodes/skills/<name>/`; it appears as `custom:<name>`. Symlinked/escaping skills are not
+loaded. Only the selected skill and the job's prepared media are mounted read-only. MCP serves the job
+manifest and listed images.
 
 One generation runs at a time, with a ten-minute deadline; builds have a thirty-minute deadline.
 Cancellation waits for this job's workers and container to exit and does not interrupt unrelated
