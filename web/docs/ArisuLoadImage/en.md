@@ -36,10 +36,12 @@ Blank names display the original root-relative location, and hovering a bookmark
 location. Existing unnamed bookmarks still work. Bookmarks do not grant access.
 
 In **ComfyUI Settings → Arisu → LoadImage**, set **Load Image (Browse): default location** to
-`input`, `output`, or an administrator-configured root. It defaults to `input` and applies only
-when Browse opens with no image selected. Saved bookmarks are not included. If the chosen root
-is removed or unavailable, Browse falls back to `input`. Changing this preference does not select
-an image or change a workflow's node values.
+`input`, `output`, an administrator-configured root, or a saved bookmark, listed by name. It
+defaults to `input` and applies only when Browse opens with no image selected. Renaming a bookmark
+keeps it chosen. If the chosen root is removed or unavailable, Browse falls back to `input`; if the
+chosen bookmark was removed or its directory no longer opens, the preference is reset to `input`
+and Browse warns you. Changing this preference does not select an image or change a workflow's
+node values.
 
 Legacy absolute bookmarks are not imported, and old absolute workflow paths must be reselected.
 Reopening a saved ComfyUI workflow, refreshing it, switching existing tabs, and undo/redo within
@@ -77,13 +79,14 @@ edit this allowlist.
 
 The crop dialog shows the picked file with a box over it. Drag on the image to draw a box, drag the
 box to move it, and pull its handles to resize it; the readout gives the box in pixels. The **ratio**
-menu sets an aspect ratio: a preset (`1:1`, `3:2`, `2:3`, `4:3`, `3:4`, `16:9`, `9:16`), or
-`custom`, which shows a width and a height field, makes the box the largest one of that ratio in the
-image and holds it while you drag; `free` leaves the box as it is and lets it take any shape. The
-choice is remembered for the picked image and starts over as `free` on another one. **reset** is the
-whole image at `free`, which is no crop at all; **apply** stores the box and the node previews the
-cropped image at the cropped size. Nothing is resized or padded, and picking another file drops the
-crop.
+menu sets an aspect ratio: a preset (`1:1`, `3:2`, `2:3`, `4:3`, `3:4`, `16:9`, `9:16`, `21:9`)
+makes the box the largest one of that ratio in the image and holds it while you drag; `free` leaves
+the box as it is and lets it take any shape. **apply** saves both the box and the selected ratio,
+including `free`, with the workflow. Reopening restores that applied choice without guessing from
+the crop dimensions. Older workflows without a saved choice start at `free`, keeping their crop.
+**cancel**, Escape, and clicking the backdrop discard both draft changes. **reset** selects the
+whole image at `free`; apply it to remove the crop. The node previews the cropped image at its own
+size. Nothing is resized or padded, and picking another file drops the crop and its saved ratio.
 
 ## Outputs
 

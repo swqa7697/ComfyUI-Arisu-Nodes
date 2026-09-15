@@ -16,13 +16,20 @@ sets both on one conditioning.
 | `clip`               | CLIP   | The MiniMax H3 text encoder (Qwen3-VL).                                                            |
 | `vae`                | VAE    | Video VAE; encodes keyframes and visual references.                                                |
 | `audio_vae`          | VAE    | Optional. Audio VAE, needed only when a reference audio or a reference video soundtrack is connected. |
+| `video_settings`     | ARISU_MINIMAX_H3_VIDEO_SETTINGS | Optional. The bundle of a **MiniMax H3 Video Settings** node; its canvas and length replace `width`, `height` and `length`, whose widgets grey out while it is wired or advertised. Its aspect ratio is not used here. |
+| `resources`          | ARISU_MINIMAX_H3_RESOURCES | Optional. A **MiniMax H3 Resource Studio** bundle replacing every keyframe and reference input; see the end of this page. |
 | `prompt`             | STRING | Prompt. Refer to references with the same `<Picture i>` / `<Video k>` / `<Audio j>` tags.          |
-| `width`, `height`    | INT    | Canvas in pixels, multiples of 32 (default 1344 x 768). Wire them from a **MiniMax H3 Video Settings** node, or let one advertise; see the notes. |
-| `length`             | INT    | Frame count at 24 fps, snapped up to the 17k+5 grid (default 124, about 5 s). Same sources as the canvas. |
+| `width`, `height`    | INT    | Canvas in pixels, multiples of 32 (default 1344 x 768). Overridden by `video_settings`; otherwise wire any INT source. |
+| `length`             | INT    | Frame count at 24 fps, snapped up to the 17k+5 grid (default 124, about 5 s). Overridden by `video_settings` likewise. |
 | `ref_image_size`     | COMBO  | `match` scales each reference image down to the generation's pixel area; `max` caps its short edge at 2048 px. |
 | `frame_picture_tags` | COMBO  | How the keyframes appear to the text encoder; see below.                                           |
-| `first_frame`        | IMAGE  | Optional keyframe pinned at frame 0. Stretched to the canvas.                                      |
-| `last_frame`         | IMAGE  | Optional keyframe pinned at the last frame. Center-cropped to the canvas.                          |
+| `first_frame`        | IMAGE  | Optional keyframe pinned at frame 0. Fitted to the canvas as its keyframe settings say.            |
+| `last_frame`         | IMAGE  | Optional keyframe pinned at the last frame. Fitted likewise, with its own settings.                |
+| `keyframes…`         | button | Open the dialog that edits the eight keyframe settings below, a **first frame** and a **last frame** section. **reset** puts them back to their defaults. |
+| `<frame>_resize_method` | combo | Settings dialog, once per keyframe. `nearest-exact`, `bilinear`, `area`, `bicubic` or `lanczos` (default). |
+| `<frame>_mode`       | combo  | Settings dialog. How the keyframe reaches the canvas: `crop` (default) cuts it to the canvas aspect first, `pad` fits it inside and fills the rest with its pad colour, `stretch` ignores the aspect ratio. |
+| `<frame>_pad_color`  | STRING | Settings dialog. The `pad` fill (default `0, 0, 0`), in the forms **Resize Image** accepts; the dialog has a colour picker beside it. |
+| `<frame>_crop_position` | combo | Settings dialog. Where the keyframe stays (default `center`): the region kept in `crop`, the side it sits on in `pad`. |
 | `ref_image_N`        | IMAGE  | Up to 9 reference images, `<Picture i>`.                                                           |
 | `ref_video_N`        | IMAGE  | Up to 3 reference clips as frame batches at 24 fps, `<Video k>`. Cropped to the video's length and to the 17k+5 grid; at least 5 frames. |
 | `ref_video_audio_N`  | AUDIO  | Soundtrack of the same-numbered reference video. Gets its own `<Audio j>` label right before the video. |
@@ -52,15 +59,35 @@ decides where they go:
 In every mode the keyframes are sent to the model once, as keyframes. They never become extra
 reference blocks.
 
+## Keyframe fitting
+
+A keyframe always lands on exactly `width` x `height`: the pixel grid is the model's 32, fixed, and
+**Resize Image**'s `resize` mode, which would leave the frame smaller, is not offered. The eight
+settings are ordinary inputs the pack's frontend script hides; they are saved with the workflow and
+sent with the prompt, so an API-format export must carry them. A frame that already has the canvas
+size is passed to the VAE untouched. Keyframes from **Resource Studio** arrive as their integer crop,
+whose aspect can differ from the canvas by a pixel, so `pad` may leave a one-pixel stripe and `crop`
+may trim one.
+
 ## Notes
 
-- When a **MiniMax H3 Video Settings** node in the same graph advertises, `width`, `height` and
-  `length` come from it: the widgets grey out, a link into them is refused, and one already there is
-  removed with a notice. Inside a subgraph, wire the settings node's outputs into these inputs
-  instead; advertising covers the root graph only.
+- When `video_settings` is wired, or a **MiniMax H3 Video Settings** node in the root graph
+  advertises, `width`, `height` and `length` come from the bundle: the widgets grey out, a link into
+  them is refused, and one already there is removed with a notice. While a settings node advertises,
+  the `video_settings` socket is greyed too and an explicit wire into it is dropped. Inside a
+  subgraph, wire `video_settings` explicitly; advertising covers the root graph only.
+- A bundle from a muted, bypassed or missing settings node rejects the prompt at queue time; the
+  greyed widget values are never a fallback. API-format prompts may carry the bundle or the individual
+  values; when both are present the bundle wins.
 - Reference order in the prompt is fixed: images, then videos (each soundtrack's `<Audio j>` right
   before its `<Video k>`), then standalone audio. Ordinals are 1-based per type.
 - The output conditioning is compatible with **Add Guide for MiniMax H3**, which can be chained
   after this node to anchor more frames.
 - Pair the model with **ModelSamplingMiniMaxH3** (video shift 12.0, audio shift 3.0) as with the
   stock nodes. Batch size is 1.
+
+## Resource Studio input
+
+Connect the optional `resources` input from **MiniMax H3 Resource Studio**, or enable Studio's root-graph advertising. Bundle ownership hides and disconnects individual keyframe/reference inputs. While advertising, `resources` remains visible but disabled and disconnected. Releasing ownership restores empty sockets; Undo can restore the previous wires. Direct API calls cannot combine a bundle with populated individual resource inputs.
+
+An empty bundle intentionally supplies no resources. Hybrid validates source revisions, reads original cropped pixels, and performs consumer-specific resizing. It samples selected videos at 24 fps, caps them to generation length, and aligns down to `17k+5`; paired audio follows the effective video interval. Standalone audio keeps its own selection. Muted sources are excluded, and an audio VAE is needed only when active resources emit audio. The Advanced variant derives each distinct canvas directly from original cropped pixels.

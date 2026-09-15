@@ -9,23 +9,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Add MiniMax H3 Resource Studio to arrange, crop, trim, and mute keyframes and mixed media references, with timeline clip editing, media previews, and original-source Hybrid processing.
+- Add MiniMax H3 Prompt Workbench with editable finalized text, resource and motion-context preparation, Docker-isolated Codex/Grok generation, live agent activity, and draft review before Apply.
+- Bundle `with-ref` (default) and `no-ref` Prompt Workbench skills, support administrator-owned custom skills, and provide shared agent management with login, logs, and an optional Agents menu shortcut.
+- Add aspect-ratio and `video_settings` bundle outputs to both MiniMax H3 Video Settings nodes, with bundle inputs on both Hybrid variants.
+- Add per-keyframe resize, crop, pad, and stretch settings to both MiniMax H3 Hybrid nodes.
 - Add inline names and renaming for saved Load Image browse paths.
-- Add a ComfyUI setting for the default Load Image browse root when no image is selected.
+- Add a ComfyUI setting for the default Load Image browse location, supporting configured roots and named bookmarks with fallback to `input`.
 
 ### Changed
 
-- Move the Load Image input and output directory shortcuts beside up in the browse toolbar to free sidebar space.
+- Coordinate MiniMax H3 settings and resource advertising across queueing and API exports, rejecting missing sources and conflicting resource inputs.
+- Place `video_settings` at output 0 of both Video Settings nodes; rewire existing outputs to their shifted slots or use the updated example workflow.
+- Rename Video Settings `advertise` to `advertise_settings`; saved workflows retain the flag, but API-format exports must use the new key.
+- Center-crop the first Hybrid keyframe by default instead of stretching it; API-format exports must supply the eight `first_frame_*` / `last_frame_*` fitting keys.
+- Replace custom crop ratios with Free for unmatched saved crops and add a `21:9` preset.
+- Improve Browse with media loading indicators and queued thumbnail requests, and move Load Image input/output shortcuts into the toolbar.
+- Refresh the Arisu icon and add a light variant for the Agents shortcut.
 
 ### Fixed
 
-- Restore each Arisu node's saved dimensions when reopening a workflow, including manually minimized nodes.
+- Preserve each image's applied crop ratio across Load Image and Resource Studio workflow reloads, including Free, and discard draft changes on cancellation.
+- Preserve Hybrid dimensions across resource ownership changes and restore all Arisu nodes' saved sizes when reopening workflows, including manually minimized nodes.
 
 ## [1.1.2] - 2026-09-11
 
 ### Added
 
 - Show the selected Load Image filename above Browse, with the full name available on hover.
-
 - Add Codex project support with shared agent rules, a release PR skill, and a linked ComfyUI environment template.
 
 ### Changed
@@ -35,7 +46,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Handle static images only in Load Image (Browse): Browse no longer lists animated PNG, WebP or AVIF files, and the output is always one image.
 - Show the browse dialog's current path as read-only text; navigate with the tree, up, roots, saved locations and thumbnails.
 - Clear Load Image selections silently, including when removing legacy location wires.
-
 - Preserve Load Image selections when reopening saved workflows or existing tabs, and require Browse reselection after workflow imports, insertion, or node/workflow duplication.
 
 ### Fixed

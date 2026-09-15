@@ -18,7 +18,7 @@ from typing import Any, Dict, List, Mapping, Optional, Tuple
 logger = logging.getLogger(__name__)
 CONFIG_NAME = "config.arisu.jsonc"
 CONFIG_TEMPLATE = """{
-  // Add existing absolute image directories, for example "photos": "/data/photos".
+  // Add existing absolute image/media directories, for example "photos": "/data/photos".
   // Only allow directories you intend clients of this server to access.
   // Restart ComfyUI after editing this file. Trailing commas are not supported.
   "roots": {}
@@ -136,6 +136,12 @@ def initialize_roots(directory: Path):
         if directory.is_symlink():
             raise ValueError("configuration directory must not be a symlink")
         directory.mkdir(exist_ok=True)
+        skills = directory / "skills"
+        try:
+            if not skills.is_symlink():
+                skills.mkdir(exist_ok=True)
+        except OSError:
+            logger.exception("Cannot create the custom skills directory in the system-user directory.")
         config = directory / CONFIG_NAME
         if config.is_symlink() or config.resolve().parent != directory:
             raise ValueError("configuration file must remain in the system directory")

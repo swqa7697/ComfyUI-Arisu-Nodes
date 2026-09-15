@@ -2,12 +2,13 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { extensionNamed, resetApp } from '../support/app.mjs';
+import { app, extensionNamed, resetApp } from '../support/app.mjs';
 import { resetDom } from '../support/dom.mjs';
 import { makeGraph, makeNode } from '../support/litegraph.mjs';
 import '../../../web/js/common/load_image.js';
 import '../../../web/js/common/path_builder.js';
 import '../../../web/js/common/node_size.js';
+import '../../../web/js/minimax_h3/settings_broadcast.js';
 
 const extension = extensionNamed('Arisu.Common.NodeSize');
 
@@ -18,7 +19,7 @@ function finishLoad(node) {
   extension.loadedGraphNode(node);
 }
 
-test('workflow loads restore independent saved sizes after widget hiding and frontend expansion without changing interactive resizing', () => {
+test('workflow loads restore independent saved sizes after widget hiding and frontend expansion without changing interactive resizing', async () => {
   const root = makeGraph();
   const subgraph = makeGraph('nested');
   resetApp(root);
@@ -129,4 +130,132 @@ test('workflow loads restore independent saved sizes after widget hiding and fro
   const other = makeNode({ id: 4, type: 'PreviewImage', graph: root });
   extension.loadedGraphNode(other);
   assert.deepEqual(other.size, [300, 100]);
+
+  // Advertising settles after loadedGraphNode. Classic canvas can expand a compact
+  // node in the intervening frames while LiteGraph's array merge retains old slots.
+  const broadcast = extensionNamed('Arisu.MiniMaxH3.SettingsBroadcast');
+  const resourceRoot = makeGraph();
+  const resourceSubgraph = makeGraph('resource-subgraph');
+  resourceRoot.subgraphs = new Map([[resourceSubgraph.id, resourceSubgraph]]);
+  resetApp(resourceRoot);
+  app.configuringGraph = true;
+  const Studio = { prototype: {} };
+  broadcast.beforeRegisterNodeDef(Studio, { name: 'ArisuMiniMaxH3ResourceStudio' });
+  const studio = makeNode({
+    id: 10,
+    type: 'ArisuMiniMaxH3ResourceStudio',
+    graph: resourceRoot,
+    widgets: [{ name: 'advertise_resources', value: true }],
+  });
+  Studio.prototype.onAdded.call(studio);
+  const consumers = [
+    ['ArisuMiniMaxH3HybridToVideo', resourceRoot],
+    ['ArisuMiniMaxH3HybridToVideoAdvanced', resourceRoot],
+    ['ArisuMiniMaxH3HybridToVideo', resourceSubgraph],
+  ].map(([type, graph], index) => {
+    const definition = { prototype: {} };
+    // Both hook registration orders must capture and restore the same dimensions.
+    if (index === 0) extension.beforeRegisterNodeDef(definition, { name: type });
+    broadcast.beforeRegisterNodeDef(definition, { name: type });
+    if (index !== 0) extension.beforeRegisterNodeDef(definition, { name: type });
+    const inputs = [
+      { name: 'clip', link: null },
+      { name: 'resources', link: graph === resourceSubgraph ? 100 : null },
+      { name: 'first_frame', link: null },
+      { name: 'ref_images.ref_image_0', link: null },
+    ];
+    const node = makeNode({ id: index + 11, type, graph, inputs });
+    node.computeSize = () => [300, 140 + 20 * node.inputs.length];
+    definition.prototype.onAdded.call(node);
+    return { node, definition, inputs };
+  });
+  const previousFrame = globalThis.requestAnimationFrame;
+  const frames = [];
+  globalThis.requestAnimationFrame = (callback) => frames.push(callback);
+  async function frame() {
+    for (const callback of frames.splice(0)) callback();
+    await Promise.resolve();
+  }
+  function configureResources(height) {
+    app.configuringGraph = true;
+    for (const [index, { node, definition, inputs }] of consumers.entries()) {
+      node.inputs = structuredClone(inputs);
+      // cloneObject copies saved indices without truncating the schema array.
+      Object.assign(node.inputs, structuredClone(inputs.slice(0, 2)));
+      definition.prototype.onConfigure.call(node, { size: [420 + index * 30, height] });
+      finishLoad(node);
+    }
+    return broadcast.afterConfigureGraph();
+  }
+  async function settleResources(loading) {
+    await frame();
+    await frame();
+    await loading;
+    app.configuringGraph = false;
+  }
+  try {
+    for (const height of [180, 700]) {
+      const loading = configureResources(height);
+      // Simulate the canvas's grow-only arrangement while extra slots still exist.
+      for (const { node } of consumers) node.setSize([node.size[0], Math.max(node.size[1], node.computeSize()[1])]);
+      await frame();
+      assert(consumers.every(({ node }) => node.inputs.length === 4));
+      await frame();
+      await loading;
+      app.configuringGraph = false;
+      for (const [index, { node }] of consumers.entries()) {
+        assert.deepEqual(
+          node.inputs.map((input) => input.name),
+          ['clip', 'resources'],
+        );
+        assert.deepEqual(node.size, [420 + index * 30, height]);
+        node.setSize([500 + index, 240]);
+      }
+      assert.equal(studio.widgets[0].value, true);
+      await broadcast.afterConfigureGraph();
+      await frame();
+      for (const [index, { node }] of consumers.entries()) assert.deepEqual(node.size, [500 + index, 240]);
+    }
+
+    // A new configure invalidates an older restore even when ownership stays on.
+    const older = configureResources(180);
+    const newer = configureResources(650);
+    await settleResources(Promise.all([older, newer]));
+    assert(consumers.every(({ node }) => node.size[1] === 650));
+
+    // Turning advertising off before cleanup must keep the new fitted height.
+    const released = configureResources(700);
+    app.configuringGraph = false;
+    studio.widgets[0].value = false;
+    studio.widgets[0].callback(false);
+    await settleResources(released);
+    assert.deepEqual(consumers[0].node.size, [420, 220]);
+    assert.equal(consumers[0].node.inputs.length, 4);
+    assert.deepEqual(consumers[2].node.size, [480, 700]);
+
+    // Removal and graph replacement discard both deferred cleanup and restoration.
+    studio.widgets[0].value = true;
+    const removed = configureResources(700);
+    const detached = consumers[0];
+    detached.definition.prototype.onRemoved.call(detached.node);
+    resourceRoot.nodes.splice(resourceRoot.nodes.indexOf(detached.node), 1);
+    detached.node.graph = null;
+    detached.node.setSize([510, 260]);
+    await settleResources(removed);
+    assert.deepEqual(detached.node.size, [510, 260]);
+    assert.equal(detached.node.inputs.length, 4);
+    consumers.shift();
+    const replaced = configureResources(700);
+    resetApp(makeGraph());
+    for (const { node } of consumers) node.setSize([530, 270]);
+    await settleResources(replaced);
+    for (const { node } of consumers) {
+      assert.deepEqual(node.size, [530, 270]);
+      assert.equal(node.inputs.length, 4);
+    }
+  } finally {
+    if (previousFrame === undefined) delete globalThis.requestAnimationFrame;
+    else globalThis.requestAnimationFrame = previousFrame;
+    app.configuringGraph = false;
+  }
 });

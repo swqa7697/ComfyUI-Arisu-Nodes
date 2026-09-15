@@ -26,7 +26,7 @@ Everything from **MiniMax H3 Hybrid to Video** (see its help page) plus:
 
 | Parameter                         | Type | Description                                                                                  |
 |-----------------------------------|------|----------------------------------------------------------------------------------------------|
-| `target_width`, `target_height`   | INT  | Size of the upscaled video in pixels, multiples of 32 (default 2688 x 1536). Set them to what the latent upscaler outputs. An advertising **MiniMax H3 Video Settings (Upscale)** node drives them like the canvas; the plain settings variant leaves them manual. |
+| `target_width`, `target_height`   | INT  | Size of the upscaled video in pixels, multiples of 32 (default 2688 x 1536). Set them to what the latent upscaler outputs. A **MiniMax H3 Video Settings (Upscale)** bundle on `video_settings`, wired or advertised, drives them like the canvas and greys the widgets; the plain settings variant's bundle carries no target and leaves them manual. |
 
 ## Outputs
 
@@ -65,8 +65,13 @@ sure its multiplier lands on them after its 32-pixel alignment.
   768-short-edge canvas), so they are encoded once and shared.
 - The text encoder sees the keyframes and references at the generation size only, because the prompt
   is encoded once; `frame_picture_tags` works as in the hybrid node.
-- The same crop policy applies at both sizes: `first_frame` is stretched, `last_frame` is
-  center-cropped. Keep the target aspect equal to the generation aspect unless you want a different
-  crop in the second pass.
+- Each keyframe's settings from the **keyframes…** dialog apply at both sizes. Keep the target aspect
+  equal to the generation aspect unless you want a different crop or padding in the second pass.
 - Keyframes added later by **Add Guide for MiniMax H3** or a motion-context node are not covered;
   add them against the latent of the pass they belong to.
+
+## Resource Studio input
+
+Connect the optional `resources` input from **MiniMax H3 Resource Studio**, or enable Studio's root-graph advertising. Bundle ownership hides and disconnects individual keyframe/reference inputs. While advertising, `resources` remains visible but disabled and disconnected. Releasing ownership restores empty sockets; Undo can restore the previous wires. Direct API calls cannot combine a bundle with populated individual resource inputs.
+
+An empty bundle intentionally supplies no resources. Hybrid validates source revisions, reads original cropped pixels, and performs consumer-specific resizing. It samples selected videos at 24 fps, caps them to generation length, and aligns down to `17k+5`; paired audio follows the effective video interval. Standalone audio keeps its own selection. Muted sources are excluded, and an audio VAE is needed only when active resources emit audio. The Advanced variant derives each distinct canvas directly from original cropped pixels.

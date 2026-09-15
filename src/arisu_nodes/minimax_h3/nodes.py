@@ -5,37 +5,53 @@ Importing this module requires ComfyUI's source tree and virtual environment
 
 The tensor helpers mirror ``comfy_extras/nodes_minimax_h3.py`` (v0.34.5) rather
 than importing its underscore-private names, so a ComfyUI rename cannot break
-the pack at import time.
+the pack at import time. Keyframes are fitted to the canvas with **Resize
+Image**'s geometry (``common.core.resize_plan``) and pixel path
+(``common.nodes.apply_resize_plan``), as the per-keyframe settings say.
 """
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Sequence, Tuple, Type
+import hashlib
+from dataclasses import asdict
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Type, Union
 
 import comfy.model_management
 import comfy.nested_tensor
 import comfy.sd
-import comfy.utils
+import folder_paths
 import node_helpers
 import torch
 import torchaudio
 from comfy_api.latest import io
 from nodes import MAX_RESOLUTION
+from PIL import Image
 
+from ..common.core import CROP_POSITIONS, DEFAULT_PAD_COLOR, KEYFRAME_MODES, RESIZE_METHODS, FrameFit, resize_plan
+from ..common.nodes import apply_resize_plan, pad_color_error
+from ..common.paths import image_roots
 from .core import (
     ASPECT_RATIO_LABELS,
     AUDIO_CHANNELS,
     AUDIO_LATENT_CHANNELS,
+    CANVAS_MULTIPLE,
+    EMPTY_RESOURCES,
     FRAME_TAG_MODES,
+    MOTION_WINDOWS,
     REF_IMAGE_SIZE_MODES,
     VIDEO_LATENT_CHANNELS,
+    PreparationError,
+    ResourceBundle,
+    VideoSettings,
     align_clip_frames,
     canvas_from_megapixels,
     frame_needs_resize,
     frames_for_duration,
     keyframe_canvases,
     latent_size,
+    motion_tail,
     order_picture_items,
+    parse_resources,
     qwen_sample_indices,
     qwen_timestamps,
     ref_image_canvas,
@@ -43,51 +59,64 @@ from .core import (
     scaled_canvas,
     soundtrack_key,
     temporal_shape,
+    validate_bundle,
+    workbench_samples,
 )
+from .media import build_bundle, read_audio, read_image, read_video, source_fingerprint, validate_source
+from .workbench import motion_key
+from .workbench import service as workbench_service
 
 RefItem = Dict[str, Any]
 RefBlock = Dict[str, Any]
 Conditioning = List[List[Any]]
-# A keyframe before it is fitted to a canvas: (frames [1, H, W, C], crop mode, resolved frame index).
-KeyframeSource = Tuple[torch.Tensor, str, int]
+# A keyframe before it is fitted to a canvas: (frames [1, H, W, C], how to fit them, resolved frame index).
+KeyframeSource = Tuple[torch.Tensor, FrameFit, int]
+# References are lanczos-stretched to their canvas, as the stock node does.
+STRETCH_FIT = FrameFit("lanczos", "stretch", DEFAULT_PAD_COLOR, "center")
+_KEYFRAME_METHOD_TOOLTIP = (
+    "Keyframes dialog. How the {label} is resampled; lanczos is the sharpest for photos, nearest-exact keeps hard edges."
+)
+_KEYFRAME_MODE_TOOLTIP = (
+    "Keyframes dialog. How the {label} reaches the canvas: crop cuts it to the canvas aspect first, pad fits it inside and fills "
+    "the rest with its pad colour, stretch ignores the aspect ratio. The canvas is always exactly width x height."
+)
+_KEYFRAME_PAD_COLOR_TOOLTIP = (
+    "Keyframes dialog. The pad fill of the {label}: r, g, b (0-255, or 0.0-1.0 with a decimal point), #rrggbb, one grey value, "
+    "or a colour name."
+)
+_KEYFRAME_POSITION_TOOLTIP = "Keyframes dialog. Where the {label} stays: the region kept in crop, the side it sits on in pad."
+_KEYFRAME_TOOLTIP = (
+    "Keyframe pinned at {where}; fitted to the canvas as its keyframes dialog settings say (lanczos, crop, center by default)."
+)
 
 
-def resize_frames(image: torch.Tensor, width: int, height: int, crop: str) -> torch.Tensor:
-    """Lanczos-resize an image batch to ``width`` x ``height``, dropping any alpha channel.
-
-    Args:
-        image: Frames shaped ``[B, H, W, C]`` in the 0-1 range.
-        width: Target width in pixels.
-        height: Target height in pixels.
-        crop: ``"disabled"`` for a plain stretch or ``"center"`` for an aspect-preserving cover-crop.
-
-    Returns:
-        Frames shaped ``[B, height, width, 3]``.
-    """
-    samples = image[..., :3].movedim(-1, 1)
-    samples = comfy.utils.common_upscale(samples, width, height, "lanczos", crop)
-    return samples.movedim(1, -1)
-
-
-def fit_frames(image: torch.Tensor, width: int, height: int, crop: str) -> torch.Tensor:
-    """Fit an image batch to ``width`` x ``height``, skipping the resize when it already matches.
+def fit_frames(image: torch.Tensor, width: int, height: int, fit: FrameFit) -> torch.Tensor:
+    """Fit an image batch to ``width`` x ``height`` as ``fit`` says, skipping the resize when it already matches.
 
     ComfyUI's lanczos path round-trips through 8-bit images even at the same
     size, so a batch that already has the canvas size is passed through as is,
-    minus any alpha channel.
+    minus any alpha channel. Otherwise ``core.resize_plan`` works out the crop,
+    scale and pad on the model's 32-pixel canvas grid and ``apply_resize_plan``
+    moves the pixels.
 
     Args:
         image: Frames shaped ``[B, H, W, C]`` in the 0-1 range.
         width: Canvas width in pixels.
         height: Canvas height in pixels.
-        crop: ``"disabled"`` for a plain stretch or ``"center"`` for an aspect-preserving cover-crop.
+        fit: The resampler, mode, pad colour and crop position.
 
     Returns:
         Frames shaped ``[B, height, width, 3]``.
+
+    Raises:
+        ValueError: For a mode outside ``KEYFRAME_MODES``; a keyframe must land on exactly the canvas.
     """
-    if frame_needs_resize(image.shape, width, height):
-        return resize_frames(image, width, height, crop)
-    return image[..., :3]
+    if fit.mode not in KEYFRAME_MODES:
+        raise ValueError(f"unknown keyframe mode {fit.mode!r}")
+    if not frame_needs_resize(image.shape, width, height):
+        return image[..., :3]
+    plan = resize_plan((image.shape[2], image.shape[1]), width, height, fit.mode, fit.crop_position, CANVAS_MULTIPLE)
+    return apply_resize_plan(image[..., :3], plan, fit.resize_method, fit.pad_color)
 
 
 def encode_ref_audio(audio_vae: comfy.sd.VAE, audio: Dict[str, Any]) -> Tuple[torch.Tensor, int]:
@@ -156,7 +185,7 @@ def _encode_ref_images(
             size = ref_image_canvas(img.shape[2], img.shape[1], canvas_w, canvas_h, ref_image_size)
             block = encoded.get(size)
             if block is None:
-                resized = resize_frames(img[:1], size[0], size[1], "disabled")
+                resized = fit_frames(img[:1], size[0], size[1], STRETCH_FIT)
                 if not encoded:
                     # the text encoder sees the reference at the generation canvas only
                     items.append({"type": "image", "data": resized})
@@ -183,7 +212,7 @@ def _encode_ref_videos(
         soundtrack = ref_video_audios.get(soundtrack_key(name))
         canvas_w, canvas_h = ref_video_canvas(video_frames.shape[2], video_frames.shape[1])
         n_frames = align_clip_frames(video_frames.shape[0], frame_count)
-        frames = resize_frames(video_frames[:n_frames], canvas_w, canvas_h, "disabled")
+        frames = fit_frames(video_frames[:n_frames], canvas_w, canvas_h, STRETCH_FIT)
         z = vae.encode(frames)
         audio_latent: Optional[torch.Tensor] = None
         ref_audio_t = 0
@@ -224,19 +253,19 @@ def _encode_ref_audios(
     return items, blocks
 
 
-def _keyframe_sources(first_frame: Optional[torch.Tensor], last_frame: Optional[torch.Tensor], frame_count: int) -> List[KeyframeSource]:
+def _keyframe_sources(
+    first_frame: Optional[torch.Tensor], first_fit: FrameFit, last_frame: Optional[torch.Tensor], last_fit: FrameFit, frame_count: int
+) -> List[KeyframeSource]:
     sources: List[KeyframeSource] = []
     if first_frame is not None:
-        # geometry anchor: plain stretch to canvas
-        sources.append((first_frame[:1], "disabled", 0))
+        sources.append((first_frame[:1], first_fit, 0))
     if last_frame is not None:
-        # follower: aspect-preserving cover-crop
-        sources.append((last_frame[:1], "center", frame_count - 1))
+        sources.append((last_frame[:1], last_fit, frame_count - 1))
     return sources
 
 
 def _fit_keyframes(sources: Sequence[KeyframeSource], width: int, height: int) -> List[torch.Tensor]:
-    return [fit_frames(img, width, height, crop) for img, crop, _index in sources]
+    return [fit_frames(img, width, height, fit) for img, fit, _index in sources]
 
 
 def encode_hybrid(
@@ -250,6 +279,8 @@ def encode_hybrid(
     frame_picture_tags: str,
     first_frame: Optional[torch.Tensor],
     last_frame: Optional[torch.Tensor],
+    first_fit: FrameFit,
+    last_fit: FrameFit,
     ref_images: Dict[str, Optional[torch.Tensor]],
     ref_videos: Dict[str, Optional[torch.Tensor]],
     ref_video_audios: Dict[str, Optional[Dict[str, Any]]],
@@ -275,6 +306,8 @@ def encode_hybrid(
         frame_picture_tags: One of ``FRAME_TAG_MODES``.
         first_frame: Optional keyframe pinned at frame 0.
         last_frame: Optional keyframe pinned at the last frame.
+        first_fit: How ``first_frame`` is fitted to each canvas.
+        last_fit: How ``last_frame`` is fitted to each canvas.
         ref_images: Autogrow slot dict of reference images.
         ref_videos: Autogrow slot dict of reference clips.
         ref_video_audios: Autogrow slot dict of reference clip soundtracks.
@@ -287,7 +320,7 @@ def encode_hybrid(
     width, height = canvases[0]
     latent, frame_count = empty_av_latent(width, height, length)
 
-    sources = _keyframe_sources(first_frame, last_frame, frame_count)
+    sources = _keyframe_sources(first_frame, first_fit, last_frame, last_fit, frame_count)
     base_frames = _fit_keyframes(sources, width, height)
     frame_items: List[RefItem] = [{"type": "image", "data": img} for img in base_frames]
 
@@ -310,7 +343,7 @@ def encode_hybrid(
         values: Dict[str, Any] = {"minimax_refs": ref_blocks} if ref_blocks else {}
         if sources:
             values["minimax_keyframes"] = [
-                {"resolved_frame_index": index, "latent": vae.encode(img)} for img, (_src, _crop, index) in zip(frames, sources)
+                {"resolved_frame_index": index, "latent": vae.encode(img)} for img, (_src, _fit, index) in zip(frames, sources)
             ]
         conds.append(node_helpers.conditioning_set_values(cond, values) if values else cond)
     return conds, latent
@@ -325,10 +358,55 @@ def _hybrid_inputs_head() -> List[io.Input]:
             optional=True,
             tooltip="Audio VAE, needed only when a reference audio or a reference video soundtrack is connected.",
         ),
+        io.Custom("ARISU_MINIMAX_H3_VIDEO_SETTINGS").Input(
+            "video_settings",
+            optional=True,
+            tooltip=(
+                "Bundle from a MiniMax H3 Video Settings node. Overrides width, height and length, and the target size "
+                "when it carries one; the frontend greys those widgets while it is wired or advertised."
+            ),
+        ),
+        io.Custom("ARISU_MINIMAX_H3_RESOURCES").Input("resources", optional=True),
         io.String.Input("prompt", multiline=True, dynamic_prompts=True),
         io.Int.Input("width", default=1344, min=32, max=MAX_RESOLUTION, step=32),
         io.Int.Input("height", default=768, min=32, max=MAX_RESOLUTION, step=32),
     ]
+
+
+def _keyframe_fit_inputs(prefix: str) -> List[io.Input]:
+    """The four **Resize Image** settings of one keyframe, ordinary inputs the frontend hides behind the keyframes button.
+
+    Args:
+        prefix: The keyframe input's id, ``first_frame`` or ``last_frame``.
+
+    Returns:
+        The resampler, mode, pad colour and crop position inputs named ``<prefix>_<setting>``.
+    """
+    label = prefix.replace("_", " ")
+    return [
+        io.Combo.Input(
+            f"{prefix}_resize_method", options=list(RESIZE_METHODS), default="lanczos", tooltip=_KEYFRAME_METHOD_TOOLTIP.format(label=label)
+        ),
+        io.Combo.Input(f"{prefix}_mode", options=list(KEYFRAME_MODES), default="crop", tooltip=_KEYFRAME_MODE_TOOLTIP.format(label=label)),
+        io.String.Input(f"{prefix}_pad_color", default=DEFAULT_PAD_COLOR, tooltip=_KEYFRAME_PAD_COLOR_TOOLTIP.format(label=label)),
+        io.Combo.Input(
+            f"{prefix}_crop_position",
+            options=list(CROP_POSITIONS),
+            default="center",
+            tooltip=_KEYFRAME_POSITION_TOOLTIP.format(label=label),
+        ),
+    ]
+
+
+def _validate_keyframe_fits(
+    first_frame_mode: Optional[str],
+    first_frame_pad_color: Optional[str],
+    last_frame_mode: Optional[str],
+    last_frame_pad_color: Optional[str],
+) -> Union[bool, str]:
+    """Refuse a keyframe pad colour its ``pad`` mode cannot fill with; ``None`` values are linked inputs the executor skips."""
+    error = pad_color_error(first_frame_mode, first_frame_pad_color) or pad_color_error(last_frame_mode, last_frame_pad_color)
+    return True if error is None else error
 
 
 def _hybrid_inputs_tail() -> List[io.Input]:
@@ -362,8 +440,10 @@ def _hybrid_inputs_tail() -> List[io.Input]:
                 "and are invisible to the prompt."
             ),
         ),
-        io.Image.Input("first_frame", optional=True, tooltip="Keyframe pinned at frame 0; stretched to the canvas."),
-        io.Image.Input("last_frame", optional=True, tooltip="Keyframe pinned at the last frame; center-cropped to the canvas."),
+        io.Image.Input("first_frame", optional=True, tooltip=_KEYFRAME_TOOLTIP.format(where="frame 0")),
+        io.Image.Input("last_frame", optional=True, tooltip=_KEYFRAME_TOOLTIP.format(where="the last frame")),
+        *_keyframe_fit_inputs("first_frame"),
+        *_keyframe_fit_inputs("last_frame"),
         io.Autogrow.Input(
             "ref_images",
             optional=True,
@@ -447,6 +527,14 @@ class ArisuMiniMaxH3HybridToVideo(io.ComfyNode):
         length: int,
         ref_image_size: str,
         frame_picture_tags: str,
+        first_frame_resize_method: str,
+        first_frame_mode: str,
+        first_frame_pad_color: str,
+        first_frame_crop_position: str,
+        last_frame_resize_method: str,
+        last_frame_mode: str,
+        last_frame_pad_color: str,
+        last_frame_crop_position: str,
         audio_vae: Optional[comfy.sd.VAE] = None,
         first_frame: Optional[torch.Tensor] = None,
         last_frame: Optional[torch.Tensor] = None,
@@ -454,6 +542,8 @@ class ArisuMiniMaxH3HybridToVideo(io.ComfyNode):
         ref_videos: Optional[Dict[str, Optional[torch.Tensor]]] = None,
         ref_video_audios: Optional[Dict[str, Optional[Dict[str, Any]]]] = None,
         ref_audios: Optional[Dict[str, Optional[Dict[str, Any]]]] = None,
+        resources: Optional[ResourceBundle] = None,
+        video_settings: Optional[VideoSettings] = None,
     ) -> io.NodeOutput:
         """Encode the hybrid conditioning and build the matching AV latent.
 
@@ -466,6 +556,14 @@ class ArisuMiniMaxH3HybridToVideo(io.ComfyNode):
             length: Requested frame count at 24 fps; snapped up to the model's 17k+5 grid.
             ref_image_size: One of ``REF_IMAGE_SIZE_MODES``.
             frame_picture_tags: One of ``FRAME_TAG_MODES``.
+            first_frame_resize_method: One of ``RESIZE_METHODS``, for ``first_frame``.
+            first_frame_mode: One of ``KEYFRAME_MODES``, for ``first_frame``.
+            first_frame_pad_color: The ``pad`` fill of ``first_frame``; see ``core.parse_pad_color``.
+            first_frame_crop_position: One of ``CROP_POSITIONS``, for ``first_frame``.
+            last_frame_resize_method: Likewise, for ``last_frame``.
+            last_frame_mode: Likewise.
+            last_frame_pad_color: Likewise.
+            last_frame_crop_position: Likewise.
             audio_vae: The audio VAE, or ``None`` when no audio reference is connected.
             first_frame: Optional keyframe pinned at frame 0.
             last_frame: Optional keyframe pinned at the last frame.
@@ -473,11 +571,19 @@ class ArisuMiniMaxH3HybridToVideo(io.ComfyNode):
             ref_videos: Autogrow slot dict of reference clips.
             ref_video_audios: Autogrow slot dict of reference clip soundtracks.
             ref_audios: Autogrow slot dict of standalone reference audios.
+            resources: A Resource Studio bundle replacing every individual keyframe and reference input.
+            video_settings: A Video Settings bundle whose canvas and length replace ``width``, ``height`` and ``length``.
 
         Returns:
             ``(positive, latent)``: the conditioning for the generation canvas and
             the empty AV latent built for it.
         """
+        if video_settings is not None:
+            width, height, length = video_settings.width, video_settings.height, video_settings.length
+        if resources is not None:
+            first_frame, last_frame, ref_images, ref_videos, ref_video_audios, ref_audios = _consume_resources(
+                resources, length, first_frame, last_frame, ref_images, ref_videos, ref_video_audios, ref_audios, audio_vae
+            )
         conds, latent = encode_hybrid(
             clip,
             vae,
@@ -489,12 +595,43 @@ class ArisuMiniMaxH3HybridToVideo(io.ComfyNode):
             frame_picture_tags,
             first_frame,
             last_frame,
+            FrameFit(first_frame_resize_method, first_frame_mode, first_frame_pad_color, first_frame_crop_position),
+            FrameFit(last_frame_resize_method, last_frame_mode, last_frame_pad_color, last_frame_crop_position),
             ref_images or {},
             ref_videos or {},
             ref_video_audios or {},
             ref_audios or {},
         )
         return io.NodeOutput(conds[0], latent)
+
+    @classmethod
+    def validate_inputs(
+        cls,
+        first_frame_mode: Optional[str] = None,
+        first_frame_pad_color: Optional[str] = None,
+        last_frame_mode: Optional[str] = None,
+        last_frame_pad_color: Optional[str] = None,
+        ref_images: Optional[Dict[str, Any]] = None,
+        ref_videos: Optional[Dict[str, Any]] = None,
+        ref_video_audios: Optional[Dict[str, Any]] = None,
+        ref_audios: Optional[Dict[str, Any]] = None,
+    ) -> Union[bool, str]:
+        """Refuse a keyframe pad colour its ``pad`` mode cannot fill with.
+
+        Args:
+            first_frame_mode: The widget value; ``None`` when fed by a link, which the executor leaves out of validation.
+            first_frame_pad_color: Likewise; only checked when the mode is ``pad`` or unknown.
+            last_frame_mode: Likewise, for ``last_frame``.
+            last_frame_pad_color: Likewise.
+            ref_images: Autogrow group rebuilt by V3 after validation-input filtering; unused here.
+            ref_videos: Likewise, for reference videos.
+            ref_video_audios: Likewise, for reference video soundtracks.
+            ref_audios: Likewise, for standalone audio.
+
+        Returns:
+            ``True`` when the run can go ahead, otherwise the error to show.
+        """
+        return _validate_keyframe_fits(first_frame_mode, first_frame_pad_color, last_frame_mode, last_frame_pad_color)
 
 
 class ArisuMiniMaxH3HybridToVideoAdvanced(io.ComfyNode):
@@ -568,6 +705,14 @@ class ArisuMiniMaxH3HybridToVideoAdvanced(io.ComfyNode):
         length: int,
         ref_image_size: str,
         frame_picture_tags: str,
+        first_frame_resize_method: str,
+        first_frame_mode: str,
+        first_frame_pad_color: str,
+        first_frame_crop_position: str,
+        last_frame_resize_method: str,
+        last_frame_mode: str,
+        last_frame_pad_color: str,
+        last_frame_crop_position: str,
         audio_vae: Optional[comfy.sd.VAE] = None,
         first_frame: Optional[torch.Tensor] = None,
         last_frame: Optional[torch.Tensor] = None,
@@ -575,6 +720,8 @@ class ArisuMiniMaxH3HybridToVideoAdvanced(io.ComfyNode):
         ref_videos: Optional[Dict[str, Optional[torch.Tensor]]] = None,
         ref_video_audios: Optional[Dict[str, Optional[Dict[str, Any]]]] = None,
         ref_audios: Optional[Dict[str, Optional[Dict[str, Any]]]] = None,
+        resources: Optional[ResourceBundle] = None,
+        video_settings: Optional[VideoSettings] = None,
     ) -> io.NodeOutput:
         """Encode one conditioning per keyframe canvas and build the AV latent.
 
@@ -589,6 +736,14 @@ class ArisuMiniMaxH3HybridToVideoAdvanced(io.ComfyNode):
             length: Requested frame count at 24 fps; snapped up to the model's 17k+5 grid.
             ref_image_size: One of ``REF_IMAGE_SIZE_MODES``.
             frame_picture_tags: One of ``FRAME_TAG_MODES``.
+            first_frame_resize_method: One of ``RESIZE_METHODS``, for ``first_frame``.
+            first_frame_mode: One of ``KEYFRAME_MODES``, for ``first_frame``.
+            first_frame_pad_color: The ``pad`` fill of ``first_frame``; see ``core.parse_pad_color``.
+            first_frame_crop_position: One of ``CROP_POSITIONS``, for ``first_frame``.
+            last_frame_resize_method: Likewise, for ``last_frame``.
+            last_frame_mode: Likewise.
+            last_frame_pad_color: Likewise.
+            last_frame_crop_position: Likewise.
             audio_vae: The audio VAE, or ``None`` when no audio reference is connected.
             first_frame: Optional keyframe pinned at frame 0.
             last_frame: Optional keyframe pinned at the last frame.
@@ -596,6 +751,9 @@ class ArisuMiniMaxH3HybridToVideoAdvanced(io.ComfyNode):
             ref_videos: Autogrow slot dict of reference clips.
             ref_video_audios: Autogrow slot dict of reference clip soundtracks.
             ref_audios: Autogrow slot dict of standalone reference audios.
+            resources: A Resource Studio bundle replacing every individual keyframe and reference input.
+            video_settings: A Video Settings bundle whose canvas and length replace ``width``, ``height`` and
+                ``length``, and whose target, when it carries one, replaces ``target_width`` and ``target_height``.
 
         Returns:
             ``(positive, latent, positive_target)``: the conditioning for the
@@ -603,6 +761,14 @@ class ArisuMiniMaxH3HybridToVideoAdvanced(io.ComfyNode):
             whose keyframes are encoded at the target size. When the target size
             equals the generation size both conditionings are the same object.
         """
+        if video_settings is not None:
+            width, height, length = video_settings.width, video_settings.height, video_settings.length
+            if video_settings.target_width is not None and video_settings.target_height is not None:
+                target_width, target_height = video_settings.target_width, video_settings.target_height
+        if resources is not None:
+            first_frame, last_frame, ref_images, ref_videos, ref_video_audios, ref_audios = _consume_resources(
+                resources, length, first_frame, last_frame, ref_images, ref_videos, ref_video_audios, ref_audios, audio_vae
+            )
         conds, latent = encode_hybrid(
             clip,
             vae,
@@ -614,6 +780,8 @@ class ArisuMiniMaxH3HybridToVideoAdvanced(io.ComfyNode):
             frame_picture_tags,
             first_frame,
             last_frame,
+            FrameFit(first_frame_resize_method, first_frame_mode, first_frame_pad_color, first_frame_crop_position),
+            FrameFit(last_frame_resize_method, last_frame_mode, last_frame_pad_color, last_frame_crop_position),
             ref_images or {},
             ref_videos or {},
             ref_video_audios or {},
@@ -621,6 +789,35 @@ class ArisuMiniMaxH3HybridToVideoAdvanced(io.ComfyNode):
         )
         # with a single canvas both conditionings are the same object: nothing was encoded twice
         return io.NodeOutput(conds[0], latent, conds[-1])
+
+    @classmethod
+    def validate_inputs(
+        cls,
+        first_frame_mode: Optional[str] = None,
+        first_frame_pad_color: Optional[str] = None,
+        last_frame_mode: Optional[str] = None,
+        last_frame_pad_color: Optional[str] = None,
+        ref_images: Optional[Dict[str, Any]] = None,
+        ref_videos: Optional[Dict[str, Any]] = None,
+        ref_video_audios: Optional[Dict[str, Any]] = None,
+        ref_audios: Optional[Dict[str, Any]] = None,
+    ) -> Union[bool, str]:
+        """Refuse a keyframe pad colour its ``pad`` mode cannot fill with.
+
+        Args:
+            first_frame_mode: The widget value; ``None`` when fed by a link, which the executor leaves out of validation.
+            first_frame_pad_color: Likewise; only checked when the mode is ``pad`` or unknown.
+            last_frame_mode: Likewise, for ``last_frame``.
+            last_frame_pad_color: Likewise.
+            ref_images: Autogrow group rebuilt by V3 after validation-input filtering; unused here.
+            ref_videos: Likewise, for reference videos.
+            ref_video_audios: Likewise, for reference video soundtracks.
+            ref_audios: Likewise, for standalone audio.
+
+        Returns:
+            ``True`` when the run can go ahead, otherwise the error to show.
+        """
+        return _validate_keyframe_fits(first_frame_mode, first_frame_pad_color, last_frame_mode, last_frame_pad_color)
 
 
 def _settings_inputs_head() -> List[io.Input]:
@@ -656,11 +853,12 @@ def _settings_inputs_tail() -> List[io.Input]:
             tooltip="Clip length in seconds at 24 fps, snapped up to the model's 17k+5 frame grid (5.0 s = 124 frames).",
         ),
         io.Boolean.Input(
-            "advertise",
+            "advertise_settings",
             default=False,
             tooltip=(
-                "Drive every MiniMax H3 Hybrid to Video node in this graph: their size and length widgets grey out at once, "
-                "refuse links, and take these values. Off by default. Read by the frontend; the outputs stay available either way."
+                "Drive every MiniMax H3 Hybrid to Video node in this graph through their video_settings input: their size and "
+                "length widgets grey out at once and refuse links. Off by default. Read by the frontend; the outputs stay "
+                "available either way."
             ),
         ),
     ]
@@ -674,11 +872,17 @@ def _settings_outputs_head() -> List[io.Output]:
     ]
 
 
+def _settings_bundle_output() -> io.Output:
+    return io.Custom("ARISU_MINIMAX_H3_VIDEO_SETTINGS").Output(
+        "video_settings", tooltip="Every other output in one bundle, for the hybrid nodes' video_settings input."
+    )
+
+
 class ArisuMiniMaxH3VideoSettings(io.ComfyNode):
     """One place for the canvas and the clip length of a MiniMax H3 workflow.
 
     Replaces the aspect-ratio / megapixel / duration helper chains workflows
-    build from generic math nodes, and with ``advertise`` on hands the result
+    build from generic math nodes, and with ``advertise_settings`` on hands the result
     to the hybrid nodes without a link.
     """
 
@@ -688,7 +892,7 @@ class ArisuMiniMaxH3VideoSettings(io.ComfyNode):
 
         Returns:
             The schema taking an aspect ratio, a pixel budget and a duration, and returning
-            width, height and length.
+            the bundle first, then width, height, length and the ratio label.
         """
         return io.Schema(
             node_id="ArisuMiniMaxH3VideoSettings",
@@ -696,28 +900,33 @@ class ArisuMiniMaxH3VideoSettings(io.ComfyNode):
             category="Arisu Nodes/MiniMax H3",
             description=(
                 "Canvas size from an aspect ratio and a megapixel budget, and frame count from a duration in seconds, "
-                "on MiniMax H3's grids. Wire the outputs into the hybrid nodes, or switch advertise on and every "
-                "MiniMax H3 Hybrid to Video node in this graph takes them automatically."
+                "on MiniMax H3's grids. Wire video_settings into the hybrid nodes, or switch advertise_settings on and every "
+                "MiniMax H3 Hybrid to Video node in this graph takes it automatically."
             ),
             inputs=[*_settings_inputs_head(), *_settings_inputs_tail()],
-            outputs=_settings_outputs_head(),
+            outputs=[
+                _settings_bundle_output(),
+                *_settings_outputs_head(),
+                io.Combo.Output("aspect_ratio", options=list(ASPECT_RATIO_LABELS)),
+            ],
         )
 
     @classmethod
-    def execute(cls, aspect_ratio: str, megapixels: float, duration: float, advertise: bool) -> io.NodeOutput:
+    def execute(cls, aspect_ratio: str, megapixels: float, duration: float, advertise_settings: bool) -> io.NodeOutput:
         """Derive the canvas and frame count.
 
         Args:
             aspect_ratio: One of ``ASPECT_RATIO_LABELS``.
             megapixels: Pixel budget in units of 1024 x 1024.
             duration: Clip length in seconds.
-            advertise: Frontend-only flag; the backend does not read it.
+            advertise_settings: Frontend-only flag; the backend does not read it.
 
         Returns:
-            ``(width, height, length)``.
+            ``(video_settings, width, height, length, aspect_ratio)``.
         """
         width, height = canvas_from_megapixels(aspect_ratio, megapixels)
-        return io.NodeOutput(width, height, frames_for_duration(duration))
+        length = frames_for_duration(duration)
+        return io.NodeOutput(VideoSettings(width, height, length, aspect_ratio), width, height, length, aspect_ratio)
 
 
 class ArisuMiniMaxH3VideoSettingsUpscale(io.ComfyNode):
@@ -728,8 +937,8 @@ class ArisuMiniMaxH3VideoSettingsUpscale(io.ComfyNode):
         """Declare the node's id, category, inputs and outputs.
 
         Returns:
-            The settings schema with an ``upscale_factor`` input and the upscale factor and
-            target size added to the outputs.
+            The settings schema with an ``upscale_factor`` input, the bundle first among the
+            outputs, and the upscale factor and target size added to them.
         """
         return io.Schema(
             node_id="ArisuMiniMaxH3VideoSettingsUpscale",
@@ -752,15 +961,19 @@ class ArisuMiniMaxH3VideoSettingsUpscale(io.ComfyNode):
                 *_settings_inputs_tail(),
             ],
             outputs=[
+                _settings_bundle_output(),
                 *_settings_outputs_head(),
                 io.Float.Output("upscale_factor", tooltip="The factor, for a latent upscaler's multiplier input."),
                 io.Int.Output("target_width", tooltip="Upscaled width in pixels, a multiple of 32."),
                 io.Int.Output("target_height", tooltip="Upscaled height in pixels, a multiple of 32."),
+                io.Combo.Output("aspect_ratio", options=list(ASPECT_RATIO_LABELS)),
             ],
         )
 
     @classmethod
-    def execute(cls, aspect_ratio: str, megapixels: float, upscale_factor: float, duration: float, advertise: bool) -> io.NodeOutput:
+    def execute(
+        cls, aspect_ratio: str, megapixels: float, upscale_factor: float, duration: float, advertise_settings: bool
+    ) -> io.NodeOutput:
         """Derive the canvas, the upscaled target and the frame count.
 
         Args:
@@ -768,17 +981,227 @@ class ArisuMiniMaxH3VideoSettingsUpscale(io.ComfyNode):
             megapixels: Pixel budget in units of 1024 x 1024.
             upscale_factor: Factor of the latent upscale pass.
             duration: Clip length in seconds.
-            advertise: Frontend-only flag; the backend does not read it.
+            advertise_settings: Frontend-only flag; the backend does not read it.
 
         Returns:
-            ``(width, height, length, upscale_factor, target_width, target_height)``.
+            ``(video_settings, width, height, length, upscale_factor, target_width, target_height, aspect_ratio)``.
         """
         width, height = canvas_from_megapixels(aspect_ratio, megapixels)
         target_width, target_height = scaled_canvas(width, height, upscale_factor)
-        return io.NodeOutput(width, height, frames_for_duration(duration), upscale_factor, target_width, target_height)
+        length = frames_for_duration(duration)
+        bundle = VideoSettings(width, height, length, aspect_ratio, upscale_factor, target_width, target_height)
+        return io.NodeOutput(bundle, width, height, length, upscale_factor, target_width, target_height, aspect_ratio)
+
+
+def _resource_roots() -> Dict[str, str]:
+    return image_roots(folder_paths.get_input_directory(), folder_paths.get_output_directory())
+
+
+def _consume_resources(
+    resources: ResourceBundle, length: int, first: Any, last: Any, images: Any, videos: Any, soundtracks: Any, audios: Any, audio_vae: Any
+) -> Tuple[Any, ...]:
+    validate_bundle(resources)
+    if (
+        first is not None
+        or last is not None
+        or any(value is not None for group in (images, videos, soundtracks, audios) for value in (group or {}).values())
+    ):
+        raise ValueError("resources cannot be combined with individual resource inputs")
+    roots = _resource_roots()
+    # Validate the entire bundle before decoding or calling any model encoder.
+    if len(resources.images) > 9 or len(resources.videos) > 3 or len(resources.audios) > 3:
+        raise ValueError("resources exceed active reference capacities")
+    for item in resources.sources():
+        if item.muted or not item.revision:
+            raise ValueError("invalid active resource descriptor")
+        validate_source(roots, item)
+    if resources.audios or any(item.include_audio for item in resources.videos):
+        _require_audio_vae(audio_vae)
+    first = torch.from_numpy(read_image(roots, resources.first)) if resources.first else None
+    last = torch.from_numpy(read_image(roots, resources.last)) if resources.last else None
+    images = {f"ref_image_{i}": torch.from_numpy(read_image(roots, item)) for i, item in enumerate(resources.images)}
+    videos, soundtracks = {}, {}
+    for i, item in enumerate(resources.videos):
+        frames, audio = read_video(roots, item, temporal_shape(length)[0])
+        videos[f"ref_video_{i}"] = torch.from_numpy(frames)
+        if audio is not None:
+            soundtracks[f"ref_video_audio_{i}"] = {"waveform": torch.from_numpy(audio[0]), "sample_rate": audio[1]}
+    audios = {}
+    for i, item in enumerate(resources.audios):
+        waveform, rate = read_audio(roots, item)
+        audios[f"ref_audio_{i}"] = {"waveform": torch.from_numpy(waveform), "sample_rate": rate}
+    return first, last, images, videos, soundtracks, audios
+
+
+class ArisuMiniMaxH3ResourceStudio(io.ComfyNode):
+    """Prepare immutable source descriptions for the MiniMax H3 Hybrid nodes."""
+
+    @classmethod
+    def define_schema(cls) -> io.Schema:
+        """Declare native controls and a hidden, socketless editing-state widget."""
+        return io.Schema(
+            node_id="ArisuMiniMaxH3ResourceStudio",
+            display_name="MiniMax H3 Resource Studio",
+            category="Arisu Nodes/MiniMax H3",
+            inputs=[
+                io.Combo.Input("aspect_ratio", options=list(ASPECT_RATIO_LABELS), default="16:9 (Widescreen)"),
+                io.Boolean.Input(
+                    "advertise_resources",
+                    default=False,
+                    tooltip=(
+                        "Hand this bundle to every MiniMax H3 Hybrid to Video node in the root graph without a link; "
+                        "their resources socket greys out. Off by default. Read by the frontend."
+                    ),
+                ),
+                io.String.Input("resources_json", default=EMPTY_RESOURCES, socketless=True),
+            ],
+            outputs=[io.Custom("ARISU_MINIMAX_H3_RESOURCES").Output("resources")],
+        )
+
+    @classmethod
+    def execute(cls, aspect_ratio: str, advertise_resources: bool, resources_json: str) -> io.NodeOutput:
+        """Validate active originals and emit a description bundle, without resizing."""
+        if aspect_ratio not in ASPECT_RATIO_LABELS:
+            raise ValueError("unknown aspect_ratio")
+        bundle = build_bundle(_resource_roots(), resources_json, aspect_ratio)
+        feedback = {
+            "state": resources_json,
+            "aspect_ratio": aspect_ratio,
+            "keyframes": {key: asdict(item) if item else None for key, item in (("first", bundle.first), ("last", bundle.last))},
+        }
+        return io.NodeOutput(bundle, ui={"arisu_resources": [feedback]})
+
+    @classmethod
+    def validate_inputs(cls, resources_json: Optional[str] = None) -> Union[bool, str]:
+        """Reject malformed persisted state before executing the workflow."""
+        try:
+            if resources_json is not None:
+                parse_resources(resources_json)
+            return True
+        except (TypeError, ValueError):
+            return "invalid resource state; reselect resources"
+
+    @classmethod
+    def fingerprint_inputs(cls, resources_json: str, aspect_ratio: Optional[str] = None, **kwargs: Any) -> str:
+        """Invalidate output when an active original changes on disk."""
+        return source_fingerprint(_resource_roots(), resources_json, aspect_ratio)
+
+
+class ArisuMiniMaxH3PromptWorkbench(io.ComfyNode):
+    """Editable text on normal runs; explicitly authorized preparation on button clicks."""
+
+    @classmethod
+    def define_schema(cls) -> io.Schema:
+        """Expose native bundle sockets and persisted socketless editing controls."""
+        return io.Schema(
+            node_id="ArisuMiniMaxH3PromptWorkbench",
+            display_name="MiniMax H3 Prompt Workbench",
+            category="Arisu Nodes/MiniMax H3",
+            is_output_node=True,
+            hidden=[io.Hidden.unique_id],
+            inputs=[
+                io.Custom("ARISU_MINIMAX_H3_VIDEO_SETTINGS").Input("video_settings", optional=True, lazy=True),
+                io.Custom("ARISU_MINIMAX_H3_RESOURCES").Input("resources", optional=True, lazy=True),
+                io.Latent.Input("context_latent", optional=True, lazy=True),
+                io.Vae.Input("vae", optional=True, lazy=True),
+                io.Combo.Input("agent", options=["codex", "grok"], default="codex", socketless=True),
+                io.String.Input("skill", default="bundled:with-ref", socketless=True),
+                io.Combo.Input("context_length", options=list(MOTION_WINDOWS), default="22", socketless=True),
+                io.Int.Input("audio_context_length", default=24, min=0, max=240, socketless=True),
+                io.String.Input("motion_notes", default="", multiline=True, socketless=True),
+                io.String.Input("reference_notes", default="{}", socketless=True),
+                io.String.Input("trigger_words", default="", socketless=True),
+                io.String.Input("requirements", default="", multiline=True, socketless=True),
+                io.String.Input("finalized_prompt", default="", multiline=True, socketless=True),
+                io.String.Input("prepare_job", default="", optional=True, socketless=True),
+            ],
+            outputs=[io.String.Output("prompt")],
+        )
+
+    @classmethod
+    def check_lazy_status(cls, prepare_job: str = "", context_latent: Optional[Dict[str, Any]] = None, **kwargs: Any) -> List[str]:
+        """A normal string run never evaluates generation inputs, including the VAE."""
+        if not prepare_job:
+            return []
+        job = workbench_service().preparation(prepare_job, getattr(cls.hidden, "unique_id", None))
+        inputs = job.graph[job.node_id]["inputs"]
+        needed = [name for name in ("video_settings", "resources", "context_latent") if name in inputs]
+        if context_latent is not None and "vae" in inputs:
+            needed.append("vae")
+        return needed
+
+    @classmethod
+    def execute(
+        cls,
+        agent: str,
+        skill: str,
+        context_length: str,
+        audio_context_length: int,
+        motion_notes: str,
+        reference_notes: str,
+        trigger_words: str,
+        requirements: str,
+        finalized_prompt: str,
+        video_settings: Optional[VideoSettings] = None,
+        resources: Optional[ResourceBundle] = None,
+        context_latent: Optional[Dict[str, Any]] = None,
+        vae: Optional[comfy.sd.VAE] = None,
+        prepare_job: str = "",
+    ) -> io.NodeOutput:
+        """Return finalized text; an authorized queue request may prepare context only."""
+        if not prepare_job:
+            return io.NodeOutput(finalized_prompt)
+        owner = workbench_service()
+        job = owner.take(prepare_job, getattr(cls.hidden, "unique_id", None))
+        try:
+            job.settings, job.resources, job.roots = video_settings, resources, _resource_roots()
+            if context_latent is not None:
+                if vae is None:
+                    raise PreparationError("connect a video VAE for motion context")
+                samples = context_latent.get("samples") if isinstance(context_latent, dict) else None
+                if not isinstance(samples, (list, tuple)) or not samples:
+                    raise PreparationError("expected H3 Motion Context Load Latent output")
+                video = samples[0]
+                if not isinstance(video, torch.Tensor) or video.ndim not in (4, 5):
+                    raise PreparationError("invalid H3 context video tensor")
+                if video.ndim == 4:
+                    video = video.unsqueeze(0)
+                if video.shape[0] != 1:
+                    raise PreparationError("motion context requires one video")
+                start, end = motion_tail(video.shape[2], job.options["context_length"])
+                tail = video[:, :, start:end].contiguous()
+                if not all(tail.shape) or not torch.isfinite(tail).all():
+                    raise PreparationError("motion context contains empty dimensions or non-finite values")
+                digest = hashlib.sha256(tail.detach().float().cpu().contiguous().numpy().tobytes()).hexdigest()
+                key = motion_key(job, tail.shape, str(id(vae)) + digest)
+                if not owner.cache_motion(job, key):
+                    if job.cancelled.is_set():
+                        raise PreparationError("generation cancelled")
+                    decoded = vae.decode(tail)
+                    if decoded.ndim == 5 and decoded.shape[0] == 1:
+                        decoded = decoded[0]
+                    if decoded.ndim != 4 or decoded.shape[0] != job.options["context_length"] or decoded.shape[-1] != 3:
+                        raise PreparationError("video VAE returned an unexpected motion shape")
+                    indices = workbench_samples(decoded.shape[0])
+                    images = (decoded[indices].detach().float().cpu().clamp(0, 1).numpy() * 255).round().astype("uint8")
+                    owner.cache_motion(job, key, [Image.fromarray(image) for image in images])
+            owner.enforce_budget()
+        except Exception as error:
+            job.error = (
+                str(error)
+                if isinstance(error, PreparationError)
+                else "Motion or resource preparation failed; check inputs and server logs."
+            )
+            raise
+        finally:
+            job.preparation_done.set()
+            job.prepared.set()
+        return io.NodeOutput(finalized_prompt)
 
 
 NODES: List[Type[io.ComfyNode]] = [
+    ArisuMiniMaxH3PromptWorkbench,
+    ArisuMiniMaxH3ResourceStudio,
     ArisuMiniMaxH3HybridToVideo,
     ArisuMiniMaxH3HybridToVideoAdvanced,
     ArisuMiniMaxH3VideoSettings,

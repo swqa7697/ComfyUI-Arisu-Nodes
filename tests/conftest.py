@@ -33,6 +33,8 @@ SCRIPTS_DIR = str(Path(REPO_ROOT) / "scripts")
 if SCRIPTS_DIR not in sys.path:
     sys.path.insert(sys.path.index(REPO_ROOT) + 1, SCRIPTS_DIR)
 
+collect_ignore = [] if os.environ.get("ARISU_BROWSER_TEST") == "1" else ["browser"]
+
 COMFYUI_PATH = os.environ.get("COMFYUI_PATH")
 if COMFYUI_PATH and COMFYUI_PATH not in sys.path:
     sys.path.insert(sys.path.index(SCRIPTS_DIR) + 1, COMFYUI_PATH)
