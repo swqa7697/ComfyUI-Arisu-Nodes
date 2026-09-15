@@ -25,12 +25,12 @@ const STYLE = `
 .arisu-clip[open]::backdrop { background: rgba(0, 0, 0, 0.55); backdrop-filter: blur(3px); }
 .arisu-clip :where(button, input, select) { font: inherit; color: inherit; border: 1px solid var(--line); border-radius: 8px;
   background: var(--surface); transition: background-color 150ms ease, border-color 150ms ease; }
-.arisu-clip :where(button) { padding: 6px 12px; cursor: pointer; }
+.arisu-clip :where(button) { min-height: 34px; padding: 6px 12px; cursor: pointer; }
 .arisu-clip :where(input, select) { padding: 6px 10px; }
 .arisu-clip button:hover { border-color: var(--accent); }
 .arisu-clip :disabled { opacity: 0.45; cursor: default; }
 .arisu-clip :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.arisu-clip :where(input, select):focus-visible { outline: none; border-color: var(--accent); }
+.arisu-clip :where(input, select):focus-visible { outline: none; border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
 .arisu-clip-head { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
 .arisu-clip-head h3 { margin: 0; min-width: 0; font-size: 14px; font-weight: 600; color: var(--strong); overflow: hidden;
   text-overflow: ellipsis; white-space: nowrap; }

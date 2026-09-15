@@ -35,16 +35,16 @@ const STYLE = `
 .arisu-cropper[open]::backdrop { background: rgba(0, 0, 0, 0.55); backdrop-filter: blur(3px); }
 .arisu-cropper :where(button, input, select) { font: inherit; color: inherit; border: 1px solid var(--border-color, #444);
   border-radius: 8px; background: var(--comfy-input-bg, #333); transition: background-color 150ms ease, border-color 150ms ease; }
-.arisu-cropper :where(button) { padding: 6px 12px; cursor: pointer; }
+.arisu-cropper :where(button) { min-height: 34px; padding: 6px 12px; cursor: pointer; }
 .arisu-cropper :where(input, select) { padding: 6px 10px; }
 .arisu-cropper button:hover { border-color: var(--p-primary-color, #6ea8fe); }
 .arisu-cropper :focus-visible { outline: 2px solid var(--p-primary-color, #6ea8fe); outline-offset: 2px; }
-.arisu-cropper :where(input, select):focus-visible { outline: none; border-color: var(--p-primary-color, #6ea8fe); }
+.arisu-cropper :where(input, select):focus-visible { outline: none; border-color: var(--p-primary-color, #6ea8fe); box-shadow: inset 0 0 0 1px var(--p-primary-color, #6ea8fe); }
 .arisu-cropper-bar { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--border-color, #444); }
 .arisu-cropper-bar label { color: var(--descrip-text, #999); }
 .arisu-cropper-ratio { min-width: 96px; }
 .arisu-cropper-readout { flex: 1; text-align: center; color: var(--descrip-text, #999); font-variant-numeric: tabular-nums; }
-.arisu-cropper-apply { border-color: var(--p-primary-color, #6ea8fe); }
+.arisu-cropper-apply { border-color: var(--p-primary-color, #6ea8fe); background: color-mix(in srgb, var(--p-primary-color, #6ea8fe) 25%, var(--comfy-input-bg, #333)); }
 .arisu-cropper-body { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; padding: 16px; background: #111; }
 .arisu-cropper-stage { position: relative; display: inline-block; line-height: 0; overflow: hidden; touch-action: none; user-select: none;
   cursor: crosshair; }

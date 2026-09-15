@@ -93,6 +93,10 @@ def test_resource_studio():
                     page.mouse.wheel(0, 600)
                     page.wait_for_function("document.querySelector('.arisu-studio .references').scrollTop > 0")
                     screenshot(page, name, "populated")
+                    page.get_by_role("button", name="Edit image scene-9.png", exact=True).focus()
+                    page.keyboard.press("Tab")
+                    assert page.evaluate("!!document.activeElement.closest('.arisu-studio .reference')")
+                    screenshot(page, name, "row-focus")
                     # Drag the real canvas resize handle and verify its DOM widget follows.
                     before_size = page.evaluate("id => Array.from(window.comfyAPI.app.app.graph.getNodeById(id).size)", node_id)
                     corner = page.evaluate(
@@ -143,6 +147,34 @@ def test_prompt_workbench():
                     page.get_by_label("LoRA trigger words", exact=True).fill("paper_art")
                     page.get_by_label("Finalized prompt", exact=True).fill("Original prompt")
                     screenshot(page, name, "editing")
+                    # Keyboard changes keep focus on the rebuilt selector, then advance naturally.
+                    agent = page.get_by_label("Agent", exact=True)
+                    agent.click()
+                    page.keyboard.press("Escape")
+                    agent.press("Home")
+                    agent.press("ArrowDown")
+                    expect(agent).to_have_value("grok")
+                    expect(agent).to_be_focused()
+                    agent.press("Home")
+                    expect(agent).to_have_value("codex")
+                    agent.press("Tab")
+                    expect(page.get_by_label("Skill", exact=True)).to_be_focused()
+                    screenshot(page, name, "selector-focus")
+                    page.keyboard.press("Tab")
+                    requirements = page.get_by_label("Requirements", exact=True)
+                    expect(requirements).to_be_focused()
+                    requirements.press("End")
+                    requirements.press("Space")
+                    page.keyboard.insert_text("Keep the lighting soft.")
+                    assert "Keep the lighting soft." in widget_value(page, node_id, "requirements")
+                    screenshot(page, name, "requirements-focus")
+                    requirements.press("Tab")
+                    expect(page.get_by_label("LoRA trigger words", exact=True)).to_be_focused()
+                    screenshot(page, name, "trigger-focus")
+                    page.locator(".arisu-workbench summary").click()
+                    expect(page.get_by_label("Audio context length in frames")).to_be_disabled()
+                    screenshot(page, name, "motion-expanded")
+                    page.locator(".arisu-workbench summary").click()
                     page.get_by_role("button", name="Generate prompt", exact=True).click()
                     expect(page.locator(".arisu-workbench .status")).to_have_text("Generating prompt…")
                     screenshot(page, name, "generating")
@@ -158,6 +190,40 @@ def test_prompt_workbench():
                     page.get_by_role("button", name="Generate prompt", exact=True).click()
                     expect(page.locator(".arisu-workbench .status")).to_have_text("Simulated provider unavailable")
                     screenshot(page, name, "error")
+                    # Long prose scrolls within the editor without moving the canvas or losing focus.
+                    final = page.get_by_label("Finalized prompt", exact=True)
+                    long_prompt = "A paper boat follows the soft reflections across the pond. " * 160
+                    final.fill(long_prompt)
+                    final.press("Control+End")
+                    expect(final).to_be_focused()
+                    assert final.evaluate("e => e.scrollHeight > e.clientHeight && e.scrollTop > 0")
+                    screenshot(page, name, "long-text")
+                    # Narrow the node with its real resize handle; the stacked editor stays reachable.
+                    corner = page.evaluate(
+                        """id => {
+                        const app = window.comfyAPI.app.app, node = app.graph.getNodeById(id), ds = app.canvas.ds;
+                        const rect = app.canvas.canvas.getBoundingClientRect();
+                        return [(node.pos[0] + node.size[0] + ds.offset[0]) * ds.scale + rect.left - 3,
+                                (node.pos[1] + node.size[1] + ds.offset[1]) * ds.scale + rect.top - 3];
+                        }""",
+                        node_id,
+                    )
+                    page.mouse.move(*corner)
+                    page.mouse.down()
+                    page.mouse.move(corner[0] - 220, corner[1], steps=10)
+                    page.mouse.up()
+                    contained(page, ".arisu-workbench")
+                    assert page.locator(".arisu-workbench .columns").evaluate(
+                        "e => getComputedStyle(e).gridTemplateColumns.split(' ').length === 1"
+                    )
+                    page.get_by_label("Requirements", exact=True).click()
+                    screenshot(page, name, "narrow-direction")
+                    final.click()
+                    final.press("Control+End")
+                    expect(final).to_be_focused()
+                    contained(page, ".arisu-workbench .final textarea")
+                    assert widget_value(page, node_id, "finalized_prompt") == long_prompt
+                    screenshot(page, name, "narrow-final")
                     # A fresh page resets the shared status cache and renders unavailable-agent controls.
                     server.available = False
                     page.reload()
@@ -170,6 +236,9 @@ def test_prompt_workbench():
                     expect(page.get_by_role("dialog", name="Prompt Workbench agents")).to_be_visible()
                     contained(page, "dialog[open]")
                     screenshot(page, name, "settings")
+                    page.get_by_label("Codex model", exact=True).click()
+                    page.keyboard.press("Escape")
+                    screenshot(page, name, "settings-focus")
                     page.keyboard.press("Tab")
                     assert page.evaluate("!!document.activeElement.closest('dialog[open]')")
                     page.keyboard.press("Escape")

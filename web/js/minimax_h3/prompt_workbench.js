@@ -24,54 +24,66 @@ const FIELDS = [
 const STYLE = `
 .arisu-workbench{width:100%;height:100%;box-sizing:border-box;container-type:inline-size;padding:10px;
  --surface:var(--comfy-input-bg,#222);--panel:var(--comfy-menu-bg,#353535);--line:var(--border-color,#444);
- --text:var(--input-text,#ccc);--label:var(--descrip-text,#aaa);--accent:#6cbfae;--on-accent:#14211e;
+ --text:var(--input-text,#ccc);--label:var(--descrip-text,#aaa);--accent:#64b5f6;--on-accent:#102331;
  --image:#64b5f6;--video:#d9a441;--audio:#b89be0;color:var(--text);font:12px/1.45 Arial,system-ui,sans-serif;}
 .arisu-workbench *{box-sizing:border-box;}.arisu-workbench .columns{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);
  gap:12px;height:100%;min-height:0;}.arisu-workbench .generation{display:flex;flex-direction:column;gap:10px;min-width:0;overflow:hidden;
  border:0;margin:0;padding:0;}.arisu-workbench .field{display:flex;flex-direction:column;gap:4px;min-width:0;}
 .arisu-workbench .label{color:var(--label);font-size:12px;line-height:20px;}
 .arisu-workbench input,.arisu-workbench textarea,.arisu-workbench select{color:var(--text);background:var(--surface);border:1px solid var(--line);
- border-radius:2px;padding:6px 8px;min-width:0;width:100%;font:inherit;transition:border-color 130ms ease,background-color 130ms ease;}
-.arisu-workbench select{border-radius:20px;min-height:29px;cursor:pointer;padding:3px 10px;}
-.arisu-workbench textarea{resize:vertical;line-height:1.6;}.arisu-workbench input{min-height:28px;}
+ border-radius:4px;padding:7px 9px;min-width:0;width:100%;font:inherit;transition:border-color 130ms ease,background-color 130ms ease;}
+.arisu-workbench select{border-radius:4px;min-height:32px;cursor:pointer;padding:5px 8px;}
+.arisu-workbench textarea{resize:vertical;line-height:1.6;scrollbar-width:thin;}.arisu-workbench input{min-height:28px;}
 .arisu-workbench textarea:focus,.arisu-workbench input:focus,.arisu-workbench select:focus{border-color:var(--accent);}
-.arisu-workbench :focus-visible{outline:2px solid var(--text);outline-offset:2px;}
-.arisu-workbench .motion{border:1px solid var(--line);margin:0;padding:7px;background:color-mix(in srgb,var(--surface) 65%,var(--panel));
+.arisu-workbench :focus-visible{outline:2px solid var(--accent);outline-offset:2px;}
+.arisu-workbench :is(textarea,input,select):focus{outline:none;box-shadow:inset 0 0 0 1px var(--accent);}
+.arisu-workbench .field:focus-within>.label,.arisu-workbench .final:focus-within>.label{color:var(--accent);}
+.arisu-workbench .selectors{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:8px;}
+.arisu-workbench .section-title{font-size:12px;line-height:20px;color:var(--text);font-weight:600;}
+.arisu-workbench .final>.label{font-weight:600;color:var(--text);}
+.arisu-workbench .generation>.section-title{margin-bottom:-6px;}
+.arisu-workbench :is(input,textarea)::placeholder{color:var(--label);opacity:.75;}
+.arisu-workbench .context{border-top:1px solid var(--line);padding-top:8px;}
+.arisu-workbench .context summary{cursor:pointer;color:var(--label);padding:2px 0 6px;}
+.arisu-workbench .context summary:focus-visible{outline-offset:-2px;}
+.arisu-workbench .motion{border:1px solid var(--line);margin:0;padding:8px;border-radius:4px;background:color-mix(in srgb,var(--surface) 65%,var(--panel));
  display:flex;flex-direction:column;gap:6px;}.arisu-workbench .motion label{display:grid;grid-template-columns:1fr 90px;gap:8px;align-items:center;}
 .arisu-workbench .motion textarea{min-height:64px;}
 .arisu-workbench .motion .motion_notes{display:flex;align-items:stretch;}.arisu-workbench .motion_notes>.label{display:none;}
-.arisu-workbench .generation-fields{display:flex;flex:1;min-height:0;flex-direction:column;gap:8px;overflow:auto;padding-right:2px;}
-.arisu-workbench .footer{flex-shrink:0;}.arisu-workbench fieldset:disabled{opacity:.5;}
-.arisu-workbench .references{border:1px solid var(--line);padding:7px;display:flex;flex-direction:column;gap:6px;max-height:210px;overflow:auto;}
+.arisu-workbench .generation-fields{display:flex;flex:1;min-height:0;flex-direction:column;gap:10px;overflow:auto;padding:2px 4px 4px;scrollbar-width:thin;}
+.arisu-workbench .footer{flex-shrink:0;}.arisu-workbench fieldset:disabled{opacity:.6;}
+.arisu-workbench .references{border:1px solid var(--line);padding:8px;border-radius:4px;background:var(--surface);display:flex;flex-direction:column;gap:6px;max-height:210px;overflow:auto;}
 .arisu-workbench .reference{display:grid;grid-template-columns:4px minmax(70px,110px) minmax(0,1fr);align-items:center;gap:7px;min-width:0;}
 .arisu-workbench .kind{height:22px;background:var(--image);}.arisu-workbench .kind.video{background:var(--video);}
 .arisu-workbench .kind.audio{background:var(--audio);}.arisu-workbench .filename{font-size:11px;color:var(--label);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.arisu-workbench .reference input{font-size:11px;padding:4px 6px;}.arisu-workbench .requirements textarea{min-height:100px;}
+.arisu-workbench .reference input{font-size:11px;padding:4px 6px;}.arisu-workbench .requirements textarea{min-height:130px;}
 .arisu-workbench .final{display:flex;flex-direction:column;min-height:300px;gap:4px;min-width:0;}
-.arisu-workbench .final textarea{flex:1;min-height:280px;font:12px/1.7 'Courier New',monospace;resize:none;}
+.arisu-workbench .final textarea{flex:1;min-height:280px;font:13px/1.7 Arial,system-ui,sans-serif;resize:none;padding:12px;}
 .arisu-workbench .actions{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap;}
 .arisu-workbench button{font:inherit;color:var(--text);border:1px solid var(--line);border-radius:5px;
  background:var(--surface);padding:8px 12px;min-height:34px;cursor:pointer;transition:background-color 140ms ease,transform 100ms ease;}
 .arisu-workbench button:hover{border-color:var(--accent);}.arisu-workbench button:active{transform:translateY(1px);}
-.arisu-workbench .primary{background:var(--accent);border-color:#58a898;color:var(--on-accent);font-weight:600;}
-.arisu-workbench .primary:hover{background:#7fd1c1;}.arisu-workbench button:disabled{opacity:.5;cursor:default;transform:none;}
+.arisu-workbench .primary{background:var(--accent);border-color:var(--accent);color:var(--on-accent);font-weight:600;}
+.arisu-workbench .primary:hover{background:color-mix(in srgb,var(--accent),white 15%);}.arisu-workbench button:disabled{opacity:.5;cursor:default;transform:none;}
 .arisu-workbench .status{font-size:11px;color:var(--label);min-height:16px;overflow-wrap:anywhere;}
 .arisu-workbench .hint{font-size:11px;color:var(--label);padding:4px 0;}
-.arisu-workbench .review{border-color:var(--accent);}.arisu-workbench .footer{margin-top:auto;}
+.arisu-workbench .review{border-color:var(--accent);}.arisu-workbench .footer{margin-top:auto;padding:8px 4px 2px;border-top:1px solid var(--line);}
 @container(max-width:530px){.arisu-workbench .columns{grid-template-columns:1fr;overflow:auto;}.arisu-workbench .generation{overflow:visible;}.arisu-workbench .generation-fields{overflow:visible;flex:none;}
  .arisu-workbench .final{min-height:320px;}.arisu-workbench .final textarea{resize:vertical;}}
 @media(pointer:coarse){.arisu-workbench input,.arisu-workbench select,.arisu-workbench button{min-height:44px;}
  .arisu-workbench .reference{grid-template-columns:4px minmax(60px,100px) minmax(0,1fr);}}
 @media(prefers-reduced-motion:reduce){.arisu-workbench *{transition:none!important;animation:none!important;}}
-.arisu-prompt-review{width:min(850px,94vw);max-height:92vh;border:1px solid var(--border-color,#555);border-radius:8px;
+.arisu-prompt-review{width:min(850px,94vw);max-height:92vh;border:1px solid var(--border-color,#555);border-radius:10px;box-sizing:border-box;box-shadow:0 24px 64px #0009;
  padding:18px;background:var(--comfy-menu-bg,#333);color:var(--fg-color,#ddd);font:14px/1.5 Arial,system-ui,sans-serif;}
-.arisu-prompt-review::backdrop{background:#0009;}.arisu-prompt-review h2{font-size:17px;margin:0 0 12px;}
-.arisu-prompt-review textarea{width:100%;height:50vh;resize:vertical;padding:12px;background:var(--comfy-input-bg,#222);
- color:var(--input-text,#ccc);border:1px solid var(--border-color,#555);font:13px/1.7 monospace;box-sizing:border-box;}
-.arisu-prompt-review footer{display:flex;justify-content:flex-end;gap:10px;padding-top:14px;}
+.arisu-prompt-review[open]{display:flex;flex-direction:column;gap:12px;overflow:hidden;}
+.arisu-prompt-review::backdrop{background:#0009;backdrop-filter:blur(3px);}.arisu-prompt-review h2{font-size:17px;margin:0;}
+.arisu-prompt-review textarea{width:100%;height:50vh;min-height:100px;resize:none;scrollbar-width:thin;border-radius:4px;padding:12px;background:var(--comfy-input-bg,#222);
+ color:var(--input-text,#ccc);border:1px solid var(--border-color,#555);font:14px/1.7 Arial,system-ui,sans-serif;box-sizing:border-box;}
+.arisu-prompt-review footer{display:flex;justify-content:flex-end;gap:10px;padding-top:12px;border-top:1px solid var(--border-color,#444);flex-shrink:0;}
 .arisu-prompt-review button{padding:9px 16px;border-radius:5px;cursor:pointer;border:1px solid var(--border-color,#555);
- background:var(--comfy-input-bg,#222);color:inherit;font:inherit;}.arisu-prompt-review .apply{background:#6cbfae;color:#14211e;}
-.arisu-prompt-review :focus-visible{outline:2px solid currentColor;outline-offset:2px;}
+ background:var(--comfy-input-bg,#222);color:inherit;font:inherit;}.arisu-prompt-review .apply{background:#64b5f6;color:#102331;border-color:#64b5f6;}
+.arisu-prompt-review :focus-visible{outline:2px solid #64b5f6;outline-offset:2px;}
+.arisu-prompt-review textarea:focus{outline:none;border-color:#64b5f6;box-shadow:inset 0 0 0 1px #64b5f6;}
 `;
 
 function widget(node, name) {
@@ -328,13 +340,14 @@ function render(node) {
     control.onchange = () => {
       edit(node, name, control.value);
       render(node);
+      state.body.querySelector?.('[aria-label="' + label + '"]')?.focus();
     };
     return control;
   }
   const skills = state.agents?.skills?.map((item) => ({
     value: item.id,
-    label: 'skill: ' + item.name + (item.source === 'custom' ? ' · custom' : ''),
-  })) ?? [{ value: 'bundled:hybrid2va', label: 'skill: hybrid2va' }];
+    label: item.name + (item.source === 'custom' ? ' · custom' : ''),
+  })) ?? [{ value: 'bundled:hybrid2va', label: 'hybrid2va' }];
   const audio = el('input', {
     type: 'number',
     min: '0',
@@ -348,10 +361,10 @@ function render(node) {
   };
   const motion = el('fieldset', { className: 'motion', disabled: !linked(node, 'context_latent') || !linked(node, 'vae') }, [
     el('label', {}, [
-      el('span', { textContent: 'context_length' }),
+      el('span', { textContent: 'Video frames' }),
       combo('context_length', ['22', '5', '39', '56'], 'Context length in frames'),
     ]),
-    el('label', {}, [el('span', { textContent: 'audio_context_length' }), audio]),
+    el('label', {}, [el('span', { textContent: 'Audio frames' }), audio]),
     el('div', { className: 'hint', textContent: 'Frames at 24 fps · audio 0 follows video' }),
     textField('motion_notes', 'Notes', true, 'Notes on motion continuity…'),
   ]);
@@ -405,24 +418,36 @@ function render(node) {
   });
   state.statusElement = statusElement;
   const left = el('fieldset', { className: 'generation', disabled: !state.agents?.docker }, [
+    el('div', { className: 'section-title', textContent: 'Prompt direction' }),
     el('div', { className: 'generation-fields' }, [
-      combo(
-        'agent',
-        [
-          { value: 'codex', label: 'agent: Codex' },
-          { value: 'grok', label: 'agent: Grok Build' },
-        ],
-        'Agent',
-      ),
-      combo('skill', skills, 'Skill'),
-      el('div', { className: 'field' }, [el('span', { className: 'label', textContent: 'Motion context' }), motion]),
-      references,
-      textField('trigger_words', 'LoRA trigger words', false, 'e.g. aiko_style, filmgrain'),
+      el('div', { className: 'selectors' }, [
+        el('label', { className: 'field' }, [
+          el('span', { className: 'label', textContent: 'Agent' }),
+          combo(
+            'agent',
+            [
+              { value: 'codex', label: 'Codex' },
+              { value: 'grok', label: 'Grok Build' },
+            ],
+            'Agent',
+          ),
+        ]),
+        el('label', { className: 'field' }, [el('span', { className: 'label', textContent: 'Skill' }), combo('skill', skills, 'Skill')]),
+      ]),
       textField('requirements', 'Requirements', true, 'Describe the shot, motion, pacing…'),
+      textField('trigger_words', 'LoRA trigger words', false, 'e.g. aiko_style, filmgrain'),
+      el('details', { className: 'context', open: linked(node, 'context_latent') && linked(node, 'vae') }, [
+        el('summary', { textContent: 'Motion context' }),
+        ...(!linked(node, 'context_latent') || !linked(node, 'vae')
+          ? [el('div', { className: 'hint', textContent: 'Connect context_latent and vae to use motion context.' })]
+          : []),
+        motion,
+      ]),
+      references,
     ]),
     el('div', { className: 'footer' }, [statusElement, el('div', { className: 'actions' }, actions)]),
   ]);
-  const final = textField('finalized_prompt', 'Finalized prompt', true);
+  const final = textField('finalized_prompt', 'Finalized prompt', true, 'Write a prompt here, or generate a draft to review…');
   final.className = 'final';
   const unavailable = state.agents?.docker
     ? ''

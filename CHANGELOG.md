@@ -21,6 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Prioritize Prompt Workbench writing fields, align its controls with Resource Studio, and refine focus, reference rows, and crop, clip, review, and agent dialogs.
+
 - Refresh the Arisu icon and add a light variant for the Agents shortcut.
 - Remove custom light-mode color overrides from Prompt Workbench, Resource Studio, and the clip editor, keeping functional colors consistent while inheriting ComfyUI styling.
 - Replace Resource Studio replace buttons with keyframe canvas selection, and open Browse references at the final reference’s folder in list order.

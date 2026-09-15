@@ -24,7 +24,9 @@ Cancellation affects this job; it does not interrupt unrelated ComfyUI work.
 ## Motion Context
 
 Connect **H3 Motion Context Load Latent** to `context_latent` and its video VAE
-to `vae`. Both sockets are required to enable Motion Context.
+to `vae`. Both sockets are required to enable Motion Context. The section opens
+automatically when both are connected; click **Motion context** to expand or
+collapse its controls.
 
 - Load index **0** returns no previous context: the first clip needs no VAE decode.
 - Windows **5, 22, 39, 56** are video frames at 24 fps. Up to 12 ordered stills

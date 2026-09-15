@@ -21,15 +21,19 @@ function showShortcut(visible) {
 }
 
 const STYLE = `
-.arisu-agents{width:min(700px,94vw);max-height:90vh;padding:0;border:1px solid var(--border-color,#444);border-radius:10px;
+.arisu-agents{width:min(700px,94vw);max-height:90vh;padding:0;border:1px solid var(--border-color,#444);border-radius:10px;box-sizing:border-box;box-shadow:0 24px 64px #0009;
  background:var(--comfy-menu-bg,#303030);color:var(--fg-color,#ddd);font:13px/1.5 Arial,system-ui,sans-serif;}
-.arisu-agents::backdrop{background:#0009;}.arisu-agents header,.arisu-agents footer{display:flex;align-items:center;gap:12px;padding:14px 18px;}
-.arisu-agents header strong{flex:1;font-size:16px;}.arisu-agents .content{padding:0 18px 18px;overflow:auto;max-height:70vh;}
-.arisu-agents section{padding:14px 0;border-top:1px solid var(--border-color,#444);}.arisu-agents h3{margin:0 0 8px;}
+.arisu-agents[open]{display:flex;flex-direction:column;overflow:hidden;}
+.arisu-agents::backdrop{background:#0009;backdrop-filter:blur(3px);}.arisu-agents header,.arisu-agents footer{display:flex;align-items:center;gap:12px;padding:14px 18px;flex-shrink:0;border-bottom:1px solid var(--border-color,#444);}
+.arisu-agents header strong{flex:1;font-size:16px;}.arisu-agents .content{padding:12px 18px 18px;overflow:auto;min-height:0;scrollbar-width:thin;}
+.arisu-agents section{padding:14px;margin:12px 0;border:1px solid var(--border-color,#444);border-radius:6px;}.arisu-agents h3{margin:0 0 8px;}
 .arisu-agents p{margin:6px 0;color:var(--descrip-text,#aaa);}
 .arisu-agents button,.arisu-agents select{font:inherit;color:inherit;background:var(--comfy-input-bg,#222);border:1px solid var(--border-color,#555);
- border-radius:5px;min-height:34px;padding:5px 10px;cursor:pointer;}.arisu-agents button:hover{border-color:#6cbfae;}
-.arisu-agents button:disabled{opacity:.45;cursor:default;}.arisu-agents :focus-visible{outline:2px solid currentColor;outline-offset:2px;}
+ border-radius:5px;min-height:34px;padding:5px 10px;cursor:pointer;}.arisu-agents button:hover{border-color:#64b5f6;}
+.arisu-agents button:disabled{opacity:.45;cursor:default;}.arisu-agents :focus-visible{outline:2px solid #64b5f6;outline-offset:2px;}
+.arisu-agents select{min-width:0;max-width:100%;}
+.arisu-agents select:focus{outline:none;border-color:#64b5f6;box-shadow:inset 0 0 0 1px #64b5f6;}
+.arisu-agents .fields label{flex:1;min-width:0;align-items:stretch;flex-direction:column;gap:4px;}
 .arisu-agents .actions,.arisu-agents .fields{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;}
 .arisu-agents label{display:flex;align-items:center;gap:8px;}.arisu-agents pre{white-space:pre-wrap;overflow-wrap:anywhere;
  background:var(--comfy-input-bg,#222);padding:12px;max-height:240px;overflow:auto;font:11px/1.6 monospace;}
@@ -182,6 +186,7 @@ export function openAgentSettings(selected = 'codex', parent = document.body) {
     ].map(([label, operationName, disabled]) =>
       el('button', {
         textContent: label,
+        className: operationName === 'remove' ? 'danger' : '',
         disabled: !docker || busy || disabled || operation?.state === 'running',
         onclick: () => void action(agent, operationName),
       }),

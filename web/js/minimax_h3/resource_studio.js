@@ -19,14 +19,14 @@ const STYLE = `
 .arisu-studio{box-sizing:border-box;width:100%;height:100%;overflow:hidden;display:flex;flex-direction:column;gap:10px;padding:8px 10px 12px;
  font:11px/1.3 Arial,system-ui,sans-serif;--image:#64b5f6;--video:#d9a441;--audio:#b89be0;
  --surface:var(--comfy-input-bg,#2a2a2a);--row:var(--comfy-menu-bg,#333);--line:var(--border-color,#444);
- --label:var(--descrip-text,#999);--text:var(--input-text,#ccc);--dim:#777;--strong:var(--fg-color,#fff);
+ --label:var(--descrip-text,#999);--text:var(--input-text,#ccc);--dim:var(--descrip-text,#999);--strong:var(--fg-color,#fff);
  --hover:color-mix(in srgb,var(--row),var(--strong) 8%);color:var(--text);}
 .arisu-studio *{box-sizing:border-box;}
 .arisu-studio button{font:inherit;color:inherit;background:none;border:0;border-radius:2px;padding:0;cursor:pointer;}
-.arisu-studio :focus-visible{outline:2px solid var(--image);outline-offset:1px;}
+.arisu-studio :focus-visible{outline:2px solid var(--image);outline-offset:-2px;}
 .arisu-studio .status{font-size:10px;color:var(--dim);text-align:right;}
 .arisu-studio .label{color:var(--label);line-height:20px;}
-.arisu-studio .heading{display:flex;align-items:center;justify-content:space-between;gap:8px;height:20px;}
+.arisu-studio .heading{display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:24px;}
 .arisu-studio .icons{display:flex;align-items:center;gap:4px;}
 .arisu-studio .icon{width:20px;height:20px;display:inline-flex;align-items:center;justify-content:center;color:var(--label);font-size:15px;line-height:1;}
 .arisu-studio .icon svg{width:13px;height:13px;}
@@ -36,7 +36,7 @@ const STYLE = `
 .arisu-studio .keyframes{display:flex;flex-direction:column;justify-content:space-between;gap:8px;}
 .arisu-studio .keyframe{display:flex;flex-direction:column;gap:4px;min-width:0;}
 .arisu-studio .picture{width:100%;aspect-ratio:1;display:flex;align-items:center;justify-content:center;overflow:hidden;
- background:var(--surface);border:1px solid var(--line);border-radius:0;color:var(--dim);}
+ background:var(--surface);border:1px solid var(--line);border-radius:3px;color:var(--dim);}
 .arisu-studio .picture:hover{border-color:var(--image);color:var(--text);}
 .arisu-studio .picture img{width:100%;height:100%;object-fit:contain;}
 .arisu-studio .filename{height:14px;line-height:14px;font-size:10px;color:var(--label);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
@@ -52,12 +52,12 @@ const STYLE = `
 .arisu-studio .reference{--kind:var(--image);display:flex;align-items:center;gap:7px;height:52px;flex:none;padding:0 5px 0 3px;background:var(--row);border-left:3px solid var(--kind);}
 .arisu-studio .reference.video{--kind:var(--video);}.arisu-studio .reference.audio{--kind:var(--audio);}
 .arisu-studio .reference.muted{border-left-color:rgba(120,126,132,.6);}
-.arisu-studio .reference:hover{background:var(--hover);}
+.arisu-studio .reference:focus-within,.arisu-studio .reference:hover{background:var(--hover);}
 .arisu-studio .reference[data-dragging]{opacity:.4;}
 .arisu-studio .reference[data-drop=before]{box-shadow:0 -4px 0 -1px var(--strong);}
 .arisu-studio .reference[data-drop=after]{box-shadow:0 4px 0 -1px var(--strong);}
 .arisu-studio .handle{width:14px;text-align:center;color:var(--dim);font-size:12px;cursor:grab;opacity:0;transition:opacity .12s;}
-.arisu-studio .reference:hover .handle{opacity:1;}.arisu-studio .handle:hover{color:var(--text);}
+.arisu-studio .reference:focus-within .handle,.arisu-studio .reference:hover .handle{opacity:1;}.arisu-studio .handle:hover{color:var(--text);}
 .arisu-studio .thumb{width:58px;height:40px;flex:none;display:flex;align-items:center;justify-content:center;object-fit:contain;color:var(--kind);
  background:color-mix(in srgb,var(--kind) 12%,transparent);border:1px solid color-mix(in srgb,var(--kind) 30%,transparent);}
 .arisu-studio .thumb svg{width:16px;height:16px;}
@@ -67,7 +67,7 @@ const STYLE = `
 .arisu-studio .name{color:var(--text);font-size:12px;line-height:16px;}.arisu-studio .detail .lead{color:var(--text);}
 .arisu-studio .move{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);}
 .arisu-studio .move:focus{position:static;width:auto;height:auto;clip-path:none;}
-.arisu-studio .browse{display:flex;align-items:center;justify-content:center;gap:5px;height:20px;padding:0 9px;flex:none;border-radius:3px;
+.arisu-studio .browse{display:flex;align-items:center;justify-content:center;gap:5px;height:24px;padding:0 9px;flex:none;border-radius:3px;
  background:var(--hover);border:1px solid color-mix(in srgb,var(--line),var(--strong) 10%);color:var(--text);font-size:11px;}
 .arisu-studio .browse::before{content:'+';font-size:12px;line-height:1;margin-top:-1px;}
 .arisu-studio .browse:hover{background:color-mix(in srgb,var(--row),var(--strong) 12%);border-color:var(--label);color:var(--strong);}
