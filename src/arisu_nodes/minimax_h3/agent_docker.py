@@ -36,7 +36,7 @@ class DockerAgents:
         self.directory = directory
         self.namespace = "arisu-workbench-" + hashlib.sha256(str(directory).encode()).hexdigest()[:12]
         self.guard = threading.Lock()
-        self.discovery = threading.Lock()
+        self.discovery = threading.RLock()
         self.stopping = threading.Event()
         self.logs: List[str] = []
         self.log_lock = threading.Lock()
@@ -214,9 +214,9 @@ class DockerAgents:
         except (OSError, ValueError, subprocess.SubprocessError):
             result["error"] = "Docker is unavailable to the ComfyUI server."
         finally:
+            self._status, self._checked = result, time.monotonic()
             self.guard.release()
             self.discovery.release()
-        self._status, self._checked = result, time.monotonic()
         return {**result, "operation": self.operation}
 
     def configure(self, agent: str, model: str, effort: str):

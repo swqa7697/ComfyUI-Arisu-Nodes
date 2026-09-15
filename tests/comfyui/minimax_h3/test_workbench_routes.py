@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import shutil
 import threading
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any, Dict
 
 import pytest
 from aiohttp import web
@@ -19,6 +21,7 @@ pytestmark = pytest.mark.comfyui
 
 def test_workbench_routes_reject_untrusted_requests_and_queue_only_preparation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     owner = Workbench(tmp_path / "user", tmp_path / "cache")
+    real_status = owner.agents.status
     status = {"docker": True, "agents": {"codex": {"ready": True, "selection": {"model": "test", "effort": "medium"}}}}
     monkeypatch.setattr(owner.agents, "status", lambda *args: status)
     queued = []
@@ -75,15 +78,48 @@ def test_workbench_routes_reject_untrusted_requests_and_queue_only_preparation(t
                 "w": {"class_type": "ArisuMiniMaxH3PromptWorkbench", "inputs": {"finalized_prompt": "keep"}},
                 "s": {"class_type": "KSampler", "inputs": {"x": ["w", 0]}},
             }
-            response = await client.post(
-                "/arisu/workbench/generate", json={"node_id": "w", "workflow": "tab", "prompt": graph, "options": {}}
-            )
+            # A readiness probe must delay the first click, not reject it as busy.
+            entered, finish = threading.Event(), threading.Event()
+
+            def inspect_agent(*args: Any) -> Dict[str, Any]:
+                entered.set()
+                assert finish.wait(5)
+                return {"authenticated": True, "auto": True, "models": [{"id": "test", "efforts": ["medium"]}]}
+
+            with monkeypatch.context() as local:
+                local.setattr(owner.agents, "status", real_status)
+                local.setattr(shutil, "which", lambda name: "/test/docker")
+                local.setattr(owner.agents, "command", lambda *args, **kwargs: "linux")
+                local.setattr(owner.agents, "owned", lambda *args: True)
+                local.setattr(owner.agents, "invoke", inspect_agent)
+                owner.agents._status = status
+                probe = asyncio.create_task(client.get("/arisu/workbench/status"))
+                assert await asyncio.to_thread(entered.wait, 2)
+                request = asyncio.create_task(
+                    client.post("/arisu/workbench/generate", json={"node_id": "w", "workflow": "tab", "prompt": graph, "options": {}})
+                )
+                try:
+                    await asyncio.sleep(0.05)
+                    assert not request.done(), "generation rejected an in-progress readiness probe"
+                finally:
+                    finish.set()
+                    await probe
+                    response = await request
             assert response.status == 202
             identifier = (await response.json())["id"]
             assert len(queued) == 1 and set(queued[0][2]) == {"w"}
             await asyncio.sleep(0.01)
             response = await client.get("/arisu/workbench/jobs/" + identifier)
             assert (await response.json())["draft"] == "review me"
+            # Real operations still refuse concurrent generation immediately.
+            owner.agents.guard.acquire()
+            try:
+                response = await client.post(
+                    "/arisu/workbench/generate", json={"node_id": "w", "workflow": "other", "prompt": graph, "options": {}}
+                )
+                assert response.status == 409 and len(queued) == 1
+            finally:
+                owner.agents.guard.release()
             response = await client.post("/arisu/workbench/release", json={"workflow": "tab"})
             assert response.status == 200
             response = await client.get("/arisu/workbench/jobs/" + identifier)

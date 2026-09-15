@@ -173,12 +173,14 @@ class Workbench:
         options = workbench_options(options)
         if options["skill"] not in skill_catalog(self.directory):
             raise ValueError("selected skill is unavailable")
-        status = self.agents.status()
-        provider = status.get("agents", {}).get(options["agent"], {})
-        if not status["docker"] or not provider.get("ready"):
-            raise ValueError("complete agent setup before generating")
-        if not self.agents.guard.acquire(blocking=False):
-            raise AgentBusy("Workbench is busy")
+        # Let discovery finish, then reserve without another poll taking the guard.
+        with self.agents.discovery:
+            status = self.agents.status()
+            provider = status.get("agents", {}).get(options["agent"], {})
+            if not status["docker"] or not provider.get("ready"):
+                raise ValueError("complete agent setup before generating")
+            if not self.agents.guard.acquire(blocking=False):
+                raise AgentBusy("Workbench is busy")
         destination: Optional[Path] = None
         try:
             self.temp.mkdir(parents=True, exist_ok=True)
