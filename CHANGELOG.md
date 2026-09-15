@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- Restrict Prompt Workbench agents to verified read-only sandboxes and Workbench readers, block execution/edit/web/delegation tools, and isolate saved credentials from disposable CLI configuration.
+- Return agent drafts only through completed output streams and reject obvious executable-code responses before review while preserving explicit Apply.
+
 ## [1.2.0] - 2026-09-14
 
 ### Added

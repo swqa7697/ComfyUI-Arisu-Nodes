@@ -44,6 +44,11 @@ Find the nodes under **Add Node → Arisu Nodes**.
 - **Agent generation:** install Docker with Linux container support and give the ComfyUI process access to its daemon.
   Open **Settings → Arisu Nodes → Prompt Workbench → Agents** to build an agent image and sign in.
   Provider accounts and settings are shared by users of the ComfyUI instance.
+  Update existing agent images for restricted generation. The Docker host must support the native
+  CLI sandbox's user namespaces; incompatible hosts show a setup error and cannot generate.
+  Agents can read only the prepared context, listed images, and selected skill documents through
+  Workbench tools. Shell/edit/web/delegation tools are blocked; provider login and API connectivity remain available.
+  Credentials persist separately from disposable CLI state, and drafts return through output streams.
 - **Custom prompt skills:** place each skill folder, including its `SKILL.md` and supporting files, at
   `user/__arisu_nodes/skills/<skill-name>/` under ComfyUI's user directory. The pack creates the `skills`
   directory on startup; administrators manage its contents. Select `custom:<skill-name>` in Prompt Workbench.

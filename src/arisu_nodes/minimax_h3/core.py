@@ -609,7 +609,21 @@ def finalized_markdown(text: str) -> str:
         raise ValueError("agent must return one nonempty fenced markdown block")
     if len(match[1]) > 65536:
         raise ValueError("agent prompt is too large")
-    return match[1].strip()
+    prompt = match[1].strip()
+    # Defense in depth, not a semantic proof: preserve normal screenplay labels,
+    # dialogue, multilingual prose and MiniMax markup while refusing obvious code.
+    executable = re.compile(
+        r"(?im)^\s*(?:#!\s*/|(?:diff --git|\*\*\* (?:Begin Patch|Update File|Add File))\b"
+        r"|(?:from\s+[\w.]+\s+import\s+|import\s+[\w.]+(?:\s*$|\s*[;,]))"
+        r"|(?:async\s+)?def\s+\w+\s*\(|class\s+\w+[^\n]*:"
+        r"|(?:export\s+)?(?:const|let|var)\s+\w+\s*=|(?:async\s+)?function\s*[\w$]*\s*\("
+        r"|(?:sudo\s+)?(?:curl|wget|pip|pip3|npm|pnpm|bash|sh|python3?)\s+(?:[-/]|-c\b)"
+        r"|(?:os\.system|subprocess\.(?:run|Popen|call)|eval|exec|print|console\.(?:log|error))\s*\("
+        r"|<script\b|#include\s*[<\"]|(?:public\s+)?static\s+void\s+main\b)"
+    )
+    if "~~~" in prompt or executable.search(prompt):
+        raise ValueError("agent response contains executable code; request an audiovisual prompt")
+    return prompt
 
 
 def workbench_options(value: Any) -> Dict[str, Any]:
