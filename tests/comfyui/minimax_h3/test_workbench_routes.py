@@ -45,6 +45,16 @@ def test_workbench_routes_reject_untrusted_requests_and_queue_only_preparation(t
         async with TestClient(TestServer(application)) as client:
             response = await client.get("/arisu/workbench/status")
             assert response.status == 200 and (await response.json())["skills"][0]["id"] == "bundled:hybrid2va"
+            owner.agents.begin_logs("codex", "login")
+            owner.agents.log("https://example.test/device CODE")
+            response = await client.get("/arisu/workbench/logs")
+            page = await response.json()
+            assert page["lines"] == ["https://example.test/device CODE"] and response.headers["Cache-Control"] == "no-store"
+            response = await client.get("/arisu/workbench/logs", params={"session": page["session"], "cursor": str(page["cursor"])})
+            assert not (await response.json())["lines"]
+            for cursor in ("-1", "bad"):
+                response = await client.get("/arisu/workbench/logs", params={"cursor": cursor})
+                assert response.status == 400
             for headers, data, code in (
                 ({"Content-Type": "text/plain"}, "{}", 415),
                 ({"Content-Type": "application/json", "Origin": "https://foreign.invalid"}, "{}", 403),

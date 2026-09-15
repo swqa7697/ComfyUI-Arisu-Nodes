@@ -58,9 +58,18 @@ The bundled **hybrid2va** skill is a feasibility stub. Administrators can add
 Files and skills are mounted read-only for generation; the agent has no Docker
 socket, GPU, or mount of the ComfyUI installation.
 
-Open Activity in agent settings for build and generation progress, or use
-`docker ps` to locate the named `arisu-workbench-…-logs` container and
-`docker logs -f <name>`. These logs contain CLI-emitted progress and summaries.
+Switch **Codex / Grok Build** tabs in agent settings to leave more space for colored build
+and login logs. Device-login URLs open directly in your browser.
+
+During generation, the running indicator and **Agent activity** button show complete
+provider-exposed analysis, reference/tool calls, and text results. Scroll up to pause
+following new output; **Resume auto-scroll** returns to the latest output. An open activity
+dialog stays readable when generation finishes; close it to review the draft.
+
+Only the current operation is retained until the next operation or server shutdown.
+There is no separate Docker log container. Output is paged without message clipping;
+exceeding the 16 MiB operation output budget stops the operation with an error.
+Use **Update CLI** for existing images to install the expanded event renderer.
 
 Selected media and motion stills are cached beneath ComfyUI temp, bounded to 2 GiB and expired
 after 30 idle minutes. Closing/removing the workflow releases its interests.

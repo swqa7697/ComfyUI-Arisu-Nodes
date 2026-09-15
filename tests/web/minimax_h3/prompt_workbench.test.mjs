@@ -60,6 +60,7 @@ test('Workbench keeps finalized text independent of setup, source notes and revi
     await node.arisuRefreshSources();
     await settle();
     assert(find(panel(node), 'Setup') && find(panel(node), 'Generate prompt').disabled);
+    assert(find(panel(node), 'Agent activity').disabled);
 
     const data = {
       version: 1,
@@ -154,6 +155,13 @@ test('Workbench keeps finalized text independent of setup, source notes and revi
     find(panel(node), 'Generate prompt').onclick();
     await settle();
     await settle();
+    assert.equal(find(panel(node), 'Agent activity').disabled, false);
+    api.responses.push(
+      jsonResponse(200, { session: 'job3', cursor: 1, lines: ['[analysis] Inspecting selected reference'], state: 'running' }),
+    );
+    find(panel(node), 'Agent activity').onclick();
+    await settle();
+    assert(find(body, 'Generation activity'));
     api.responses.push(jsonResponse(200, { released: true }), jsonResponse(200, { released: true }));
     widget(node, 'finalized_prompt').value = 'restored';
     widget(node, 'prepare_job').value = 'imported';
@@ -163,6 +171,8 @@ test('Workbench keeps finalized text independent of setup, source notes and revi
     assert.equal(widget(node, 'prepare_job').value, '');
     assert.equal(widget(node, 'finalized_prompt').value, 'restored');
     assert(!find(body, 'Generated prompt draft'));
+    assert(!find(body, 'Generation activity'));
+    assert(find(panel(node), 'Agent activity').disabled);
   } finally {
     api.responses.push(jsonResponse(200, { released: true }));
     definition.prototype.onRemoved.call(node);

@@ -12,9 +12,8 @@ import subprocess
 import threading
 import time
 import uuid
-from collections import deque
 from pathlib import Path
-from typing import Any, Callable, Deque, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from .core import AGENT_IDS, BASIC_EFFORTS
 
@@ -39,10 +38,12 @@ class DockerAgents:
         self.guard = threading.Lock()
         self.discovery = threading.Lock()
         self.stopping = threading.Event()
-        self.logs: Deque[str] = deque(maxlen=1000)
+        self.logs: List[str] = []
+        self.log_lock = threading.Lock()
+        self.log_bytes = 0
+        self.log_session: Dict[str, Any] = {}
         self.operation: Optional[Dict[str, Any]] = None
         self.preferences: Dict[str, Any] = {}
-        self._log_process: Optional[subprocess.Popen] = None
         self._status: Dict[str, Any] = {}
         self._checked = 0.0
         path = directory / "workbench.json"
@@ -86,60 +87,46 @@ class DockerAgents:
         except (OSError, ValueError, subprocess.SubprocessError):
             return False
 
+    def begin_logs(self, agent: str, action: str, job: str = ""):
+        """Replace the previous session only after the caller owns the operation guard."""
+        with self.log_lock:
+            self.operation = {"agent": agent, "action": action, "state": "running"}
+            self.logs.clear()
+            self.log_bytes = 0
+            self.log_session = {"session": uuid.uuid4().hex, "agent": agent, "action": action, "job": job, "state": "running"}
+
+    def finish_logs(self, state: str):
+        """Retain the current session for its open viewers until the next operation."""
+        with self.log_lock:
+            self.log_session["state"] = state
+            if self.operation:
+                self.operation["state"] = state
+
+    def read_logs(self, session: str = "", cursor: int = 0, job: str = "") -> Dict[str, Any]:
+        """Page the current session atomically, without replaying old jobs or history."""
+        with self.log_lock:
+            if job and job != self.log_session.get("job"):
+                return {"session": "", "lines": [], "cursor": 0, "more": False}
+            start = min(cursor, len(self.logs)) if session == self.log_session.get("session") else 0
+            end, size = start, 0
+            while end < len(self.logs) and end - start < 128 and size < 256 * 1024:
+                size += len(self.logs[end])
+                end += 1
+            return {**self.log_session, "lines": self.logs[start:end], "cursor": end, "more": end < len(self.logs)}
+
     def log(self, text: str):
-        """Store human-readable progress; strip control codes and credential tokens."""
-        text = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", str(text))
+        """Keep complete readable output; redact credentials and remove terminal controls."""
+        text = re.sub(r"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)", "", str(text))
+        text = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", text)
         text = re.sub(r"(?i)(bearer\s+|(?:access_token|refresh_token|api_key)[\"' :=]+)\S+", r"\1[redacted]", text)
         text = re.sub(r"\b(?:sk-|xai-)[A-Za-z0-9_-]{16,}", "[redacted]", text)
-        text = "".join(c for c in text if c in "\n\t" or ord(c) >= 32)[:8000]
-        self.logs.extend(text.splitlines())
-        if self._log_process and self._log_process.poll() is None:
-            try:
-                self._log_process.stdin.write(text + "\n")
-                self._log_process.stdin.flush()
-            except (BrokenPipeError, OSError):
-                self._log_process = None
-
-    def start_logs(self):
-        """Start a mount-free log sink visible in docker ps and docker logs."""
-        if self._log_process and self._log_process.poll() is None:
-            return
-        name = self.namespace + "-logs"
-        if self.owned("container", name):
-            self.command(["rm", "-f", name])
-        args = [
-            "docker",
-            "run",
-            "--rm",
-            "-i",
-            "--name",
-            name,
-            "--label",
-            LABEL + "=" + self.namespace,
-            "--network",
-            "none",
-            "--read-only",
-            "--cap-drop",
-            "ALL",
-            "--security-opt",
-            "no-new-privileges",
-            "--user",
-            "1000:1000",
-            "--memory",
-            "64m",
-            "--pids-limit",
-            "16",
-            "--log-opt",
-            "max-size=5m",
-            "--log-opt",
-            "max-file=2",
-            BASE_IMAGE,
-            "python",
-            "-u",
-            "-c",
-            "import sys\nfor line in sys.stdin: print(line, end='', flush=True)",
-        ]
-        self._log_process = subprocess.Popen(args, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, text=True)
+        text = "".join(c for c in text if c in "\n\t" or ord(c) >= 32)
+        with self.log_lock:
+            size = len(text.encode("utf-8")) + 1
+            if self.log_bytes + size > 16 * 1024 * 1024:
+                raise ValueError("operation log exceeds 16 MiB; stopped without truncating output")
+            self.logs.append(text)
+            self.log_bytes += size
 
     def run_args(self, agent: str, name: str, image: Optional[str] = None) -> List[str]:
         """Apply the same isolation to discovery, login and generation."""
@@ -284,7 +271,6 @@ class DockerAgents:
                         self.log(line.rstrip())
             except (ValueError, OSError, KeyError, TypeError) as error:
                 errors.append(error)
-                cancelled.set()
 
         reader = threading.Thread(target=read, daemon=True)
         reader.start()
@@ -293,13 +279,17 @@ class DockerAgents:
                 process.stdin.write(data)
             process.stdin.close()
             while process.poll() is None:
+                if errors:
+                    break
                 if cancelled.wait(0.1) or time.monotonic() > deadline:
                     raise ValueError("operation cancelled or timed out")
-            if process.returncode:
-                raise ValueError("agent operation failed; open logs for details")
             reader.join(timeout=5)
             if errors:
+                if str(errors[0]).startswith("operation log exceeds"):
+                    raise ValueError("operation log exceeds limit; stopped without truncating earlier output") from None
                 raise ValueError("operation output could not be read")
+            if process.returncode:
+                raise ValueError("agent operation failed; open logs for details")
         finally:
             if name and self.owned("container", name):
                 self.command(["rm", "-f", name], check=False)
@@ -322,7 +312,7 @@ class DockerAgents:
             raise AgentBusy("Workbench is busy")
         self.operation = {"agent": agent, "action": action, "state": "running"}
         try:
-            self.start_logs()
+            self.begin_logs(agent, action)
             self.log("[" + agent + "] " + action)
             if action in ("build", "update"):
                 candidate = self.namespace + "-" + agent + ":candidate"
@@ -383,12 +373,17 @@ class DockerAgents:
                 name = self.namespace + "-" + action + "-" + uuid.uuid4().hex
                 self.stream([*self.run_args(agent, name), self.image(agent), agent, action], time.monotonic() + 600, self.stopping, name)
             self.operation["state"] = "complete"
-        except Exception:
+        except Exception as error:
             logger.exception("Workbench management failed")
             self.operation["state"] = "failed"
-            self.operation["error"] = "Operation failed; see the logs."
+            self.operation["error"] = (
+                "Operation output exceeded its limit; stopped without truncating earlier logs."
+                if isinstance(error, ValueError) and str(error).startswith("operation log exceeds")
+                else "Operation failed; see the logs."
+            )
             raise
         finally:
+            self.finish_logs(self.operation["state"])
             self._checked = 0
             self.guard.release()
 
@@ -403,7 +398,6 @@ class DockerAgents:
             if line.startswith("ARISU_RESULT "):
                 result.append(json.loads(line.removeprefix("ARISU_RESULT "))["final"])
 
-        self.start_logs()
         self.log("[job " + inputs.name + "] generating with " + agent)
         self.stream(
             [
@@ -433,11 +427,5 @@ class DockerAgents:
         return result[0]
 
     def close(self):
-        """Stop only the log sink started by this service."""
+        """Ask the owning workers to stop; no persistent log container is needed."""
         self.stopping.set()
-        if self._log_process:
-            self._log_process.stdin.close()
-            try:
-                self._log_process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                self._log_process.terminate()

@@ -125,6 +125,8 @@ class Workbench:
                 if workflow in self.released:
                     raise ValueError("workflow was closed during preparation")
                 self.jobs[identifier] = job
+            self.agents.begin_logs(options["agent"], "generate", job.id)
+            self.agents.log("[prepare] Preparing workflow and selected references…")
             return job
         except BaseException:
             if destination is not None:
@@ -397,6 +399,7 @@ class Workbench:
             if job.taken:
                 job.preparation_done.wait()
             shutil.rmtree(job.directory, ignore_errors=True)
+            self.agents.finish_logs(job.state)
             self.agents.guard.release()
 
     def close(self):

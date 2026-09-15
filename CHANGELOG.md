@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Show a generation indicator and live agent activity with complete provider-exposed analysis and reference/tool details.
+
 - Add an optional Agents menu shortcut to open shared agent management, hidden by default.
 - Create the custom `user/__arisu_nodes/skills/` directory on startup when missing.
 - Add MiniMax H3 Prompt Workbench with editable finalized text, selected resource and motion-context preparation, Docker-isolated Codex/Grok agents, shared settings, and draft review before Apply.
@@ -20,6 +22,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add a keyframes settings dialog to both MiniMax H3 Hybrid to Video nodes: resize method, crop, pad or stretch, pad colour and crop position in a first frame and a last frame section, on the model's 32-pixel canvas grid.
 
 ### Changed
+
+- Organize agent management into tabs with expanded colored logs, clickable device-login links, and pausable auto-scroll.
+- Replace the separate Docker log container with paginated current-operation output, retaining complete messages within the operation budget.
 
 - Prioritize Prompt Workbench writing fields, align its controls with Resource Studio, and refine focus, reference rows, and crop, clip, review, and agent dialogs.
 

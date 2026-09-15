@@ -3,6 +3,7 @@ import { api } from '../../../../scripts/api.js';
 import { app } from '../../../../scripts/app.js';
 import { closeOnBackdropClick, el } from '../common/dom.js';
 import { hideWidget, setWidget } from '../common/widgets.js';
+import { ACTIVITY_STYLE, openAgentActivity } from './agent_activity.js';
 import { agentStatus, openAgentSettings, workbenchRequest } from './agent_settings.js';
 import { effectiveBundles, executionTarget } from './settings_broadcast.js';
 
@@ -171,6 +172,9 @@ function invalidate(node) {
   state.review?.close();
   state.review = null;
   state.draft = '';
+  state.activity?.close();
+  state.activity = null;
+  state.activityJob = null;
   if (state.job) void workbenchRequest('/release', { id: state.job }).catch(() => {});
   state.job = null;
   state.running = false;
@@ -281,6 +285,7 @@ async function generate(node) {
       return;
     }
     state.job = response.id;
+    state.activityJob = response.id;
     while (current()) {
       const response = await api.fetchApi('/arisu/workbench/jobs/' + state.job);
       if (!response.ok) throw new Error('Generation job is unavailable.');
@@ -310,7 +315,7 @@ async function generate(node) {
       state.running = false;
       state.job = null;
       render(node);
-      if (state.draft) showDraft(node);
+      if (state.draft && !state.activity) showDraft(node);
     }
   }
 }
@@ -395,7 +400,24 @@ function render(node) {
     onclick: () => void generate(node),
   });
   state.generateButton = generateButton;
-  const actions = [generateButton];
+  const activityButton = el('button', {
+    textContent: 'Agent activity',
+    disabled: !state.running,
+    title: 'View live agent progress, reference calls and analysis',
+    onclick: () => {
+      if (!state.running || state.activity) return;
+      state.activity = openAgentActivity(
+        () => ({ job: state.activityJob, running: state.running, message: state.status }),
+        () => {
+          state.activity = null;
+          if (state.draft) showDraft(node);
+          else state.activityButton?.focus();
+        },
+      );
+    },
+  });
+  state.activityButton = activityButton;
+  const actions = [activityButton, generateButton];
   if (!ready && state.agents?.docker)
     actions.unshift(el('button', { textContent: 'Setup', onclick: () => openAgentSettings(value(node, 'agent')) }));
   if (state.running)
@@ -411,7 +433,7 @@ function render(node) {
     );
   if (state.draft) actions.unshift(el('button', { textContent: 'Review draft', className: 'review', onclick: () => showDraft(node) }));
   const statusElement = el('div', {
-    className: 'status',
+    className: 'status' + (state.running ? ' running' : ''),
     role: 'status',
     ariaLive: 'polite',
     textContent: state.status || (ready ? 'Ready' : 'Complete agent setup to generate.'),
@@ -455,7 +477,7 @@ function render(node) {
       ? 'Docker unavailable · finalized prompt remains editable'
       : 'Checking agent availability…';
   if (unavailable) final.append(el('div', { className: 'status', textContent: unavailable }));
-  state.body.replaceChildren(el('style', { textContent: STYLE }), el('div', { className: 'columns' }, [left, final]));
+  state.body.replaceChildren(el('style', { textContent: STYLE + ACTIVITY_STYLE }), el('div', { className: 'columns' }, [left, final]));
 }
 
 async function refresh(node) {

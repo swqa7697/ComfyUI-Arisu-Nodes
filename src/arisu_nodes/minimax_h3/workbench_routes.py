@@ -87,7 +87,16 @@ def register_routes(server: Any, owner: Workbench):
 
     @routes.get("/arisu/workbench/logs")
     async def logs(request: web.Request) -> web.Response:
-        return web.json_response({"lines": list(owner.agents.logs), "container": owner.agents.namespace + "-logs"})
+        try:
+            cursor = int(request.query.get("cursor", "0"))
+            if cursor < 0:
+                raise ValueError("negative cursor")
+        except ValueError:
+            raise web.HTTPBadRequest(text="Invalid log cursor") from None
+        return web.json_response(
+            owner.agents.read_logs(request.query.get("session", ""), cursor, request.query.get("job", "")),
+            headers={"Cache-Control": "no-store"},
+        )
 
     @routes.post("/arisu/workbench/action")
     async def action(request: web.Request) -> web.Response:

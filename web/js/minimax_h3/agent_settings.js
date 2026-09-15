@@ -2,6 +2,7 @@
 import { api } from '../../../../scripts/api.js';
 import { app } from '../../../../scripts/app.js';
 import { closeOnBackdropClick, el } from '../common/dom.js';
+import { ACTIVITY_STYLE, createActivity } from './agent_activity.js';
 
 const ROUTE = '/arisu/workbench';
 let pending;
@@ -21,12 +22,13 @@ function showShortcut(visible) {
 }
 
 const STYLE = `
-.arisu-agents{width:min(700px,94vw);max-height:90vh;padding:0;border:1px solid var(--border-color,#444);border-radius:10px;box-sizing:border-box;box-shadow:0 24px 64px #0009;
+.arisu-agents{width:min(1000px,96vw);max-height:92vh;padding:0;border:1px solid var(--border-color,#444);border-radius:10px;box-sizing:border-box;box-shadow:0 24px 64px #0009;
  background:var(--comfy-menu-bg,#303030);color:var(--fg-color,#ddd);font:13px/1.5 Arial,system-ui,sans-serif;}
+.arisu-agents.management{height:92vh;}
 .arisu-agents[open]{display:flex;flex-direction:column;overflow:hidden;}
 .arisu-agents::backdrop{background:#0009;backdrop-filter:blur(3px);}.arisu-agents header,.arisu-agents footer{display:flex;align-items:center;gap:12px;padding:14px 18px;flex-shrink:0;border-bottom:1px solid var(--border-color,#444);}
 .arisu-agents header strong{flex:1;font-size:16px;}.arisu-agents .content{padding:12px 18px 18px;overflow:auto;min-height:0;scrollbar-width:thin;}
-.arisu-agents section{padding:14px;margin:12px 0;border:1px solid var(--border-color,#444);border-radius:6px;}.arisu-agents h3{margin:0 0 8px;}
+.arisu-agents section{padding:12px;margin:0;border:1px solid var(--border-color,#444);border-radius:6px;}.arisu-agents h3{margin:0 0 8px;}
 .arisu-agents p{margin:6px 0;color:var(--descrip-text,#aaa);}
 .arisu-agents button,.arisu-agents select{font:inherit;color:inherit;background:var(--comfy-input-bg,#222);border:1px solid var(--border-color,#555);
  border-radius:5px;min-height:34px;padding:5px 10px;cursor:pointer;}.arisu-agents button:hover{border-color:#64b5f6;}
@@ -37,6 +39,11 @@ const STYLE = `
 .arisu-agents .actions,.arisu-agents .fields{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;}
 .arisu-agents label{display:flex;align-items:center;gap:8px;}.arisu-agents pre{white-space:pre-wrap;overflow-wrap:anywhere;
  background:var(--comfy-input-bg,#222);padding:12px;max-height:240px;overflow:auto;font:11px/1.6 monospace;}
+.arisu-agents.management>.content{display:flex;flex-direction:column;flex:1;gap:10px;overflow:hidden;}
+.arisu-agents .settings-area{flex-shrink:0;max-height:48vh;overflow:auto;padding:2px;scrollbar-width:thin;}
+.arisu-agents .tabs{display:flex;gap:6px;margin-bottom:8px;}.arisu-agents .tabs button{flex:1;}
+.arisu-agents .tabs button[aria-selected="true"]{border-color:#64b5f6;background:color-mix(in srgb,var(--comfy-input-bg,#222) 85%,#64b5f6);}
+.arisu-agents .error:empty{display:none;}
 .arisu-agents .error{color:var(--error-text,#efaaaa);}.arisu-agents .danger{border-color:#bd6c6c;}
 @media(pointer:coarse){.arisu-agents button,.arisu-agents select{min-height:44px;}}
 `;
@@ -112,17 +119,54 @@ export function openAgentSettings(selected = 'codex', parent = document.body) {
     active.focus();
     return;
   }
-  const dialog = el('dialog', { className: 'arisu-agents', ariaLabel: 'Prompt Workbench agents' });
+  const dialog = el('dialog', { className: 'arisu-agents management', ariaLabel: 'Prompt Workbench agents' });
   active = dialog;
   const content = el('div', { className: 'content' });
   const error = el('p', { className: 'error', role: 'status', ariaLive: 'polite' });
-  const logs = el('pre', { tabIndex: 0, ariaLabel: 'Agent logs' });
+  const activity = createActivity();
+  selected = selected === 'grok' ? 'grok' : 'codex';
+  let latest;
+  let refreshing = false;
   let closed = false;
   let timer;
   let busy = false;
   let signature = '';
   const sections = el('div');
-  const logName = el('p');
+  const tabs = el('div', { className: 'tabs', role: 'tablist', ariaLabel: 'Agents' });
+  const tabButtons = ['codex', 'grok'].map((agent, index) => {
+    const button = el('button', {
+      id: 'arisu-tab-' + agent,
+      role: 'tab',
+      textContent: agent === 'codex' ? 'Codex' : 'Grok Build',
+      onclick: () => select(agent),
+      onkeydown: (event) => {
+        const next =
+          event.key === 'Home' ? 0 : event.key === 'End' ? 1 : ['ArrowLeft', 'ArrowRight'].includes(event.key) ? 1 - index : null;
+        if (next === null) return;
+        event.preventDefault();
+        select(next ? 'grok' : 'codex');
+        tabButtons[next].focus();
+      },
+    });
+    button.setAttribute('aria-controls', 'arisu-agent-' + agent);
+    return button;
+  });
+  tabs.append(...tabButtons);
+  function select(agent) {
+    selected = agent;
+    signature = '';
+    activity.reset();
+    draw();
+    void refresh();
+  }
+  function draw() {
+    tabButtons.forEach((button, index) => {
+      const chosen = selected === (index ? 'grok' : 'codex');
+      button.setAttribute('aria-selected', String(chosen));
+      button.tabIndex = chosen ? 0 : -1;
+    });
+    if (latest) sections.replaceChildren(card(selected, latest.agents?.[selected], latest.docker, latest.operation));
+  }
   async function action(agent, operation, extra = {}) {
     if (operation === 'remove' && !(await confirmRemoval(agent === 'codex' ? 'Codex' : 'Grok Build', dialog))) return;
     busy = true;
@@ -191,8 +235,7 @@ export function openAgentSettings(selected = 'codex', parent = document.body) {
         onclick: () => void action(agent, operationName),
       }),
     );
-    return el('section', { id: 'arisu-agent-' + agent }, [
-      el('h3', { textContent: title + (agent === selected ? ' · selected' : '') }),
+    const panel = el('section', { id: 'arisu-agent-' + agent, role: 'tabpanel' }, [
       el('p', { textContent: state + (info.version ? ' · ' + info.version : '') }),
       el('div', { className: 'actions' }, buttons),
       el('div', { className: 'fields' }, [
@@ -200,36 +243,38 @@ export function openAgentSettings(selected = 'codex', parent = document.body) {
         el('label', {}, [el('span', { textContent: 'Effort' }), effort]),
       ]),
     ]);
+    panel.setAttribute('aria-labelledby', 'arisu-tab-' + agent);
+    return panel;
   }
   async function refresh(force = false) {
+    if (refreshing || closed) return;
+    refreshing = true;
     try {
       const status = await agentStatus(force);
       if (closed) return;
+      latest = status;
       const next = JSON.stringify(status);
       if (next !== signature) {
         signature = next;
-        sections.replaceChildren(...['codex', 'grok'].map((agent) => card(agent, status.agents?.[agent], status.docker, status.operation)));
+        draw();
       }
-      const response = await api.fetchApi(ROUTE + '/logs');
-      const data = await response.json();
-      if (closed) return;
-      logs.textContent = (data.lines ?? []).join('\n');
-      logName.textContent = data.container ? 'Docker logs: ' + data.container : '';
+      const more = await activity.read({ agent: selected });
+      if (more && !closed) setTimeout(() => void refresh(), 0);
       if (status.operation?.error) error.textContent = status.operation.error;
     } catch (failure) {
       if (!closed) error.textContent = failure.message;
+    } finally {
+      refreshing = false;
     }
   }
   content.append(
     el('p', { textContent: 'Shared by trusted users of this ComfyUI instance. Login uses a browser device code shown in the logs below.' }),
     error,
-    sections,
-    el('h3', { textContent: 'Activity' }),
-    logName,
-    logs,
+    el('div', { className: 'settings-area' }, [tabs, sections]),
+    activity.element,
   );
   dialog.append(
-    el('style', { textContent: STYLE }),
+    el('style', { textContent: STYLE + ACTIVITY_STYLE }),
     el('header', {}, [
       el('strong', { textContent: 'Prompt Workbench · Agents' }),
       el('button', { textContent: 'Close', onclick: () => dialog.close() }),
@@ -240,11 +285,13 @@ export function openAgentSettings(selected = 'codex', parent = document.body) {
   dialog.onclose = () => {
     closed = true;
     clearInterval(timer);
+    activity.reset();
     dialog.remove();
     active = null;
   };
   parent.append(dialog);
   dialog.showModal();
+  draw();
   void refresh(true);
   timer = setInterval(() => void refresh(), 2000);
 }

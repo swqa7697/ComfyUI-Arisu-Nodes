@@ -6,6 +6,9 @@ import base64
 import importlib.util
 import json
 import shutil
+import subprocess
+import sys
+import time
 from pathlib import Path
 from typing import Any, List
 
@@ -73,7 +76,6 @@ def test_agent_update_preserves_working_image_and_settings_reject_unavailable_mo
         return ""
 
     monkeypatch.setattr(agents, "command", command)
-    monkeypatch.setattr(agents, "start_logs", lambda: None)
     monkeypatch.setattr(agents, "stream", lambda *args, **kwargs: None)
     monkeypatch.setattr(agents, "owned", lambda *args: True)
 
@@ -97,6 +99,59 @@ def test_agent_update_preserves_working_image_and_settings_reject_unavailable_mo
             agents.configure("codex", model, effort)
     agents.log("access_token=secret\nBearer token\nxai-abcdefghijklmnopqrstuvwxyz")
     assert "secret" not in "\n".join(agents.logs) and "abcdefghijklmnopqrstuvwxyz" not in "\n".join(agents.logs)
+    # One current session retains long output and pages it without dropping earlier lines.
+    agents.begin_logs("codex", "generate", "job-a")
+    first = "analysis " + "reference detail " * 1000
+    agents.log(first)
+    for index in range(1100):
+        agents.log(f"step {index}")
+    page = agents.read_logs(job="job-a")
+    assert page["lines"][0] == first and page["more"]
+    retained = list(page["lines"])
+    while page["more"]:
+        page = agents.read_logs(page["session"], page["cursor"], "job-a")
+        retained.extend(page["lines"])
+    assert len(retained) == 1101 and retained[-1] == "step 1099"
+    assert not agents.read_logs(job="different-job")["lines"]
+    agents.finish_logs("complete")
+    assert agents.read_logs()["state"] == "complete"
+    agents.begin_logs("grok", "login")
+    agents.log("Go to https://example.test/device and enter ABCD-EFGH")
+    replaced = agents.read_logs(page["session"], page["cursor"])
+    assert len(replaced["lines"]) == 1 and replaced["session"] != page["session"]
+    agents.log_bytes = 16 * 1024 * 1024
+    with pytest.raises(ValueError, match="without truncating"):
+        agents.log("over budget")
+    assert agents.read_logs()["lines"] == replaced["lines"]
+
+    # An output-budget failure reaps its child without poisoning future management operations.
+    popen = subprocess.Popen
+    with monkeypatch.context() as local:
+        local.setattr(subprocess, "Popen", lambda *args, **kwargs: popen([sys.executable, "-c", "print('over budget')"], **kwargs))
+        with pytest.raises(ValueError, match="without truncating"):
+            DockerAgents.stream(agents, [], time.monotonic() + 5, agents.stopping)
+    assert not agents.stopping.is_set()
+
+    # Provider text and reference details survive formatting, but image payloads do not enter logs.
+    runner_path = Path(__file__).resolve().parents[3] / "assets/prompt_workbench/runner.py"
+    spec = importlib.util.spec_from_file_location("workbench_runner", runner_path)
+    runner = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(runner)
+    assert runner.activity({"item": {"type": "reasoning", "text": first}}) == "[analysis] " + first
+    tool = runner.activity(
+        {
+            "type": "item.completed",
+            "item": {
+                "type": "mcp_tool_call",
+                "server": "workbench",
+                "tool": "read_image",
+                "arguments": {"asset_id": "reference-1"},
+                "result": {"content": [{"type": "image", "data": "private-image-bytes"}, {"type": "text", "text": first}]},
+            },
+        }
+    )
+    assert "read_image" in tool and "reference-1" in tool and first in tool and "private-image-bytes" not in tool
+    assert "offline" in runner.activity({"type": "error", "message": "offline"})
     agents.guard.acquire()
     try:
         with pytest.raises(ValueError, match="busy"):

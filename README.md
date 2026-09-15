@@ -231,9 +231,17 @@ Cancellation waits for this job's workers and container to exit and does not int
 queued work. Context changes, node removal, and workflow closure invalidate pending drafts.
 Prepared media is cached under ComfyUI temp, bounded to 2 GiB, and expires after 30 idle minutes.
 
-Activity in agent settings shows build progress and CLI-emitted summaries. The named
-`arisu-workbench-…-logs` container is visible in `docker ps`; use `docker logs -f <container>`
-for the same rotating stream.
+Agent management uses **Codex / Grok Build tabs**, with the remaining space devoted to colored
+build and login logs. Click a device-login URL to open it in your browser. During generation,
+a running indicator and **Agent activity** button let you inspect provider-exposed analysis,
+reference/tool calls, and text results. Both views follow new output automatically; scroll up to
+pause, then use **Resume auto-scroll** to return to the latest output.
+
+Only the current operation is kept in memory, until the next operation or server shutdown;
+there is no separate log container or history browser. Output is paged without message clipping.
+The 16 MiB operation output budget stops excessive output with an error instead of dropping older
+lines. This is a readable CLI event view, so content depends on what the provider exposes.
+Use **Update CLI** once for existing images to pick up the expanded event renderer.
 
 
 A MiniMax H3 workflow with the pack in it:
@@ -391,7 +399,7 @@ uv run --no-sync python scripts/smoke-workbench.py
 
 This builds both official standalone agents with temporary fixtures and fresh authentication volumes.
 It verifies Auto capability, native skill discovery, MCP initialization/context/image access and
-unlisted-image refusal, unprivileged read-only mounts, and readable Docker logs, then removes its
+unlisted-image refusal, unprivileged read-only mounts, and readable current-session logs, then removes its
 owned containers, images, volumes, and fixtures. It does not use an existing account or modify ComfyUI.
 
 Device login, account model discovery, and real prompt generation need the provider's configured

@@ -35,6 +35,8 @@ class FixtureServer:
         self.requests: List[str] = []
         self.available = True
         self.fail_generation = False
+        self.hold_generation = False
+        self.log_polls = 0
         self.polls = 0
         self.settings: Dict[str, Any] = {
             "Comfy.VueNodes.Enabled": False,
@@ -167,10 +169,47 @@ class FixtureServer:
                 "devices": [],
             },
             "/arisu/roots": {"roots": [{"id": "input", "label": "Input"}, {"id": "output", "label": "Output"}]},
-            "/arisu/workbench/logs": {"container": "fixture", "lines": ["Simulated agent: no commands are executed."]},
         }
         if path in responses and method == "GET":
             return web.json_response(responses[path])
+        if path == "/arisu/workbench/logs":
+            self.log_polls += 1
+            job = request.query.get("job", "")
+            lines = (
+                [
+                    "[analysis] " + "Inspecting the selected reference, motion and lighting. " * 200,
+                    '[tool · item.completed] workbench.read_image\n{"asset_id": "reference-1"}',
+                    "[agent] The reference shows a paper boat with warm reflected light.",
+                ]
+                if job
+                else ["[codex] build", "#1 [internal] load build definition from Dockerfile", "#2 resolve base image", "#3 DONE 0.4s"]
+            )
+            lines += [f"#4 Processing {'reference' if job else 'image build'} step {i + 1}" for i in range(65)]
+            if not job:
+                lines += ["Sign in at https://example.test/device", "Device code: ABCD-EFGH", "Waiting for browser authorization…"]
+            if job:
+                lines += [
+                    '[tool · item.completed] workbench.read_image\n{"asset_id": "reference-1"}',
+                    "[analysis] The reference shows a small paper boat on a calm pond. Preserve its folded silhouette and the warm light.",
+                    "[tool · item.completed] workbench.get_context\nSelected video: 22 frames · Audio: excluded",
+                    "[analysis] Match the gentle forward drift in the motion context. Keep the camera low and avoid a sudden change in direction.",
+                    "[agent] Drafting a continuous tracking shot with soft reflections and restrained motion…",
+                ]
+            lines += [f"[analysis] Live update {i + 1}" for i in range(self.log_polls)]
+            session = "fixture-generation" if job else "fixture-management"
+            cursor = int(request.query.get("cursor", "0")) if request.query.get("session") == session else 0
+            return web.json_response(
+                {
+                    "session": session,
+                    "agent": "codex",
+                    "action": "generate" if job else "login",
+                    "job": job,
+                    "state": "running",
+                    "lines": lines[cursor:],
+                    "cursor": len(lines),
+                    "more": False,
+                }
+            )
         if path == "/arisu/workbench/status":
             return web.json_response(self.status())
         if path == "/arisu/workbench/generate" and method == "POST":
@@ -180,7 +219,9 @@ class FixtureServer:
             self.polls += 1
             if self.fail_generation:
                 return web.json_response({"state": "failed", "error": "Simulated provider unavailable"})
-            return web.json_response({"state": "generating"} if self.polls < 3 else {"state": "complete", "draft": DRAFT})
+            return web.json_response(
+                {"state": "generating"} if self.hold_generation or self.polls < 3 else {"state": "complete", "draft": DRAFT}
+            )
         if path in ("/arisu/workbench/release", "/arisu/workbench/cancel", "/arisu/workbench/action") and method == "POST":
             return web.json_response({"accepted": True})
         if path in ("/arisu/resources/browse", "/arisu/browse"):

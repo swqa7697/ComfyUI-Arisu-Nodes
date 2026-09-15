@@ -21,7 +21,15 @@ test('settings manage shared accounts, supported effort choices, logs and confir
   };
   const status = { docker: true, agents: { codex: info, grok: { installed: false } } };
   const responses = () =>
-    api.responses.push(jsonResponse(200, status), jsonResponse(200, { container: 'named-log', lines: ['[job test] preparing'] }));
+    api.responses.push(
+      jsonResponse(200, status),
+      jsonResponse(200, {
+        session: 'test',
+        agent: 'codex',
+        cursor: 3,
+        lines: ['[job test] preparing', 'Login: https://example.test/device.', '<script>untrusted</script>'],
+      }),
+    );
   responses();
   const extension = extensionNamed('Arisu.MiniMaxH3.AgentSettings');
   const menu = document.createElement('div');
@@ -75,7 +83,18 @@ test('settings manage shared accounts, supported effort choices, logs and confir
       find(dialog, 'Codex effort').children.map((item) => item.value),
       ['low', 'medium', 'high'],
     );
-    assert.equal(find(dialog, 'Agent logs').textContent, '[job test] preparing');
+    assert(find(find(dialog, 'Agent logs'), '[job test] preparing'));
+    const login = find(dialog, 'https://example.test/device');
+    assert.equal(login.href, 'https://example.test/device');
+    assert.equal(login.rel, 'noopener noreferrer');
+    assert(find(dialog, '<script>untrusted</script>'));
+    assert.equal(descendants(dialog).filter((item) => item.tagName === 'SCRIPT').length, 0);
+    assert.equal(descendants(dialog).filter((item) => item.role === 'tabpanel').length, 1);
+    find(dialog, 'Grok Build').onclick();
+    assert(find(dialog, 'Grok Build model') && !find(dialog, 'Codex model'));
+    find(dialog, 'Codex').onclick();
+    await settle();
+    await settle();
     const codex = descendants(dialog).find((item) => item.id === 'arisu-agent-codex');
     const effort = find(codex, 'Codex effort');
     api.responses.push(jsonResponse(400, { error: 'unsupported model or effort' }));

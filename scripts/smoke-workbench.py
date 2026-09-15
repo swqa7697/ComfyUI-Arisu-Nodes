@@ -118,9 +118,13 @@ def main():
                     threading.Event(),
                     name,
                 )
-            logs = agents.command(["logs", agents.namespace + "-logs"])
-            assert "codex" in logs and "grok" in logs and "build" in logs
-            print("PASS: native CLIs, Auto capability, skill discovery, MCP, read-only inputs and Docker logs.", flush=True)
+                page = agents.read_logs()
+                logs = list(page["lines"])
+                while page["more"]:
+                    page = agents.read_logs(page["session"], page["cursor"])
+                    logs.extend(page["lines"])
+                assert page["agent"] == agent and page["action"] == "build" and "build" in "\n".join(logs)
+            print("PASS: native CLIs, Auto capability, skill discovery, MCP, read-only inputs and current-session logs.", flush=True)
             print("Account checks not run: device login and authenticated generation require configured provider accounts.", flush=True)
         finally:
             for agent in ("codex", "grok"):
