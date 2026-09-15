@@ -663,6 +663,8 @@ def preparation_graph(prompt: Any, node_id: str) -> Dict[str, Any]:
         "PrimitiveInt",
         "PrimitiveFloat",
         "PrimitiveString",
+        "StringConcatenate",
+        "ArisuPathBuilder",
         "Reroute",
     }
     selected: Dict[str, Any] = {}

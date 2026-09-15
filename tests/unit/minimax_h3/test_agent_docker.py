@@ -36,6 +36,24 @@ def test_generation_contract_prunes_side_effects_and_parses_only_final_markdown(
         prompt["l"]["class_type"] = forbidden
         with pytest.raises(ValueError, match="source"):
             preparation_graph(prompt, "w")
+    # Get/Set wires resolve to their producers in the API prompt. The bundled
+    # workflow builds the loader path with text nodes even at clip zero.
+    prompt["l"]["class_type"] = "MiniMaxH3MotionContextLoadLatent"
+    prompt["l"]["inputs"]["latent_path"] = ["path", 0]
+    prompt["path"] = {"class_type": "StringConcatenate", "inputs": {"string_a": ["prefix", 0], "string_b": "latents", "delimiter": "/"}}
+    prompt["prefix"] = {"class_type": "ArisuPathBuilder", "inputs": {"segment_1": ["text", 0], "segment_2": "scene"}}
+    prompt["text"] = {"class_type": "PrimitiveString", "inputs": {"value": "h3"}}
+    for clip_index in (0, 1):
+        prompt["l"]["inputs"]["clip_index"] = clip_index
+        selected = preparation_graph(prompt, "w")
+        assert set(selected) == {"w", "l", "v", "path", "prefix", "text"}
+        assert selected["l"]["inputs"]["clip_index"] == clip_index
+        assert selected["path"]["inputs"]["string_a"] == ["prefix", 0]
+    # Safe text builders must not admit arbitrary upstream execution.
+    for forbidden in ("KSampler", "SaveImage", "ArisuMiniMaxH3PromptWorkbench"):
+        prompt["text"]["class_type"] = forbidden
+        with pytest.raises(ValueError, match="dependency"):
+            preparation_graph(prompt, "w")
     # One motion wire stays inert and cannot execute its producer.
     del prompt["w"]["inputs"]["vae"]
     assert set(preparation_graph(prompt, "w")) == {"w"}
