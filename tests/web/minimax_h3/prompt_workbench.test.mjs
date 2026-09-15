@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { agentStatus } from '../../../web/js/minimax_h3/agent_settings.js';
 import { api, jsonResponse, resetApi } from '../support/api.mjs';
-import { app, extensionNamed, resetApp } from '../support/app.mjs';
+import { app, extensionNamed, resetApp, toasts } from '../support/app.mjs';
 import { body, descendants, resetDom } from '../support/dom.mjs';
 import { makeGraph, makeNode } from '../support/litegraph.mjs';
 import '../../../web/js/minimax_h3/prompt_workbench.js';
@@ -47,7 +47,11 @@ test('Workbench keeps finalized text independent of setup, source notes and revi
   try {
     await settle();
     assert.equal(widget(node, 'prepare_job').value, '');
-    assert.equal(descendants(panel(node)).find((item) => item.className === 'generation').disabled, true);
+    assert.equal(descendants(panel(node)).find((item) => item.className === 'generation-fields').disabled, true);
+    find(panel(node), 'Generation results').onclick();
+    assert(find(body, 'Generation activity'));
+    assert.equal(find(body, 'Output prompt').value, '');
+    find(body, 'Close').onclick();
     const final = find(panel(node), 'Finalized prompt');
     assert.equal(final.tagName, 'TEXTAREA');
     final.value = 'manual';
@@ -60,7 +64,7 @@ test('Workbench keeps finalized text independent of setup, source notes and revi
     await node.arisuRefreshSources();
     await settle();
     assert(find(panel(node), 'Setup') && find(panel(node), 'Generate prompt').disabled);
-    assert(find(panel(node), 'Agent activity').disabled);
+    assert(!find(panel(node), 'Generation results').disabled);
 
     const data = {
       version: 1,
@@ -130,19 +134,47 @@ test('Workbench keeps finalized text independent of setup, source notes and revi
     await settle();
     await settle();
     assert.equal(widget(node, 'finalized_prompt').value, 'manual');
-    assert(find(body, 'Generated prompt draft'));
-    find(body, 'Discard').onclick();
+    assert(
+      !JSON.stringify(node.widgets.filter((item) => item.serialize !== false).map(({ name, value }) => ({ name, value }))).includes(
+        'first draft',
+      ),
+    );
+    assert(!find(body, 'Output prompt'));
+    assert.equal(toasts.at(-1).severity, 'success');
+    const beforeQuickApply = changes;
+    find(panel(node), 'Apply output').onclick();
+    assert.equal(changes, beforeQuickApply + 1);
+    assert.equal(widget(node, 'finalized_prompt').value, 'first draft');
+    widget(node, 'finalized_prompt').value = 'manual';
     assert.equal(widget(node, 'finalized_prompt').value, 'manual');
 
     api.responses.push(jsonResponse(202, { id: 'job2' }), jsonResponse(200, { state: 'complete', draft: 'second draft' }));
     find(panel(node), 'Generate prompt').onclick();
     await settle();
     await settle();
-    find(body, 'Generated prompt draft').value = 'edited draft';
+    api.responses.push(jsonResponse(200, { session: 'job2', lines: [], cursor: 0 }));
+    find(panel(node), 'Generation results').onclick();
+    await settle();
+    const output = find(body, 'Output prompt');
+    output.value = '';
+    output.oninput();
+    assert.equal(output.disabled, false);
+    assert(find(body, 'Apply to Workbench').disabled);
+    output.value = 'edited draft';
+    output.oninput();
     const before = changes;
-    find(body, 'Apply').onclick();
+    find(body, 'Apply to Workbench').onclick();
+    find(body, 'Close').onclick();
     assert.equal(widget(node, 'finalized_prompt').value, 'edited draft');
     assert.equal(changes, before + 1);
+
+    api.responses.push(jsonResponse(202, { id: 'failed' }), jsonResponse(200, { state: 'failed', error: 'Provider failed' }));
+    find(panel(node), 'Generate prompt').onclick();
+    await settle();
+    await settle();
+    assert.equal(toasts.at(-1).severity, 'error');
+    assert(!find(panel(node), 'Apply output'));
+    assert(!find(body, 'Output prompt'));
 
     let finish;
     api.responses.push(
@@ -153,9 +185,10 @@ test('Workbench keeps finalized text independent of setup, source notes and revi
         }),
     );
     find(panel(node), 'Generate prompt').onclick();
+    assert(!find(panel(node), 'Apply output'));
     await settle();
     await settle();
-    assert.equal(find(panel(node), 'Agent activity').disabled, false);
+    assert(!find(panel(node), 'Generation results').disabled);
     api.responses.push(
       jsonResponse(200, {
         session: 'job3',
@@ -175,7 +208,7 @@ test('Workbench keeps finalized text independent of setup, source notes and revi
         state: 'running',
       }),
     );
-    find(panel(node), 'Agent activity').onclick();
+    find(panel(node), 'Generation results').onclick();
     await settle();
     const activity = find(body, 'Generation activity');
     assert(activity);
@@ -197,9 +230,9 @@ test('Workbench keeps finalized text independent of setup, source notes and revi
     await settle();
     assert.equal(widget(node, 'prepare_job').value, '');
     assert.equal(widget(node, 'finalized_prompt').value, 'restored');
-    assert(!find(body, 'Generated prompt draft'));
+    assert(!find(body, 'Output prompt'));
     assert(!find(body, 'Generation activity'));
-    assert(find(panel(node), 'Agent activity').disabled);
+    assert(!find(panel(node), 'Generation results').disabled);
   } finally {
     api.responses.push(jsonResponse(200, { released: true }));
     definition.prototype.onRemoved.call(node);

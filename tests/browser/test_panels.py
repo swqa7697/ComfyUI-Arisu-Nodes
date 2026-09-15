@@ -175,7 +175,14 @@ def test_prompt_workbench():
                     expect(page.get_by_label("Audio context length in frames")).to_be_disabled()
                     screenshot(page, name, "motion-expanded")
                     page.locator(".arisu-workbench summary").click()
-                    expect(page.get_by_role("button", name="Agent activity", exact=True)).to_be_disabled()
+                    expect(page.get_by_role("button", name="Generation results", exact=True)).to_be_enabled()
+                    page.get_by_role("button", name="Generation results", exact=True).click()
+                    empty_results = page.get_by_role("dialog", name="Generation results", exact=True)
+                    empty_results.get_by_role("tab", name="Output prompt", exact=True).click()
+                    expect(empty_results.get_by_role("textbox", name="Output prompt", exact=True)).to_have_value("")
+                    expect(empty_results.get_by_role("button", name="Apply to Workbench")).to_be_disabled()
+                    screenshot(page, name, "empty-results")
+                    empty_results.get_by_role("button", name="Close", exact=True).click()
                     server.hold_generation = True
                     page.get_by_role("button", name="Generate prompt", exact=True).click()
                     expect(page.locator(".arisu-workbench .status")).to_have_text("Generating prompt…")
@@ -188,8 +195,8 @@ def test_prompt_workbench():
                         "e => getComputedStyle(e, '::before').animationName !== 'none'"
                     )
                     page.emulate_media(reduced_motion="reduce")
-                    page.get_by_role("button", name="Agent activity", exact=True).click()
-                    activity = page.get_by_role("dialog", name="Agent activity", exact=True)
+                    page.get_by_role("button", name="Generation results", exact=True).click()
+                    activity = page.get_by_role("dialog", name="Generation results", exact=True)
                     terminal = activity.get_by_label("Generation activity", exact=True)
                     expect(terminal).to_contain_text("workbench.read_image")
                     assert len(terminal.inner_text()) > 10000
@@ -215,21 +222,39 @@ def test_prompt_workbench():
                     activity.get_by_role("button", name="Resume auto-scroll").click()
                     assert terminal.evaluate("e => e.scrollHeight - e.clientHeight - e.scrollTop < 30")
                     server.hold_generation = False
-                    expect(activity.locator(".activity-state")).to_have_text("Draft ready for review")
-                    expect(page.get_by_role("button", name="Agent activity", exact=True)).to_be_disabled()
+                    expect(activity.locator(".activity-state")).to_have_text("Output ready to apply")
+                    expect(page.get_by_role("button", name="Generation results", exact=True)).to_be_enabled()
                     screenshot(page, name, "activity-complete")
                     activity.get_by_role("button", name="Close", exact=True).click()
-                    expect(page.get_by_role("dialog", name="Review generated prompt")).to_be_visible()
-                    expect(page.get_by_label("Generated prompt draft")).to_have_value(DRAFT)
+                    expect(page.get_by_role("dialog", name="Generation results", exact=True)).to_have_count(0)
+                    serialized = page.evaluate("JSON.stringify(window.comfyAPI.app.app.graph.serialize())")
+                    assert DRAFT not in serialized and "Preserve the folded silhouette." not in serialized
+                    page.get_by_role("button", name="Generation results", exact=True).click()
+                    expect(page.get_by_role("textbox", name="Output prompt", exact=True)).to_have_value(DRAFT)
                     assert widget_value(page, node_id, "finalized_prompt") == "Original prompt"
                     contained(page, "dialog[open]")
                     screenshot(page, name, "review")
-                    page.get_by_role("button", name="Apply", exact=True).click()
+                    page.get_by_role("button", name="Apply to Workbench", exact=True).click()
                     expect(page.get_by_label("Finalized prompt", exact=True)).to_have_value(DRAFT)
                     assert widget_value(page, node_id, "finalized_prompt") == DRAFT
+                    page.get_by_role("dialog", name="Generation results", exact=True).get_by_role(
+                        "button", name="Close", exact=True
+                    ).click()
+                    page.get_by_role("button", name="Generate prompt", exact=True).click()
+                    expect(page.get_by_role("button", name="Apply output", exact=True)).to_be_visible()
+                    expect(page.get_by_role("dialog", name="Generation results", exact=True)).to_have_count(0)
+                    screenshot(page, name, "output-ready")
+                    page.get_by_role("button", name="Apply output", exact=True).click()
                     server.fail_generation = True
                     page.get_by_role("button", name="Generate prompt", exact=True).click()
                     expect(page.locator(".arisu-workbench .status")).to_have_text("Simulated provider unavailable")
+                    expect(page.get_by_role("button", name="Apply output", exact=True)).to_have_count(0)
+                    page.get_by_role("button", name="Generation results", exact=True).click()
+                    page.get_by_role("tab", name="Output prompt", exact=True).click()
+                    expect(page.get_by_role("textbox", name="Output prompt", exact=True)).to_have_value("")
+                    page.get_by_role("dialog", name="Generation results", exact=True).get_by_role(
+                        "button", name="Close", exact=True
+                    ).click()
                     screenshot(page, name, "error")
                     # Long prose scrolls within the editor without moving the canvas or losing focus.
                     final = page.get_by_label("Finalized prompt", exact=True)

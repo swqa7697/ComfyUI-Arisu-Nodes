@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Combine Workbench activity and the latest output in an always-available Generation results dialog, with explicit Apply actions and completion notifications instead of automatic review popups. Keep activity and unapplied output out of workflow copies.
 - Consolidate Workbench model and reasoning preferences into `config.arisu.jsonc`, preserving comments and media-root settings.
 
 ### Security

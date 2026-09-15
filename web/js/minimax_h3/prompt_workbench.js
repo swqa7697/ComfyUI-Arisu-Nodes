@@ -2,7 +2,7 @@
 import { api } from '../../../../scripts/api.js';
 import { app } from '../../../../scripts/app.js';
 import { forwardToCanvas, keepScrollWheel } from '../common/canvas_gestures.js';
-import { closeOnBackdropClick, el } from '../common/dom.js';
+import { el } from '../common/dom.js';
 import { hideWidget, setWidget } from '../common/widgets.js';
 import { ACTIVITY_STYLE, openAgentActivity } from './agent_activity.js';
 import { agentStatus, openAgentSettings, workbenchRequest } from './agent_settings.js';
@@ -52,7 +52,7 @@ const STYLE = `
  display:flex;flex-direction:column;gap:6px;}.arisu-workbench .motion label{display:grid;grid-template-columns:1fr 90px;gap:8px;align-items:center;}
 .arisu-workbench .motion textarea{min-height:64px;}
 .arisu-workbench .motion .motion_notes{display:flex;align-items:stretch;}.arisu-workbench .motion_notes>.label{display:none;}
-.arisu-workbench .generation-fields{display:flex;flex:1;min-height:0;flex-direction:column;gap:10px;overflow:auto;padding:2px 4px 4px;scrollbar-width:thin;}
+.arisu-workbench .generation-fields{border:0;margin:0;display:flex;flex:1;min-height:0;flex-direction:column;gap:10px;overflow:auto;padding:2px 4px 4px;scrollbar-width:thin;}
 .arisu-workbench .footer{flex-shrink:0;}.arisu-workbench fieldset:disabled{opacity:.6;}
 .arisu-workbench .references{border:1px solid var(--line);padding:8px;border-radius:4px;background:var(--surface);display:flex;flex-direction:column;gap:6px;max-height:210px;overflow:auto;}
 .arisu-workbench .reference{display:grid;grid-template-columns:4px minmax(70px,110px) minmax(0,1fr);align-items:center;gap:7px;min-width:0;}
@@ -75,17 +75,6 @@ const STYLE = `
 @media(pointer:coarse){.arisu-workbench input,.arisu-workbench select,.arisu-workbench button{min-height:44px;}
  .arisu-workbench .reference{grid-template-columns:4px minmax(60px,100px) minmax(0,1fr);}}
 @media(prefers-reduced-motion:reduce){.arisu-workbench *{transition:none!important;animation:none!important;}}
-.arisu-prompt-review{width:min(850px,94vw);max-height:92vh;border:1px solid var(--border-color,#555);border-radius:10px;box-sizing:border-box;box-shadow:0 24px 64px #0009;
- padding:18px;background:var(--comfy-menu-bg,#333);color:var(--fg-color,#ddd);font:14px/1.5 Arial,system-ui,sans-serif;}
-.arisu-prompt-review[open]{display:flex;flex-direction:column;gap:12px;overflow:hidden;}
-.arisu-prompt-review::backdrop{background:#0009;backdrop-filter:blur(3px);}.arisu-prompt-review h2{font-size:17px;margin:0;}
-.arisu-prompt-review textarea{width:100%;height:50vh;min-height:100px;resize:none;scrollbar-width:thin;border-radius:4px;padding:12px;background:var(--comfy-input-bg,#222);
- color:var(--input-text,#ccc);border:1px solid var(--border-color,#555);font:14px/1.7 Arial,system-ui,sans-serif;box-sizing:border-box;}
-.arisu-prompt-review footer{display:flex;justify-content:flex-end;gap:10px;padding-top:12px;border-top:1px solid var(--border-color,#444);flex-shrink:0;}
-.arisu-prompt-review button{padding:9px 16px;border-radius:5px;cursor:pointer;border:1px solid var(--border-color,#555);
- background:var(--comfy-input-bg,#222);color:inherit;font:inherit;}.arisu-prompt-review .apply{background:#64b5f6;color:#102331;border-color:#64b5f6;}
-.arisu-prompt-review :focus-visible{outline:2px solid #64b5f6;outline-offset:2px;}
-.arisu-prompt-review textarea:focus{outline:none;border-color:#64b5f6;box-shadow:inset 0 0 0 1px #64b5f6;}
 `;
 
 function widget(node, name) {
@@ -170,9 +159,9 @@ function invalidate(node) {
   if (!state) return;
   if (state.running || state.draft) state.status = 'Context changed; generate a new draft.';
   state.epoch++;
-  state.review?.close();
-  state.review = null;
   state.draft = '';
+  state.draftSignature = null;
+  state.applied = false;
   state.activity?.close();
   state.activity = null;
   state.activityJob = null;
@@ -194,55 +183,24 @@ function edit(node, name, next) {
   }
 }
 
-function showDraft(node) {
+function notify(severity, detail) {
+  app.extensionManager?.toast?.add?.({ severity, summary: 'Prompt Workbench', detail, life: 8000 });
+}
+
+function applyOutput(node) {
   const state = nodes.get(node);
-  if (!state?.draft || state.review) return;
-  const dialog = el('dialog', { className: 'arisu-prompt-review', ariaLabel: 'Review generated prompt' });
-  const draft = el('textarea', { value: state.draft, ariaLabel: 'Generated prompt draft', spellcheck: false });
-  state.review = dialog;
-  dialog.append(
-    el('style', { textContent: STYLE }),
-    el('h2', { textContent: 'Review generated prompt' }),
-    draft,
-    el('footer', {}, [
-      el('button', {
-        textContent: 'Discard',
-        onclick: () => {
-          state.status = 'Draft discarded';
-          state.draft = '';
-          dialog.close();
-          render(node);
-        },
-      }),
-      el('button', {
-        textContent: 'Apply',
-        className: 'apply',
-        onclick: () => {
-          if (sourceSnapshot(node).signature !== state.draftSignature) {
-            invalidate(node);
-            state.status = 'Context changed; generate a new draft.';
-            render(node);
-            return;
-          }
-          edit(node, 'finalized_prompt', draft.value);
-          state.status = 'Draft applied';
-          state.draft = '';
-          dialog.close();
-          render(node);
-        },
-      }),
-    ]),
-  );
-  closeOnBackdropClick(dialog);
-  dialog.onclose = () => {
-    state.draft = state.draft ? draft.value : '';
-    dialog.remove();
-    state.review = null;
-    state.generateButton?.focus();
-  };
-  document.body.append(dialog);
-  dialog.showModal();
-  draft.focus();
+  if (!state?.draft?.trim()) return;
+  if (sourceSnapshot(node).signature !== state.draftSignature) {
+    invalidate(node);
+    state.status = 'Context changed; generate a new prompt.';
+    render(node);
+    return;
+  }
+  edit(node, 'finalized_prompt', state.draft);
+  state.status = 'Output applied';
+  state.applied = true;
+  render(node);
+  state.activity?.refreshOutput();
 }
 
 function wait(ms) {
@@ -297,12 +255,13 @@ async function generate(node) {
           preparing: 'Loading motion context…',
           preparing_media: 'Preparing selected references…',
           generating: 'Generating prompt…',
-          complete: 'Draft ready for review',
+          complete: 'Output ready to apply',
           cancelled: 'Generation cancelled',
         }[job.state] ?? job.state;
       if (job.state === 'complete') {
         state.draft = job.draft;
         state.draftSignature = sourceSignature;
+        notify('success', 'Prompt ready. Open Generation results to review it, or choose Apply output.');
         break;
       }
       if (job.state === 'failed' || job.state === 'cancelled') throw new Error(job.error || state.status);
@@ -310,13 +269,16 @@ async function generate(node) {
       await wait(750);
     }
   } catch (error) {
-    if (current()) state.status = error.message;
+    if (current()) {
+      state.status = error.message;
+      notify('error', error.message);
+    }
   } finally {
     if (current()) {
       state.running = false;
       state.job = null;
       render(node);
-      if (state.draft && !state.activity) showDraft(node);
+      state.activity?.refreshOutput();
     }
   }
 }
@@ -403,18 +365,29 @@ function render(node) {
   });
   state.generateButton = generateButton;
   const activityButton = el('button', {
-    textContent: 'Agent activity',
-    disabled: !state.running,
-    title: 'View live agent progress, reference calls and analysis',
+    textContent: 'Generation results',
+    title: 'View agent activity and the latest output prompt',
     onclick: () => {
-      if (!state.running || state.activity) return;
+      if (state.activity) return;
       state.activity = openAgentActivity(
-        () => ({ job: state.activityJob, running: state.running, message: state.status }),
+        () => ({
+          job: state.activityJob,
+          running: state.running,
+          message: state.status,
+          draft: state.draft,
+          hasOutput: state.draftSignature != null,
+          applied: state.applied,
+        }),
         () => {
           state.activity = null;
-          if (state.draft) showDraft(node);
-          else state.activityButton?.focus();
+          state.activityButton?.focus();
         },
+        (draft) => {
+          state.draft = draft;
+          state.applied = false;
+          render(node);
+        },
+        () => applyOutput(node),
       );
     },
   });
@@ -433,7 +406,15 @@ function render(node) {
         },
       }),
     );
-  if (state.draft) actions.unshift(el('button', { textContent: 'Review draft', className: 'review', onclick: () => showDraft(node) }));
+  if (state.draft)
+    actions.unshift(
+      el('button', {
+        textContent: state.applied ? 'Applied' : 'Apply output',
+        className: 'review',
+        disabled: state.applied || !state.draft.trim(),
+        onclick: () => applyOutput(node),
+      }),
+    );
   const statusElement = el('div', {
     className: `status${state.running ? ' running' : ''}`,
     role: 'status',
@@ -441,9 +422,9 @@ function render(node) {
     textContent: state.status || (ready ? 'Ready' : 'Complete agent setup to generate.'),
   });
   state.statusElement = statusElement;
-  const left = el('fieldset', { className: 'generation', disabled: !state.agents?.docker }, [
+  const left = el('div', { className: 'generation' }, [
     el('div', { className: 'section-title', textContent: 'Prompt direction' }),
-    el('div', { className: 'generation-fields', onwheel: keepScrollWheel }, [
+    el('fieldset', { className: 'generation-fields', disabled: !state.agents?.docker, onwheel: keepScrollWheel }, [
       el('div', { className: 'selectors' }, [
         el('label', { className: 'field' }, [
           el('span', { className: 'label', textContent: 'Agent' }),

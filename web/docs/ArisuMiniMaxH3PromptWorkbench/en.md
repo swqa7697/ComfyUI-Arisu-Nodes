@@ -10,8 +10,9 @@ does not contact an agent, load motion context, or prepare references.
 2. Connect Video Settings and Resource Studio bundles, or advertise them.
    Reference notes follow active references; keyframes need no notes.
 3. Add trigger words and shot requirements, then click **Generate prompt**.
-4. Review the generated draft. **Apply** replaces Finalized prompt as an undoable
-   edit; **Discard** keeps your current prompt.
+4. Open **Generation results → Output prompt** to review or edit the result, then
+   **Apply to Workbench**. Or choose **Apply output** on the node. Applying replaces
+   Finalized prompt as one undoable edit; closing the dialog leaves it unchanged.
 
 Explicit bundle wires can cross subgraph boundaries. Use a separate Workbench for each context
 when a subgraph is instantiated more than once.
@@ -78,10 +79,14 @@ mount of the ComfyUI installation.
 Switch **Codex / Grok Build** tabs in agent settings to leave more space for colored build
 and login logs. Device-login URLs open directly in your browser.
 
-During generation, the running indicator and **Agent activity** button show complete
-provider-exposed analysis, reference/tool calls, and text results. Scroll up to pause
-following new output; **Resume auto-scroll** returns to the latest output. An open activity
-dialog stays readable when generation finishes; close it to review the draft.
+**Generation results** is always available. Its **Activity** tab shows provider-exposed
+analysis and reference/tool calls; scroll up to pause following new output, or choose
+**Resume auto-scroll**. The **Output prompt** tab lets you edit the latest result and
+**Apply to Workbench**. You can also use **Apply output** directly on the node.
+Generation sends a success or failure notification without opening a dialog.
+Starting another generation clears the previous output immediately. Activity and unapplied
+output stay outside the workflow and node data; only the node's saved fields, including
+explicitly applied finalized text, travel with workflow copies.
 
 Only the current operation is retained until the next operation or server shutdown.
 There is no separate Docker log container. Output is paged without message clipping;
