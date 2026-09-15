@@ -13,9 +13,9 @@ import { api } from '../../../../scripts/api.js';
 import { closeOnBackdropClick, el } from '../common/dom.js';
 
 const STYLE = `
-.arisu-clip { --video: #d9a441; --audio: #b89be0; --surface: var(--comfy-input-bg, #2a2a2a); --row: var(--comfy-menu-bg, #333);
-  --line: var(--border-color, #444); --label: var(--descrip-text, #999); --text: var(--input-text, #ccc); --dim: #777;
-  --strong: var(--fg-color, #fff); --accent: var(--p-primary-color, #6ea8fe);
+.arisu-clip { --video: var(--arisu-video); --audio: var(--arisu-audio); --surface: var(--comfy-input-bg, #2a2a2a); --row: var(--comfy-menu-bg, #333);
+  --line: var(--border-color, #444); --label: var(--descrip-text, #999); --text: var(--input-text, #ccc); --dim: var(--descrip-text, #999);
+  --strong: var(--fg-color, #fff); --accent: var(--arisu-accent);
   width: min(880px, 94vw); max-height: 92vh; padding: 0; border: 1px solid var(--line); border-radius: 14px;
   background: var(--row); color: var(--text); font: 13px system-ui, sans-serif; box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55);
   overflow: hidden; }
@@ -27,7 +27,7 @@ const STYLE = `
   background: var(--surface); transition: background-color 150ms ease, border-color 150ms ease; }
 .arisu-clip :where(button) { min-height: 34px; padding: 6px 12px; cursor: pointer; }
 .arisu-clip :where(input, select) { padding: 6px 10px; }
-.arisu-clip button:hover { border-color: var(--accent); }
+.arisu-clip button:enabled:hover { border-color: var(--accent); }
 .arisu-clip :disabled { opacity: 0.45; cursor: default; }
 .arisu-clip :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .arisu-clip :where(input, select):focus-visible { outline: none; border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }

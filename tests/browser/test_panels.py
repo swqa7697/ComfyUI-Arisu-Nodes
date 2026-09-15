@@ -6,7 +6,7 @@ import json
 from typing import Any, Dict
 
 import pytest
-from playwright.sync_api import Page, expect, sync_playwright
+from playwright.sync_api import Locator, Page, expect, sync_playwright
 
 from tests.browser.support.harness import DRAFT, STUDIO, WORKBENCH, FixtureServer, add_node, browser_page, screenshot
 
@@ -38,6 +38,91 @@ def pick(page: Page, name: str):
     page.locator("dialog[open] .arisu-browser-file").filter(has_text=name).click()
 
 
+def hover_button(page: Page, button: Locator, name: str, state: str):
+    """Check actual pointer feedback and its reset, without a stored pixel baseline."""
+    page.mouse.move(10, 10)
+    normal = button.evaluate("e => getComputedStyle(e).backgroundColor")
+    button.hover()
+    expect(button).not_to_have_css("background-color", normal)
+    screenshot(page, name, state)
+    page.mouse.move(10, 10)
+    expect(button).to_have_css("background-color", normal)
+
+
+def inspect_native_nodes(page: Page, name: str):
+    """Exercise the native widgets and settings dialogs alongside the custom panels."""
+    definitions = page.evaluate("async () => (await fetch('/object_info')).json()")
+    for node_type in definitions:
+        if node_type in (STUDIO, WORKBENCH):
+            continue
+        node_id = add_node(page, node_type)
+        # Defaults come from the real Colors menu. Workflow restoration must win
+        # over them when the workflow carries saved custom colors.
+        page.evaluate(
+            """id => {
+            const app = window.comfyAPI.app.app, node = app.graph.getNodeById(id);
+            const name = node.type === 'ArisuLoadImage' ? 'red' :
+                node.type.startsWith('ArisuPreviewSaveImage') ? 'yellow' : null;
+            if (name) {
+                const preset = app.canvas.constructor.node_colors[name];
+                if (node.color !== preset.color || node.bgcolor !== preset.bgcolor) throw Error('Wrong node preset');
+                const saved = node.serialize();
+                node.configure({...saved, color:'#123456', bgcolor:'#234567'});
+                if (node.color !== '#123456' || node.bgcolor !== '#234567') throw Error('Lost custom color');
+                node.configure(saved);
+            }
+        }""",
+            node_id,
+        )
+        screenshot(page, name, node_type)
+        # Canvas buttons have no DOM :hover. Sample their actual fill pixels
+        # before/after pointer entry and exit, including both Path Builder cells.
+        points = page.evaluate(
+            """id => {
+            const app = window.comfyAPI.app.app, node = app.graph.getNodeById(id), ds = app.canvas.ds;
+            const rect = app.canvas.canvas.getBoundingClientRect();
+            return (node.widgets ?? []).filter(w => ['button','arisu_button_row'].includes(w.type)).flatMap(w => {
+                const xs = w.type === 'arisu_button_row' ? [25, node.size[0] / 2 + 10] : [25];
+                return xs.map(x => [(node.pos[0] + x + ds.offset[0]) * ds.scale + rect.left,
+                    (node.pos[1] + w.last_y + 4 + ds.offset[1]) * ds.scale + rect.top]);
+            });
+        }""",
+            node_id,
+        )
+        sample = """([x,y]) => {
+            const canvas = document.querySelector('#graph-canvas'), rect = canvas.getBoundingClientRect();
+            return Array.from(canvas.getContext('2d').getImageData(
+                (x - rect.left) * canvas.width / rect.width, (y - rect.top) * canvas.height / rect.height, 1, 1).data).join(',');
+        }"""
+        for index, point in enumerate(points):
+            page.mouse.move(10, 10)
+            normal = page.evaluate(sample, point)
+            page.mouse.move(*point)
+            page.wait_for_function("([point,normal]) => (" + sample + ")(point) !== normal", arg=[point, normal])
+            screenshot(page, name, node_type + f"-hover-{index}")
+            page.mouse.move(10, 10)
+            page.wait_for_function("([point,normal]) => (" + sample + ")(point) === normal", arg=[point, normal])
+        # Click each settings widget at its actual canvas position.
+        controls = page.evaluate(
+            """id => {
+            const app = window.comfyAPI.app.app, node = app.graph.getNodeById(id), ds = app.canvas.ds;
+            const rect = app.canvas.canvas.getBoundingClientRect();
+            return (node.widgets ?? []).filter(w => w.type === 'button' && ['settings…','keyframes…'].includes(w.name)).map(w => [
+                (node.pos[0] + node.size[0] / 2 + ds.offset[0]) * ds.scale + rect.left,
+                (node.pos[1] + w.last_y + 10 + ds.offset[1]) * ds.scale + rect.top
+            ]);
+        }""",
+            node_id,
+        )
+        for x, y in controls:
+            page.mouse.click(x, y)
+            expect(page.locator(".arisu-settings[open]")).to_be_visible()
+            contained(page, ".arisu-settings[open]")
+            screenshot(page, name, node_type + "-settings")
+            page.keyboard.press("Escape")
+            expect(page.locator(".arisu-settings[open]")).to_have_count(0)
+
+
 def test_resource_studio():
     # One journey, repeated at two usable desktop viewports without multiplying test cases.
     with sync_playwright() as playwright:
@@ -46,6 +131,7 @@ def test_resource_studio():
             for width, height in ((1440, 900), (1024, 768)):
                 name = f"studio-{width}"
                 with FixtureServer() as server, browser_page(browser, server, name, width, height) as page:
+                    inspect_native_nodes(page, name)
                     node_id = add_node(page, STUDIO)
                     expect(page.locator(".arisu-studio")).to_be_visible()
                     contained(page, ".arisu-studio")
@@ -61,6 +147,8 @@ def test_resource_studio():
                     page.locator(".arisu-cropper-ratio").select_option("1:1")
                     contained(page, "dialog[open]")
                     screenshot(page, name, "crop")
+                    hover_button(page, page.get_by_role("button", name="reset", exact=True), name, "crop-reset-hover")
+                    hover_button(page, page.get_by_role("button", name="auto-crop", exact=True), name, "crop-auto-hover")
                     page.get_by_role("button", name="apply", exact=True).click()
                     page.wait_for_function(
                         """id => {
@@ -147,6 +235,13 @@ def test_prompt_workbench():
                     page.get_by_label("LoRA trigger words", exact=True).fill("paper_art")
                     page.get_by_label("Finalized prompt", exact=True).fill("Original prompt")
                     screenshot(page, name, "editing")
+                    generate = page.get_by_role("button", name="Generate prompt", exact=True)
+                    results = page.get_by_role("button", name="Generation results", exact=True)
+                    assert generate.evaluate("e => getComputedStyle(e).backgroundColor") != results.evaluate(
+                        "e => getComputedStyle(e).backgroundColor"
+                    )
+                    hover_button(page, results, name, "results-hover")
+                    hover_button(page, generate, name, "generate-hover")
                     # Keyboard changes keep focus on the rebuilt selector, then advance naturally.
                     agent = page.get_by_label("Agent", exact=True)
                     agent.click()
@@ -333,6 +428,9 @@ def test_prompt_workbench():
                     link.click()
                     expect(link).to_have_attribute("data-clicked", "yes")
                     screenshot(page, name, "settings")
+                    hover_button(
+                        page, page.locator("dialog[open]").get_by_role("button", name="Close", exact=True), name, "agent-close-hover"
+                    )
                     page.get_by_role("tab", name="Grok Build", exact=True).click()
                     expect(page.get_by_label("Grok Build model", exact=True)).to_be_visible()
                     expect(page.get_by_label("Codex model", exact=True)).to_have_count(0)
@@ -351,6 +449,8 @@ def test_prompt_workbench():
                     settings = page.locator('[role="dialog"]').filter(has=page.get_by_text("Settings", exact=True))
                     expect(settings).to_be_visible()
                     settings.get_by_text("Arisu Nodes", exact=True).click()
+                    screenshot(page, name, "settings-page")
+                    hover_button(page, settings.get_by_role("button", name="Manage agents…", exact=True), name, "settings-page-hover")
                     settings.get_by_role("button", name="Manage agents…", exact=True).click()
                     agents = page.locator("dialog.arisu-agents[open][aria-label]")
                     expect(agents).to_be_visible()
@@ -389,6 +489,7 @@ def test_prompt_workbench():
                     expect(shortcut.locator("img")).to_be_visible()
                     assert shortcut.locator("img").evaluate("image => image.complete && image.naturalWidth > 0")
                     screenshot(page, name, "agents-shortcut")
+                    hover_button(page, shortcut, name, "shortcut-hover")
                     shortcut.focus()
                     page.keyboard.press("Enter")
                     expect(agents).to_be_visible()

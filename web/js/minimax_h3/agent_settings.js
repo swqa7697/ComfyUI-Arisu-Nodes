@@ -31,10 +31,10 @@ const STYLE = `
 .arisu-agents section{padding:12px;margin:0;border:1px solid var(--border-color,#444);border-radius:6px;}.arisu-agents h3{margin:0 0 8px;}
 .arisu-agents p{margin:6px 0;color:var(--descrip-text,#aaa);}
 .arisu-agents button,.arisu-agents select{font:inherit;color:inherit;background:var(--comfy-input-bg,#222);border:1px solid var(--border-color,#555);
- border-radius:5px;min-height:34px;padding:5px 10px;cursor:pointer;}.arisu-agents button:hover{border-color:#64b5f6;}
-.arisu-agents button:disabled{opacity:.45;cursor:default;}.arisu-agents :focus-visible{outline:2px solid #64b5f6;outline-offset:2px;}
+ border-radius:5px;min-height:34px;padding:5px 10px;cursor:pointer;}.arisu-agents button:enabled:hover{border-color:var(--arisu-blue);}
+.arisu-agents button:disabled{opacity:.45;cursor:default;}.arisu-agents :focus-visible{outline:2px solid var(--arisu-blue);outline-offset:2px;}
 .arisu-agents select{min-width:0;max-width:100%;}
-.arisu-agents select:focus{outline:none;border-color:#64b5f6;box-shadow:inset 0 0 0 1px #64b5f6;}
+.arisu-agents select:focus{outline:none;border-color:var(--arisu-blue);box-shadow:inset 0 0 0 1px var(--arisu-blue);}
 .arisu-agents .fields label{flex:1;min-width:0;align-items:stretch;flex-direction:column;gap:4px;}
 .arisu-agents .actions,.arisu-agents .fields{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;}
 .arisu-agents label{display:flex;align-items:center;gap:8px;}.arisu-agents pre{white-space:pre-wrap;overflow-wrap:anywhere;
@@ -42,7 +42,7 @@ const STYLE = `
 .arisu-agents.management>.content{display:flex;flex-direction:column;flex:1;gap:10px;overflow:hidden;}
 .arisu-agents .settings-area{flex-shrink:0;max-height:48vh;overflow:auto;padding:2px;scrollbar-width:thin;}
 .arisu-agents .tabs{display:flex;gap:6px;margin-bottom:8px;}.arisu-agents .tabs button{flex:1;}
-.arisu-agents .tabs button[aria-selected="true"]{border-color:#64b5f6;background:color-mix(in srgb,var(--comfy-input-bg,#222) 85%,#64b5f6);}
+.arisu-agents .tabs button[aria-selected="true"]{border-color:var(--arisu-blue);background:color-mix(in srgb,var(--comfy-input-bg,#222) 85%,var(--arisu-blue));}
 .arisu-agents .error:empty{display:none;}
 .arisu-agents .error{color:var(--error-text,#efaaaa);}.arisu-agents .danger{border-color:#bd6c6c;}
 @media(pointer:coarse){.arisu-agents button,.arisu-agents select{min-height:44px;}}
@@ -230,7 +230,7 @@ export function openAgentSettings(selected = 'codex', parent = document.body) {
     ].map(([label, operationName, disabled]) =>
       el('button', {
         textContent: label,
-        className: operationName === 'remove' ? 'danger' : '',
+        className: operationName === 'remove' ? 'danger' : 'arisu-action',
         disabled: !docker || busy || disabled || operation?.state === 'running',
         onclick: () => void action(agent, operationName),
       }),
@@ -332,9 +332,13 @@ app.registerExtension({
       category: ['Arisu Nodes', 'Prompt Workbench', 'Agents'],
       type: () => {
         // Keep native modals inside Settings so its outside-click handler sees them as descendants.
-        const container = el('div');
+        const container = el('div', { className: 'arisu-settings-entry' });
         container.append(
-          el('button', { className: 'comfy-btn', textContent: 'Manage agents…', onclick: () => openAgentSettings('codex', container) }),
+          el('button', {
+            className: 'comfy-btn',
+            textContent: 'Manage agents…',
+            onclick: () => openAgentSettings('codex', container),
+          }),
         );
         return container;
       },

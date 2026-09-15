@@ -26,8 +26,8 @@ const FIELDS = [
 const STYLE = `
 .arisu-workbench{width:100%;height:100%;box-sizing:border-box;container-type:inline-size;padding:10px;
  --surface:var(--comfy-input-bg,#222);--panel:var(--comfy-menu-bg,#353535);--line:var(--border-color,#444);
- --text:var(--input-text,#ccc);--label:var(--descrip-text,#aaa);--accent:#64b5f6;--on-accent:#102331;
- --image:#64b5f6;--video:#d9a441;--audio:#b89be0;color:var(--text);font:12px/1.45 Arial,system-ui,sans-serif;}
+ --text:var(--input-text,#ccc);--label:color-mix(in srgb,var(--descrip-text,#aaa),var(--fg-color,#ddd) 30%);--accent:var(--arisu-accent);
+ --image:var(--arisu-image);--video:var(--arisu-video);--audio:var(--arisu-audio);color:var(--text);font:12px/1.45 Arial,system-ui,sans-serif;}
 .arisu-workbench *{box-sizing:border-box;}.arisu-workbench .columns{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);
  gap:12px;height:100%;min-height:0;}.arisu-workbench .generation{display:flex;flex-direction:column;gap:10px;min-width:0;overflow:hidden;
  border:0;margin:0;padding:0;}.arisu-workbench .field{display:flex;flex-direction:column;gap:4px;min-width:0;}
@@ -64,9 +64,8 @@ const STYLE = `
 .arisu-workbench .actions{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap;}
 .arisu-workbench button{font:inherit;color:var(--text);border:1px solid var(--line);border-radius:5px;
  background:var(--surface);padding:8px 12px;min-height:34px;cursor:pointer;transition:background-color 140ms ease,transform 100ms ease;}
-.arisu-workbench button:hover{border-color:var(--accent);}.arisu-workbench button:active{transform:translateY(1px);}
-.arisu-workbench .primary{background:var(--accent);border-color:var(--accent);color:var(--on-accent);font-weight:600;}
-.arisu-workbench .primary:hover{background:color-mix(in srgb,var(--accent),white 15%);}.arisu-workbench button:disabled{opacity:.5;cursor:default;transform:none;}
+.arisu-workbench button:enabled:hover{border-color:var(--accent);}.arisu-workbench button:enabled:active{transform:translateY(1px);}
+.arisu-workbench button:disabled{opacity:.5;cursor:default;transform:none;}
 .arisu-workbench .status{font-size:11px;color:var(--label);min-height:16px;overflow-wrap:anywhere;}
 .arisu-workbench .hint{font-size:11px;color:var(--label);padding:4px 0;}
 .arisu-workbench .review{border-color:var(--accent);}.arisu-workbench .footer{margin-top:auto;padding:8px 4px 2px;border-top:1px solid var(--line);}

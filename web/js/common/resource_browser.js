@@ -75,15 +75,15 @@ const STYLE = `
   box-shadow 150ms ease; }
 .arisu-browser :where(button) { padding: 6px 12px; cursor: pointer; }
 .arisu-browser :where(input) { padding: 6px 10px; }
-.arisu-browser button:active { transform: scale(0.97); }
-.arisu-browser-tree button:active { transform: none; }
+.arisu-browser button:enabled:active { transform: scale(0.97); }
+.arisu-browser-tree button:enabled:active { transform: none; }
 .arisu-browser button:disabled { opacity: 0.4; cursor: default; pointer-events: none; }
-.arisu-browser :focus-visible { outline: 2px solid var(--p-primary-color, #6ea8fe); outline-offset: 2px; }
-.arisu-browser input:focus-visible { outline: none; border-color: var(--p-primary-color, #6ea8fe); }
+.arisu-browser :focus-visible { outline: 2px solid var(--arisu-accent); outline-offset: 2px; }
+.arisu-browser input:focus-visible { outline: none; border-color: var(--arisu-accent); }
 .arisu-browser-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--border-color, #444); }
 .arisu-browser-bar button { flex-shrink: 0; white-space: nowrap; }
 .arisu-browser-bar input { min-width: 0; width: 160px; max-width: 100%; }
-.arisu-browser-bar button:hover { border-color: var(--p-primary-color, #6ea8fe); }
+.arisu-browser-bar button:enabled:hover { border-color: var(--arisu-accent); }
 .arisu-browser-path { flex: 1; min-width: 0; padding: 6px 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   color: var(--descrip-text, #999); font-variant-numeric: tabular-nums; }
 .arisu-browser-body { display: flex; flex: 1; min-height: 0; transition: opacity 150ms ease; }
@@ -110,24 +110,24 @@ const STYLE = `
   background: none; border-color: transparent; }
 .arisu-browser-tree-row span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .arisu-browser-tree-row:hover { background: var(--comfy-input-bg, #333); }
-.arisu-browser-tree-row[aria-current="true"] { background: var(--comfy-input-bg, #333); border-color: var(--p-primary-color, #6ea8fe); }
+.arisu-browser-tree-row[aria-current="true"] { background: var(--comfy-input-bg, #333); border-color: var(--arisu-accent); }
 .arisu-browser-grid { flex: 1; display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; padding: 12px;
   align-content: start; }
 .arisu-browser-file { display: flex; flex-direction: column; gap: 6px; padding: 6px; border-color: transparent; }
-.arisu-browser-file:hover { transform: translateY(-2px); border-color: var(--p-primary-color, #6ea8fe);
+.arisu-browser-file:hover { transform: translateY(-2px); border-color: var(--arisu-accent);
   box-shadow: 0 8px 20px rgba(0, 0, 0, 0.35); }
-.arisu-browser-file[aria-current="true"] { border-color: var(--p-primary-color, #6ea8fe); }
+.arisu-browser-file[aria-current="true"] { border-color: var(--arisu-accent); }
 .arisu-browser-file[aria-current="true"] span, .arisu-browser-file:hover span { color: inherit; }
 .arisu-browser-tile { position: relative; width: 100%; aspect-ratio: 1; display: flex; align-items: center; justify-content: center;
   box-sizing: border-box; background: #111; border-radius: 6px; color: var(--descrip-text, #999); }
 .arisu-browser-tile img { width: 100%; height: 100%; object-fit: contain; border-radius: 6px; transition: opacity 250ms ease; }
 .arisu-browser-tile.arisu-loading img { opacity: 0; }
 .arisu-browser-tile.arisu-loading::after { content: ''; position: absolute; width: 22px; height: 22px; border-radius: 50%;
-  border: 2px solid rgba(255, 255, 255, 0.15); border-top-color: var(--p-primary-color, #6ea8fe);
+  border: 2px solid rgba(255, 255, 255, 0.15); border-top-color: var(--arisu-accent);
   animation: arisu-spin 800ms linear infinite; }
 .arisu-browser-tile svg { width: 40%; height: 40%; }
-.arisu-browser-file[data-kind="video"] .arisu-browser-tile { outline: 2px solid #d9a441; outline-offset: -2px; }
-.arisu-browser-file[data-kind="audio"] .arisu-browser-tile { outline: 2px solid #b89be0; outline-offset: -2px; }
+.arisu-browser-file[data-kind="video"] .arisu-browser-tile { outline: 2px solid var(--arisu-video); outline-offset: -2px; }
+.arisu-browser-file[data-kind="audio"] .arisu-browser-tile { outline: 2px solid var(--arisu-audio); outline-offset: -2px; }
 .arisu-browser-file span { font-size: 12px; color: var(--descrip-text, #999); overflow: hidden; text-overflow: ellipsis;
   white-space: nowrap; transition: color 150ms ease; }
 .arisu-fresh .arisu-browser-file { animation: arisu-rise 160ms ease-out backwards; animation-delay: min(calc(var(--i, 0) * 10ms), 120ms); }

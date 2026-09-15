@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Use standard red, yellow, and pale-blue node presets for Load Image/Resource Studio, Preview & Save Image, and Prompt Workbench; unify custom panels and dialogs with theme-aware media colors, prominent contrasting background-task buttons, and consistent hover/focus states. Use amber for Workbench generation and agent operations, blue for Apply confirmations, and retain native Save-button colors with subdued Cancel and navigation controls. Distinguish crop Reset and Auto-Crop tools with muted blue outlines and a separate confirmation group.
 - Combine Workbench activity and the latest output in an always-available Generation results dialog, with explicit Apply actions and completion notifications instead of automatic review popups. Keep activity and unapplied output out of workflow copies.
 - Consolidate Workbench model and reasoning preferences into `config.arisu.jsonc`, preserving comments and media-root settings.
 

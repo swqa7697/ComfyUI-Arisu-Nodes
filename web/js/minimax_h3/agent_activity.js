@@ -4,7 +4,7 @@ import { closeOnBackdropClick, el } from '../common/dom.js';
 
 export const ACTIVITY_STYLE = `
 .arisu-activity{--log-bg:var(--comfy-input-bg,#181818);--log-text:var(--input-text,#ddd);--log-muted:var(--descrip-text,#aaa);
- --log-blue:#85caff;--log-green:#9bd4a3;--log-yellow:#edcc89;--log-red:#f4a4a4;--log-purple:#d4b6ff;
+ --log-blue:var(--arisu-blue);--log-green:var(--success-text,var(--fg-color,#ddd));--log-yellow:var(--arisu-video);--log-red:var(--error-text,var(--arisu-red));--log-purple:var(--arisu-audio);
  display:flex;flex-direction:column;flex:1;min-height:0;gap:8px;}
 .arisu-activity .activity-bar{display:flex;align-items:center;gap:12px;flex-shrink:0;min-height:32px;}
 .arisu-activity .activity-bar strong{font-size:13px;}.arisu-activity .activity-state{flex:1;color:var(--log-muted);font-size:12px;}
@@ -35,15 +35,15 @@ export const ACTIVITY_STYLE = `
  border-radius:5px;min-height:34px;padding:5px 10px;cursor:pointer;}
 .arisu-activity-modal [hidden]{display:none!important;}
 .arisu-activity-modal .result-tabs{display:flex;gap:6px;padding:10px 18px 0;}
-.arisu-activity-modal [role=tab][aria-selected=true]{color:#85caff;border-color:#85caff;}
+.arisu-activity-modal [role=tab][aria-selected=true]{color:var(--arisu-blue);border-color:var(--arisu-blue);}
 .arisu-activity-modal .generation-output{display:flex;flex-direction:column;flex:1;min-height:0;gap:12px;padding:12px 18px 18px;}
 .arisu-activity-modal textarea{flex:1;min-height:100px;resize:none;box-sizing:border-box;width:100%;padding:14px;
  background:var(--comfy-input-bg,#222);color:var(--input-text,#ddd);border:1px solid var(--border-color,#444);border-radius:6px;font:14px/1.7 Arial,system-ui,sans-serif;}
 .arisu-activity-modal footer{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;}
 .arisu-activity-modal .output-hint{color:var(--descrip-text,#aaa);font-size:12px;}
-.arisu-activity-modal .apply{background:#64b5f6;color:#102331;border-color:#64b5f6;}
+.arisu-activity-modal .apply{background:var(--arisu-blue);color:#102331;border-color:var(--arisu-blue);}
 .arisu-activity-modal button:disabled{opacity:.5;cursor:default;}
-.arisu-activity-modal :focus-visible,.arisu-activity :focus-visible{outline:2px solid #85caff;outline-offset:2px;}
+.arisu-activity-modal :focus-visible,.arisu-activity :focus-visible{outline:2px solid var(--arisu-blue);outline-offset:2px;}
 `;
 
 // Decode known provider envelopes; unknown structured output stays inspectable as details.

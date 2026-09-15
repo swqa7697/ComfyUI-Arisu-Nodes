@@ -33,9 +33,9 @@ const STYLE = `
   border-radius: 8px; background: var(--comfy-input-bg, #333); transition: background-color 150ms ease, border-color 150ms ease; }
 .arisu-settings :where(button) { padding: 6px 12px; cursor: pointer; }
 .arisu-settings :where(input, select) { padding: 6px 10px; min-width: 0; }
-.arisu-settings button:hover { border-color: var(--p-primary-color, #6ea8fe); }
-.arisu-settings :focus-visible { outline: 2px solid var(--p-primary-color, #6ea8fe); outline-offset: 2px; }
-.arisu-settings :where(input, select):focus-visible { outline: none; border-color: var(--p-primary-color, #6ea8fe); }
+.arisu-settings button:enabled:hover { border-color: var(--arisu-accent); }
+.arisu-settings :focus-visible { outline: 2px solid var(--arisu-accent); outline-offset: 2px; }
+.arisu-settings :where(input, select):focus-visible { outline: none; border-color: var(--arisu-accent); }
 .arisu-settings-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 12px;
   border-bottom: 1px solid var(--border-color, #444); }
 .arisu-settings-title { margin: 0; font-size: 14px; font-weight: 600; }
@@ -49,7 +49,7 @@ const STYLE = `
 .arisu-settings-swatch { flex: 0 0 38px; height: 32px; padding: 2px; cursor: pointer; }
 .arisu-settings-bar { display: flex; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--border-color, #444); }
 .arisu-settings-spacer { flex: 1; }
-.arisu-settings-apply { border-color: var(--p-primary-color, #6ea8fe); }
+.arisu-settings-apply { border-color: var(--arisu-accent); }
 @keyframes arisu-settings-pop { from { opacity: 0; transform: translateY(12px) scale(0.97); } }
 @media (prefers-reduced-motion: reduce) {
   .arisu-settings, .arisu-settings::backdrop, .arisu-settings * { animation: none !important; transition: none !important; }

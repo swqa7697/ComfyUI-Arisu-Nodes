@@ -83,12 +83,14 @@ def test_pack_loads_like_comfyui(pack: ModuleType, tmp_path: Path, monkeypatch: 
     nodes = asyncio.run(extension.get_node_list())
     # Browser fixtures must describe the same nodes that the real loader registers.
     browser_definitions = json.loads((REPO_ROOT / "tests/browser/fixtures/object_info.json").read_text())
+    # Browser fixtures have no host model inventory.
+    monkeypatch.setattr(folder_paths, "get_filename_list", lambda _name: [])
+    assert set(browser_definitions) == set(EXPECTED_NODE_IDS)
     for node in nodes:
         info = node.GET_NODE_INFO_V1()
-        if info["name"] in browser_definitions:
-            # ComfyUI assigns this during registration; the fixture uses a portable module name.
-            info["python_module"] = "custom_nodes.arisu"
-            assert json.loads(json.dumps(info)) == browser_definitions[info["name"]]
+        # ComfyUI assigns this during registration; the fixture uses a portable module name.
+        info["python_module"] = "custom_nodes.arisu"
+        assert json.loads(json.dumps(info)) == browser_definitions[info["name"]]
 
     # GET_SCHEMA is what ComfyUI calls at startup: it checks that define_schema
     # and execute are overridden and that input/output ids are unique.
