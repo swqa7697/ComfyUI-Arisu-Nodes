@@ -9,66 +9,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Bundle two MiniMax H3 Prompt Workbench skills (`no-ref`, `with-ref`) that share one MCP context contract.
-- Show a generation indicator and live agent activity with complete provider-exposed analysis and reference/tool details.
-
-- Add an optional Agents menu shortcut to open shared agent management, hidden by default.
-- Create the custom `user/__arisu_nodes/skills/` directory on startup when missing.
-- Add MiniMax H3 Prompt Workbench with editable finalized text, selected resource and motion-context preparation, Docker-isolated Codex/Grok agents, shared settings, and draft review before Apply.
-- Add MiniMax H3 Resource Studio with keyframe cropping, mixed references, clip editing, and original-source Hybrid processing.
-- Add aspect-ratio outputs to both MiniMax H3 Video Settings nodes.
-- Add a `video_settings` bundle output to both MiniMax H3 Video Settings nodes and an optional `video_settings` input to both Hybrid to Video nodes; a wired bundle overrides width, height and length (and the target size from the Upscale variant) and greys those widgets as advertising does.
+- Add MiniMax H3 Resource Studio to arrange, crop, trim, and mute keyframes and mixed media references, with timeline clip editing, media previews, and original-source Hybrid processing.
+- Add MiniMax H3 Prompt Workbench with editable finalized text, resource and motion-context preparation, Docker-isolated Codex/Grok generation, live agent activity, and draft review before Apply.
+- Bundle `with-ref` (default) and `no-ref` Prompt Workbench skills, support administrator-owned custom skills, and provide shared agent management with login, logs, and an optional Agents menu shortcut.
+- Add aspect-ratio and `video_settings` bundle outputs to both MiniMax H3 Video Settings nodes, with bundle inputs on both Hybrid variants.
+- Add per-keyframe resize, crop, pad, and stretch settings to both MiniMax H3 Hybrid nodes.
 - Add inline names and renaming for saved Load Image browse paths.
-- Add a ComfyUI setting for the default Load Image browse location when no image is selected: a root or a saved path by name, reset to `input` with a warning when a chosen saved path is gone.
-- Add a keyframes settings dialog to both MiniMax H3 Hybrid to Video nodes: resize method, crop, pad or stretch, pad colour and crop position in a first frame and a last frame section, on the model's 32-pixel canvas grid.
+- Add a ComfyUI setting for the default Load Image browse location, supporting configured roots and named bookmarks with fallback to `input`.
 
 ### Changed
 
-- Set the default Prompt Workbench skill to `bundled:with-ref` and group MCP keyframes, inspectable stills, and motion separately so agents do not read video or audio bytes.
-- Parse structured agent activity into readable thoughts and collapse verbose tool output into expandable details.
-- Allow wheel zoom and middle-button graph dragging over Prompt Workbench while preserving scrolling in overflowing editors.
-
-- Organize agent management into tabs with expanded colored logs, clickable device-login links, and pausable auto-scroll.
-- Replace the separate Docker log container with paginated current-operation output, retaining complete messages within the operation budget.
-
-- Prioritize Prompt Workbench writing fields, align its controls with Resource Studio, and refine focus, reference rows, and crop, clip, review, and agent dialogs.
-
-- Refresh the Arisu icon and add a light variant for the Agents shortcut.
-- Remove custom light-mode color overrides from Prompt Workbench, Resource Studio, and the clip editor, keeping functional colors consistent while inheriting ComfyUI styling.
-- Replace Resource Studio replace buttons with keyframe canvas selection, and open Browse references at the final reference’s folder in list order.
-- Move Resource Studio’s Browse beside the Media references heading, hide zero counters, and show clip-start stills for video references and a waveform marker for audio.
-- Stack Resource Studio keyframes in a left column beside the media reference list, with taller reference rows and larger thumbnails.
-- Show dimensions or clip and source lengths, video resolution or audio sample rate, and file size on Resource Studio reference rows, reloading them after a workflow opens.
-- Limit Resource Studio clip times to one decimal, removing the clip editor's free-precision snapping.
-- Remove the Resource Studio height cap so the node grows freely, and pass wheel zoom and middle-button canvas drags through its panel, scrolling an overflowing reference list instead.
 - Coordinate MiniMax H3 settings and resource advertising across queueing and API exports, rejecting missing sources and conflicting resource inputs.
-- Inject advertised MiniMax H3 settings into the hybrid nodes' `video_settings` input as one link instead of one per widget; API-format exports carry that link, and a muted or missing wired settings node rejects the prompt.
-- Place the `video_settings` bundle at output 0 of both MiniMax H3 Video Settings nodes, moving every other output down one slot; saved wires into those outputs need re-wiring, and the example workflow is updated.
-- Move the Load Image input and output directory shortcuts beside up in the browse toolbar to free sidebar space.
-- Rename the MiniMax H3 Video Settings `advertise` switch to `advertise_settings` and the Resource Studio switch to `advertise_resources`; saved workflows keep the flag by position, API-format exports must use the new key.
-- Auto-crop Resource Studio keyframes from a wired aspect ratio when the upstream Video Settings selector is readable, and drop the auto-crop notification.
-- Remove the custom aspect ratio from crop dialogs: a saved crop that matches no preset opens as Free and constrains nothing, and `21:9` joins the presets.
-- Highlight every reference already in the list when browsing Resource Studio references, and show poster stills for videos and waveform tiles for audio in mixed Browse, outlined in their kind colour.
-- Show a loading indicator on Browse tiles until their thumbnail or poster arrives, keep loaded tiles while filtering, and queue media requests behind the busy workers instead of refusing them.
-- Center-crop the first keyframe of the MiniMax H3 Hybrid nodes to the canvas by default instead of stretching it; API-format exports must supply the eight `first_frame_*` / `last_frame_*` keys.
-- Enlarge Resource Studio icon buttons and reference-row text, and colour each mute button in its resource kind.
-- Show an insertion line while dragging a Resource Studio reference and drop it above or below the row under the pointer.
-- Rebuild the Resource Studio clip editor as a timeline with a ruler, draggable in/out brackets and playhead, a keyboard-driven transport row, a duration lock with presets, and a compact preview-free audio dialog.
-
-### Removed
-
-- Remove the bundled `hybrid2va` Prompt Workbench feasibility stub.
+- Place `video_settings` at output 0 of both Video Settings nodes; rewire existing outputs to their shifted slots or use the updated example workflow.
+- Rename Video Settings `advertise` to `advertise_settings`; saved workflows retain the flag, but API-format exports must use the new key.
+- Center-crop the first Hybrid keyframe by default instead of stretching it; API-format exports must supply the eight `first_frame_*` / `last_frame_*` fitting keys.
+- Replace custom crop ratios with Free for unmatched saved crops and add a `21:9` preset.
+- Improve Browse with media loading indicators and queued thumbnail requests, and move Load Image input/output shortcuts into the toolbar.
+- Refresh the Arisu icon and add a light variant for the Agents shortcut.
 
 ### Fixed
 
-- Keep the Agents toolbar shortcut visible after refresh and place it before the Manager section.
-
-- Keep ComfyUI Settings open while interacting with Prompt Workbench agent management and removal confirmation.
-- Place Prompt Workbench agent settings under the existing Arisu Nodes settings tab.
-- Preserve MiniMax H3 Hybrid to Video dimensions when reopening workflows with resource advertising, and fit height without changing width when resource ownership changes.
-- Persist each image’s applied crop ratio across Load Image and Resource Studio workflow reloads, including Free, and discard draft ratio changes on cancellation without inferring from crop dimensions.
-- Fix Resource Studio keyframe and reference creation in browsers without `crypto.randomUUID`, including HTTP connections.
-- Restore each Arisu node's saved dimensions when reopening a workflow, including manually minimized nodes.
+- Preserve each image's applied crop ratio across Load Image and Resource Studio workflow reloads, including Free, and discard draft changes on cancellation.
+- Preserve Hybrid dimensions across resource ownership changes and restore all Arisu nodes' saved sizes when reopening workflows, including manually minimized nodes.
 
 ## [1.1.2] - 2026-09-11
 
