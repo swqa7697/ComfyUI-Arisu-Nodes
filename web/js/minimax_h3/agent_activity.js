@@ -45,7 +45,7 @@ function activityText(line) {
   } catch {
     return line;
   }
-  if (!event || typeof event !== 'object' || Array.isArray(event)) return '[details] ' + raw;
+  if (!event || typeof event !== 'object' || Array.isArray(event)) return `[details] ${raw}`;
   const item = event.item ?? event;
   if (['reasoning', 'agent_message', 'thinking', 'text'].includes(item.type)) {
     const text = item.text ?? item.thinking;
@@ -55,19 +55,19 @@ function activityText(line) {
   if (Array.isArray(blocks)) {
     return blocks
       .map((block) => {
-        if (block?.type === 'thinking' && typeof block.thinking === 'string') return '[analysis] ' + block.thinking;
-        if (block?.type === 'text' && typeof block.text === 'string') return '[agent] ' + block.text;
-        if (block?.type === 'tool_use') return '[tool] ' + (block.name ?? 'Tool call') + '\n' + JSON.stringify(block.input ?? {}, null, 2);
+        if (block?.type === 'thinking' && typeof block.thinking === 'string') return `[analysis] ${block.thinking}`;
+        if (block?.type === 'text' && typeof block.text === 'string') return `[agent] ${block.text}`;
+        if (block?.type === 'tool_use') return `[tool] ${block.name ?? 'Tool call'}\n${JSON.stringify(block.input ?? {}, null, 2)}`;
         // Image bytes never belong in the activity view.
         if (['image', 'image_url'].includes(block?.type)) return '[details] Image content omitted';
-        return '[details] ' + JSON.stringify(block, null, 2);
+        return `[details] ${JSON.stringify(block, null, 2)}`;
       })
       .join('\n');
   }
   const delta = event.event?.delta ?? event.delta;
-  if (delta?.type === 'thinking_delta' && typeof delta.thinking === 'string') return '[analysis] ' + delta.thinking;
-  if (delta?.type === 'text_delta' && typeof delta.text === 'string') return '[agent] ' + delta.text;
-  if (item.type === 'command_execution') return '[command] ' + (item.command ?? '') + '\n' + (item.aggregated_output ?? '');
+  if (delta?.type === 'thinking_delta' && typeof delta.thinking === 'string') return `[analysis] ${delta.thinking}`;
+  if (delta?.type === 'text_delta' && typeof delta.text === 'string') return `[agent] ${delta.text}`;
+  if (item.type === 'command_execution') return `[command] ${item.command ?? ''}\n${item.aggregated_output ?? ''}`;
   if (item.type === 'mcp_tool_call') {
     const content = item.result?.content;
     return (
@@ -84,7 +84,7 @@ function activityText(line) {
         : '')
     );
   }
-  return '[details] ' + JSON.stringify(event, null, 2);
+  return `[details] ${JSON.stringify(event, null, 2)}`;
 }
 
 function logLine(text) {
@@ -101,7 +101,7 @@ function logLine(text) {
             : /^(#\d+|\[(prepare|job|codex|grok|thread|turn))/i.test(text)
               ? 'progress'
               : '';
-  const row = el('div', { className: 'log-line log-' + kind });
+  const row = el('div', { className: `log-line log-${kind}` });
   // Render text, never HTML or terminal escape hyperlinks. Only explicit HTTP(S) URLs are links.
   let offset = 0;
   for (const match of text.matchAll(/https?:\/\/[^\s<>"']+/g)) {
@@ -175,7 +175,7 @@ export function createActivity(label = 'Agent logs') {
   }
   function showStatus(message, running) {
     status.textContent = message;
-    status.className = 'activity-state' + (running ? ' running' : '');
+    status.className = `activity-state${running ? ' running' : ''}`;
   }
   return {
     element,
@@ -185,7 +185,7 @@ export function createActivity(label = 'Agent logs') {
       const current = epoch;
       const query = new URLSearchParams({ session, cursor: String(cursor), ...(job ? { job } : {}) });
       try {
-        const response = await api.fetchApi('/arisu/workbench/logs?' + query);
+        const response = await api.fetchApi(`/arisu/workbench/logs?${query}`);
         if (!response.ok) throw new Error('Unable to read activity. Retrying…');
         const data = await response.json();
         if (epoch !== current) return false;
@@ -204,7 +204,7 @@ export function createActivity(label = 'Agent logs') {
         for (const line of data.lines ?? []) appendLine(line);
         cursor = data.cursor ?? cursor;
         const live = running ?? data.state === 'running';
-        status.className = 'activity-state' + (live ? ' running' : '');
+        status.className = `activity-state${live ? ' running' : ''}`;
         status.textContent =
           message ||
           [data.agent === 'grok' ? 'Grok Build' : data.agent === 'codex' ? 'Codex' : '', data.action, data.state]

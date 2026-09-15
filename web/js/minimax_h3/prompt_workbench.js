@@ -95,7 +95,7 @@ function value(node, name) {
   return widget(node, name)?.value;
 }
 function identity() {
-  return globalThis.crypto?.randomUUID?.() ?? String(Date.now()) + '-' + Math.random().toString(36).slice(2);
+  return globalThis.crypto?.randomUUID?.() ?? `${String(Date.now())}-${Math.random().toString(36).slice(2)}`;
 }
 function linked(node, name) {
   return node.inputs?.some((item) => item.name === name && item.link != null);
@@ -145,7 +145,7 @@ function sourceSnapshot(node) {
       /* backend reports malformed state */
     }
   }
-  const sourceId = source ? String(source.graph?.id ?? 'root') + ':' + source.id : '';
+  const sourceId = source ? `${String(source.graph?.id ?? 'root')}:${source.id}` : '';
   return {
     resources,
     sourceId,
@@ -162,7 +162,7 @@ function sourceSnapshot(node) {
 }
 
 function noteKey(source, item) {
-  return source + ':' + item.id + ':' + item.root + ':' + item.path;
+  return `${source}:${item.id}:${item.root}:${item.path}`;
 }
 
 function invalidate(node) {
@@ -288,7 +288,7 @@ async function generate(node) {
     state.job = response.id;
     state.activityJob = response.id;
     while (current()) {
-      const response = await api.fetchApi('/arisu/workbench/jobs/' + state.job);
+      const response = await api.fetchApi(`/arisu/workbench/jobs/${state.job}`);
       if (!response.ok) throw new Error('Generation job is unavailable.');
       const job = await response.json();
       if (!current()) return;
@@ -335,7 +335,7 @@ function render(node) {
       oninput: () => edit(node, name, input.value),
       onwheel: keepScrollWheel,
     });
-    return el('label', { className: 'field ' + name }, [el('span', { className: 'label', textContent: label }), input]);
+    return el('label', { className: `field ${name}` }, [el('span', { className: 'label', textContent: label }), input]);
   }
   function combo(name, choices, label) {
     const control = el(
@@ -347,7 +347,7 @@ function render(node) {
     control.onchange = () => {
       edit(node, name, control.value);
       render(node);
-      state.body.querySelector?.('[aria-label="' + label + '"]')?.focus();
+      state.body.querySelector?.(`[aria-label="${label}"]`)?.focus();
     };
     return control;
   }
@@ -379,10 +379,10 @@ function render(node) {
   const rows = source.resources.map((item) => {
     const key = noteKey(source.sourceId, item);
     const name = item.path?.split(/[\\/]/).at(-1) ?? item.id;
-    const input = el('input', { value: savedNotes[key] ?? '', placeholder: 'Comment…', ariaLabel: 'Notes for ' + name });
+    const input = el('input', { value: savedNotes[key] ?? '', placeholder: 'Comment…', ariaLabel: `Notes for ${name}` });
     input.oninput = () => edit(node, 'reference_notes', JSON.stringify({ ...notes(node), [key]: input.value }));
     return el('div', { className: 'reference' }, [
-      el('span', { className: 'kind ' + item.kind, ariaLabel: item.kind }),
+      el('span', { className: `kind ${item.kind}`, ariaLabel: item.kind }),
       el('span', { className: 'filename', textContent: name, title: name }),
       input,
     ]);
@@ -435,7 +435,7 @@ function render(node) {
     );
   if (state.draft) actions.unshift(el('button', { textContent: 'Review draft', className: 'review', onclick: () => showDraft(node) }));
   const statusElement = el('div', {
-    className: 'status' + (state.running ? ' running' : ''),
+    className: `status${state.running ? ' running' : ''}`,
     role: 'status',
     ariaLive: 'polite',
     textContent: state.status || (ready ? 'Ready' : 'Complete agent setup to generate.'),

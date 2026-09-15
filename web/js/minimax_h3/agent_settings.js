@@ -53,7 +53,7 @@ export async function agentStatus(force = false) {
   if (!force && cached && Date.now() - checked < 3000) return cached;
   if (!pending) {
     pending = api
-      .fetchApi(ROUTE + '/status')
+      .fetchApi(`${ROUTE}/status`)
       .then(async (response) => {
         if (!response.ok) throw new Error('Unable to read agent status');
         cached = await response.json();
@@ -86,7 +86,7 @@ async function confirmRemoval(agent, parent) {
   let confirmed = false;
   dialog.append(
     el('style', { textContent: STYLE }),
-    el('header', {}, [el('strong', { textContent: 'Remove ' + agent + '?' })]),
+    el('header', {}, [el('strong', { textContent: `Remove ${agent}?` })]),
     el('div', { className: 'content' }, [
       el('p', { textContent: 'This deletes this agent’s images and saved login. You will need to build and sign in again.' }),
       el('div', { className: 'actions' }, [
@@ -135,7 +135,7 @@ export function openAgentSettings(selected = 'codex', parent = document.body) {
   const tabs = el('div', { className: 'tabs', role: 'tablist', ariaLabel: 'Agents' });
   const tabButtons = ['codex', 'grok'].map((agent, index) => {
     const button = el('button', {
-      id: 'arisu-tab-' + agent,
+      id: `arisu-tab-${agent}`,
       role: 'tab',
       textContent: agent === 'codex' ? 'Codex' : 'Grok Build',
       onclick: () => select(agent),
@@ -148,7 +148,7 @@ export function openAgentSettings(selected = 'codex', parent = document.body) {
         tabButtons[next].focus();
       },
     });
-    button.setAttribute('aria-controls', 'arisu-agent-' + agent);
+    button.setAttribute('aria-controls', `arisu-agent-${agent}`);
     return button;
   });
   tabs.append(...tabButtons);
@@ -186,11 +186,11 @@ export function openAgentSettings(selected = 'codex', parent = document.body) {
     const title = agent === 'codex' ? 'Codex' : 'Grok Build';
     const model = el(
       'select',
-      { ariaLabel: title + ' model' },
+      { ariaLabel: `${title} model` },
       (info.models ?? []).map((item) => el('option', { value: item.id, textContent: item.name })),
     );
     model.value = info.selection?.model ?? '';
-    const effort = el('select', { ariaLabel: title + ' effort' });
+    const effort = el('select', { ariaLabel: `${title} effort` });
     function updateEfforts() {
       const supported = info.models?.find((item) => item.id === model.value)?.efforts ?? [];
       effort.replaceChildren(
@@ -235,15 +235,15 @@ export function openAgentSettings(selected = 'codex', parent = document.body) {
         onclick: () => void action(agent, operationName),
       }),
     );
-    const panel = el('section', { id: 'arisu-agent-' + agent, role: 'tabpanel' }, [
-      el('p', { textContent: state + (info.version ? ' · ' + info.version : '') }),
+    const panel = el('section', { id: `arisu-agent-${agent}`, role: 'tabpanel' }, [
+      el('p', { textContent: state + (info.version ? ` · ${info.version}` : '') }),
       el('div', { className: 'actions' }, buttons),
       el('div', { className: 'fields' }, [
         el('label', {}, [el('span', { textContent: 'Model' }), model]),
         el('label', {}, [el('span', { textContent: 'Effort' }), effort]),
       ]),
     ]);
-    panel.setAttribute('aria-labelledby', 'arisu-tab-' + agent);
+    panel.setAttribute('aria-labelledby', `arisu-tab-${agent}`);
     return panel;
   }
   async function refresh(force = false) {
