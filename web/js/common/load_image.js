@@ -33,7 +33,7 @@ function updateFilename(node) {
   if (!label) return;
   const path = pathWidget(node)?.value;
   const filename = typeof path === 'string' ? path.trim().replaceAll('\\', '/').split('/').pop() : '';
-  label.textContent = filename || 'No image selected';
+  label.textContent = filename || 'No Image Selected';
   label.title = filename || '';
 }
 
@@ -245,7 +245,7 @@ app.registerExtension({
   // hidden: edited from the browse dialog, persisted per ComfyUI user by the frontend's settings store
   settings: [
     DEFAULT_ROOT_SETTING,
-    { id: SAVED_PATHS_SETTING, name: 'Load Image (Browse): saved browse paths', type: 'hidden', defaultValue: [] },
+    { id: SAVED_PATHS_SETTING, name: 'Load Image (Browse): Saved Browse Paths', type: 'hidden', defaultValue: [] },
   ],
   beforeRegisterNodeDef(nodeType, nodeData) {
     if (nodeData.name !== NODE_TYPE) return;
@@ -255,8 +255,8 @@ app.registerExtension({
       onNodeCreated?.apply(this, arguments);
       selectionTokens.set(this, {});
       addFilename(this);
-      addButton(this, 'browse', () => openBrowser(this));
-      addButton(this, 'crop…', () => openCropper(this));
+      addButton(this, 'Browse', () => openBrowser(this));
+      addButton(this, 'Crop…', () => openCropper(this));
       hideSelection(this);
     };
 

@@ -31,10 +31,10 @@ const STYLE = `
 .arisu-agents section{padding:12px;margin:0;border:1px solid var(--border-color,#444);border-radius:6px;}.arisu-agents h3{margin:0 0 8px;}
 .arisu-agents p{margin:6px 0;color:var(--descrip-text,#aaa);}
 .arisu-agents button,.arisu-agents select{font:inherit;color:inherit;background:var(--comfy-input-bg,#222);border:1px solid var(--border-color,#555);
- border-radius:5px;min-height:34px;padding:5px 10px;cursor:pointer;}.arisu-agents button:hover{border-color:#64b5f6;}
-.arisu-agents button:disabled{opacity:.45;cursor:default;}.arisu-agents :focus-visible{outline:2px solid #64b5f6;outline-offset:2px;}
+ border-radius:5px;min-height:34px;padding:5px 10px;cursor:pointer;}.arisu-agents button:enabled:hover{border-color:var(--arisu-blue);}
+.arisu-agents button:disabled{opacity:.45;cursor:default;}.arisu-agents :focus-visible{outline:2px solid var(--arisu-blue);outline-offset:2px;}
 .arisu-agents select{min-width:0;max-width:100%;}
-.arisu-agents select:focus{outline:none;border-color:#64b5f6;box-shadow:inset 0 0 0 1px #64b5f6;}
+.arisu-agents select:focus{outline:none;border-color:var(--arisu-blue);box-shadow:inset 0 0 0 1px var(--arisu-blue);}
 .arisu-agents .fields label{flex:1;min-width:0;align-items:stretch;flex-direction:column;gap:4px;}
 .arisu-agents .actions,.arisu-agents .fields{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;}
 .arisu-agents label{display:flex;align-items:center;gap:8px;}.arisu-agents pre{white-space:pre-wrap;overflow-wrap:anywhere;
@@ -42,7 +42,7 @@ const STYLE = `
 .arisu-agents.management>.content{display:flex;flex-direction:column;flex:1;gap:10px;overflow:hidden;}
 .arisu-agents .settings-area{flex-shrink:0;max-height:48vh;overflow:auto;padding:2px;scrollbar-width:thin;}
 .arisu-agents .tabs{display:flex;gap:6px;margin-bottom:8px;}.arisu-agents .tabs button{flex:1;}
-.arisu-agents .tabs button[aria-selected="true"]{border-color:#64b5f6;background:color-mix(in srgb,var(--comfy-input-bg,#222) 85%,#64b5f6);}
+.arisu-agents .tabs button[aria-selected="true"]{border-color:var(--arisu-blue);background:color-mix(in srgb,var(--comfy-input-bg,#222) 85%,var(--arisu-blue));}
 .arisu-agents .error:empty{display:none;}
 .arisu-agents .error{color:var(--error-text,#efaaaa);}.arisu-agents .danger{border-color:#bd6c6c;}
 @media(pointer:coarse){.arisu-agents button,.arisu-agents select{min-height:44px;}}
@@ -53,7 +53,7 @@ export async function agentStatus(force = false) {
   if (!force && cached && Date.now() - checked < 3000) return cached;
   if (!pending) {
     pending = api
-      .fetchApi(ROUTE + '/status')
+      .fetchApi(`${ROUTE}/status`)
       .then(async (response) => {
         if (!response.ok) throw new Error('Unable to read agent status');
         cached = await response.json();
@@ -86,13 +86,13 @@ async function confirmRemoval(agent, parent) {
   let confirmed = false;
   dialog.append(
     el('style', { textContent: STYLE }),
-    el('header', {}, [el('strong', { textContent: 'Remove ' + agent + '?' })]),
+    el('header', {}, [el('strong', { textContent: `Remove ${agent}?` })]),
     el('div', { className: 'content' }, [
       el('p', { textContent: 'This deletes this agent’s images and saved login. You will need to build and sign in again.' }),
       el('div', { className: 'actions' }, [
         el('button', { textContent: 'Cancel', onclick: () => dialog.close() }),
         el('button', {
-          textContent: 'Remove completely',
+          textContent: 'Remove Completely',
           className: 'danger',
           onclick: () => {
             confirmed = true;
@@ -119,7 +119,7 @@ export function openAgentSettings(selected = 'codex', parent = document.body) {
     active.focus();
     return;
   }
-  const dialog = el('dialog', { className: 'arisu-agents management', ariaLabel: 'Prompt Workbench agents' });
+  const dialog = el('dialog', { className: 'arisu-agents management', ariaLabel: 'Prompt Workbench Agents' });
   active = dialog;
   const content = el('div', { className: 'content' });
   const error = el('p', { className: 'error', role: 'status', ariaLive: 'polite' });
@@ -135,7 +135,7 @@ export function openAgentSettings(selected = 'codex', parent = document.body) {
   const tabs = el('div', { className: 'tabs', role: 'tablist', ariaLabel: 'Agents' });
   const tabButtons = ['codex', 'grok'].map((agent, index) => {
     const button = el('button', {
-      id: 'arisu-tab-' + agent,
+      id: `arisu-tab-${agent}`,
       role: 'tab',
       textContent: agent === 'codex' ? 'Codex' : 'Grok Build',
       onclick: () => select(agent),
@@ -148,7 +148,7 @@ export function openAgentSettings(selected = 'codex', parent = document.body) {
         tabButtons[next].focus();
       },
     });
-    button.setAttribute('aria-controls', 'arisu-agent-' + agent);
+    button.setAttribute('aria-controls', `arisu-agent-${agent}`);
     return button;
   });
   tabs.append(...tabButtons);
@@ -186,15 +186,17 @@ export function openAgentSettings(selected = 'codex', parent = document.body) {
     const title = agent === 'codex' ? 'Codex' : 'Grok Build';
     const model = el(
       'select',
-      { ariaLabel: title + ' model' },
+      { ariaLabel: `${title} Model` },
       (info.models ?? []).map((item) => el('option', { value: item.id, textContent: item.name })),
     );
     model.value = info.selection?.model ?? '';
-    const effort = el('select', { ariaLabel: title + ' effort' });
+    const effort = el('select', { ariaLabel: `${title} Effort` });
     function updateEfforts() {
       const supported = info.models?.find((item) => item.id === model.value)?.efforts ?? [];
       effort.replaceChildren(
-        ...(supported.length ? supported : ['']).map((value) => el('option', { value, textContent: value || 'Provider default' })),
+        ...(supported.length ? supported : ['']).map((value) =>
+          el('option', { value, textContent: value ? value[0].toUpperCase() + value.slice(1) : 'Provider Default' }),
+        ),
       );
       effort.value = supported.includes(info.selection?.effort)
         ? info.selection.effort
@@ -214,36 +216,36 @@ export function openAgentSettings(selected = 'codex', parent = document.body) {
       ? 'Docker is unavailable to ComfyUI.'
       : !info.installed
         ? 'Build the image to begin.'
-        : !info.auto
-          ? 'Update required: compatible Auto mode is unavailable.'
+        : !info.restricted
+          ? info.restriction_error || 'Update required: restricted generation is unavailable.'
           : !info.authenticated
             ? 'Sign in to enable generation.'
             : !info.ready
               ? 'No supported models available.'
               : 'Ready';
     const buttons = [
-      ['Build image', 'build', info.installed],
+      ['Build Image', 'build', info.installed],
       ['Update CLI', 'update', !info.installed],
       ['Login', 'login', !info.installed],
       ['Logout', 'logout', !info.authenticated],
-      ['Remove completely', 'remove', !info.installed],
+      ['Remove Completely', 'remove', !info.installed],
     ].map(([label, operationName, disabled]) =>
       el('button', {
         textContent: label,
-        className: operationName === 'remove' ? 'danger' : '',
+        className: operationName === 'remove' ? 'danger' : 'arisu-action',
         disabled: !docker || busy || disabled || operation?.state === 'running',
         onclick: () => void action(agent, operationName),
       }),
     );
-    const panel = el('section', { id: 'arisu-agent-' + agent, role: 'tabpanel' }, [
-      el('p', { textContent: state + (info.version ? ' · ' + info.version : '') }),
+    const panel = el('section', { id: `arisu-agent-${agent}`, role: 'tabpanel' }, [
+      el('p', { textContent: state + (info.version ? ` · ${info.version}` : '') }),
       el('div', { className: 'actions' }, buttons),
       el('div', { className: 'fields' }, [
         el('label', {}, [el('span', { textContent: 'Model' }), model]),
         el('label', {}, [el('span', { textContent: 'Effort' }), effort]),
       ]),
     ]);
-    panel.setAttribute('aria-labelledby', 'arisu-tab-' + agent);
+    panel.setAttribute('aria-labelledby', `arisu-tab-${agent}`);
     return panel;
   }
   async function refresh(force = false) {
@@ -303,8 +305,8 @@ app.registerExtension({
       'button',
       {
         className: 'comfy-btn arisu-agents-shortcut',
-        title: 'Manage Prompt Workbench agents',
-        ariaLabel: 'Manage agents',
+        title: 'Manage Prompt Workbench Agents',
+        ariaLabel: 'Manage Agents',
         type: 'button',
         onclick: () => openAgentSettings(),
       },
@@ -328,21 +330,25 @@ app.registerExtension({
   settings: [
     {
       id: 'Arisu.PromptWorkbench.Agents',
-      name: 'Prompt Workbench agents',
+      name: 'Prompt Workbench Agents',
       category: ['Arisu Nodes', 'Prompt Workbench', 'Agents'],
       type: () => {
         // Keep native modals inside Settings so its outside-click handler sees them as descendants.
-        const container = el('div');
+        const container = el('div', { className: 'arisu-settings-entry' });
         container.append(
-          el('button', { className: 'comfy-btn', textContent: 'Manage agents…', onclick: () => openAgentSettings('codex', container) }),
+          el('button', {
+            className: 'comfy-btn',
+            textContent: 'Manage Agents…',
+            onclick: () => openAgentSettings('codex', container),
+          }),
         );
         return container;
       },
     },
     {
       id: SHORTCUT_SETTING,
-      name: 'Show Agents shortcut',
-      category: ['Arisu Nodes', 'Prompt Workbench', 'Show Agents shortcut'],
+      name: 'Show Agents Shortcut',
+      category: ['Arisu Nodes', 'Prompt Workbench', 'Show Agents Shortcut'],
       type: 'boolean',
       defaultValue: false,
       tooltip: 'Show an Agents button in the ComfyUI menu to open agent management.',

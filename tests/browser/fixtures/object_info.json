@@ -258,5 +258,1590 @@
     "search_aliases": null,
     "essentials_category": null,
     "has_intermediate_output": false
+  },
+  "ArisuMiniMaxH3HybridToVideo": {
+    "input": {
+      "required": {
+        "clip": [
+          "CLIP",
+          {}
+        ],
+        "vae": [
+          "VAE",
+          {
+            "tooltip": "Video VAE; encodes keyframes and visual references."
+          }
+        ],
+        "prompt": [
+          "STRING",
+          {
+            "multiline": true,
+            "dynamicPrompts": true
+          }
+        ],
+        "width": [
+          "INT",
+          {
+            "default": 1344,
+            "min": 32,
+            "max": 16384,
+            "step": 32
+          }
+        ],
+        "height": [
+          "INT",
+          {
+            "default": 768,
+            "min": 32,
+            "max": 16384,
+            "step": 32
+          }
+        ],
+        "length": [
+          "INT",
+          {
+            "tooltip": "Frame count at 24 fps, snapped up to the model's 17k+5 grid (124 = ~5s; trained range is ~124-362).",
+            "default": 124,
+            "min": 5,
+            "max": 3600,
+            "step": 17
+          }
+        ],
+        "ref_image_size": [
+          "COMBO",
+          {
+            "tooltip": "Reference image sizing. 'match' scales each ref (down only, keeping aspect) to the generation's pixel area; 'max' uses the reference pipeline's 2048px short edge for best identity fidelity. Reference tokens ride through every sampling step, so 'max' can be several times slower.",
+            "default": "match",
+            "multiselect": false,
+            "options": [
+              "match",
+              "max"
+            ]
+          }
+        ],
+        "frame_picture_tags": [
+          "COMBO",
+          {
+            "tooltip": "How the first/last frames appear to the text encoder. 'after_refs': reference images keep <Picture 1..n> and the frames follow as <Picture n+1..>. 'before_refs': the frames take <Picture 1..> and references are numbered after them. 'none': the frames only pin the video and are invisible to the prompt.",
+            "default": "after_refs",
+            "multiselect": false,
+            "options": [
+              "after_refs",
+              "before_refs",
+              "none"
+            ]
+          }
+        ],
+        "first_frame_resize_method": [
+          "COMBO",
+          {
+            "tooltip": "Keyframes dialog. How the first frame is resampled; lanczos is the sharpest for photos, nearest-exact keeps hard edges.",
+            "default": "lanczos",
+            "multiselect": false,
+            "options": [
+              "nearest-exact",
+              "bilinear",
+              "area",
+              "bicubic",
+              "lanczos"
+            ]
+          }
+        ],
+        "first_frame_mode": [
+          "COMBO",
+          {
+            "tooltip": "Keyframes dialog. How the first frame reaches the canvas: crop cuts it to the canvas aspect first, pad fits it inside and fills the rest with its pad colour, stretch ignores the aspect ratio. The canvas is always exactly width x height.",
+            "default": "crop",
+            "multiselect": false,
+            "options": [
+              "crop",
+              "pad",
+              "stretch"
+            ]
+          }
+        ],
+        "first_frame_pad_color": [
+          "STRING",
+          {
+            "tooltip": "Keyframes dialog. The pad fill of the first frame: r, g, b (0-255, or 0.0-1.0 with a decimal point), #rrggbb, one grey value, or a colour name.",
+            "default": "0, 0, 0",
+            "multiline": false
+          }
+        ],
+        "first_frame_crop_position": [
+          "COMBO",
+          {
+            "tooltip": "Keyframes dialog. Where the first frame stays: the region kept in crop, the side it sits on in pad.",
+            "default": "center",
+            "multiselect": false,
+            "options": [
+              "center",
+              "top",
+              "bottom",
+              "left",
+              "right"
+            ]
+          }
+        ],
+        "last_frame_resize_method": [
+          "COMBO",
+          {
+            "tooltip": "Keyframes dialog. How the last frame is resampled; lanczos is the sharpest for photos, nearest-exact keeps hard edges.",
+            "default": "lanczos",
+            "multiselect": false,
+            "options": [
+              "nearest-exact",
+              "bilinear",
+              "area",
+              "bicubic",
+              "lanczos"
+            ]
+          }
+        ],
+        "last_frame_mode": [
+          "COMBO",
+          {
+            "tooltip": "Keyframes dialog. How the last frame reaches the canvas: crop cuts it to the canvas aspect first, pad fits it inside and fills the rest with its pad colour, stretch ignores the aspect ratio. The canvas is always exactly width x height.",
+            "default": "crop",
+            "multiselect": false,
+            "options": [
+              "crop",
+              "pad",
+              "stretch"
+            ]
+          }
+        ],
+        "last_frame_pad_color": [
+          "STRING",
+          {
+            "tooltip": "Keyframes dialog. The pad fill of the last frame: r, g, b (0-255, or 0.0-1.0 with a decimal point), #rrggbb, one grey value, or a colour name.",
+            "default": "0, 0, 0",
+            "multiline": false
+          }
+        ],
+        "last_frame_crop_position": [
+          "COMBO",
+          {
+            "tooltip": "Keyframes dialog. Where the last frame stays: the region kept in crop, the side it sits on in pad.",
+            "default": "center",
+            "multiselect": false,
+            "options": [
+              "center",
+              "top",
+              "bottom",
+              "left",
+              "right"
+            ]
+          }
+        ]
+      },
+      "optional": {
+        "audio_vae": [
+          "VAE",
+          {
+            "tooltip": "Audio VAE, needed only when a reference audio or a reference video soundtrack is connected."
+          }
+        ],
+        "video_settings": [
+          "ARISU_MINIMAX_H3_VIDEO_SETTINGS",
+          {
+            "tooltip": "Bundle from a MiniMax H3 Video Settings node. Overrides width, height and length, and the target size when it carries one; the frontend greys those widgets while it is wired or advertised."
+          }
+        ],
+        "resources": [
+          "ARISU_MINIMAX_H3_RESOURCES",
+          {}
+        ],
+        "first_frame": [
+          "IMAGE",
+          {
+            "tooltip": "Keyframe pinned at frame 0; fitted to the canvas as its keyframes dialog settings say (lanczos, crop, center by default)."
+          }
+        ],
+        "last_frame": [
+          "IMAGE",
+          {
+            "tooltip": "Keyframe pinned at the last frame; fitted to the canvas as its keyframes dialog settings say (lanczos, crop, center by default)."
+          }
+        ],
+        "ref_images": [
+          "COMFY_AUTOGROW_V3",
+          {
+            "template": {
+              "input": {
+                "required": {
+                  "ref_image": [
+                    "IMAGE",
+                    {
+                      "tooltip": "Reference image (downscaled to 2048 short edge if larger, never upscaled)"
+                    }
+                  ]
+                }
+              },
+              "prefix": "ref_image_",
+              "min": 0,
+              "max": 9
+            }
+          }
+        ],
+        "ref_videos": [
+          "COMFY_AUTOGROW_V3",
+          {
+            "template": {
+              "input": {
+                "required": {
+                  "ref_video": [
+                    "IMAGE",
+                    {
+                      "tooltip": "Reference video frames at 24 fps (2-15s)"
+                    }
+                  ]
+                }
+              },
+              "prefix": "ref_video_",
+              "min": 0,
+              "max": 3
+            }
+          }
+        ],
+        "ref_video_audios": [
+          "COMFY_AUTOGROW_V3",
+          {
+            "template": {
+              "input": {
+                "required": {
+                  "ref_video_audio": [
+                    "AUDIO",
+                    {
+                      "tooltip": "Soundtrack of the same-numbered reference video"
+                    }
+                  ]
+                }
+              },
+              "prefix": "ref_video_audio_",
+              "min": 0,
+              "max": 3
+            }
+          }
+        ],
+        "ref_audios": [
+          "COMFY_AUTOGROW_V3",
+          {
+            "template": {
+              "input": {
+                "required": {
+                  "ref_audio": [
+                    "AUDIO",
+                    {
+                      "tooltip": "Standalone reference audio"
+                    }
+                  ]
+                }
+              },
+              "prefix": "ref_audio_",
+              "min": 0,
+              "max": 3
+            }
+          }
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "clip",
+        "vae",
+        "prompt",
+        "width",
+        "height",
+        "length",
+        "ref_image_size",
+        "frame_picture_tags",
+        "first_frame_resize_method",
+        "first_frame_mode",
+        "first_frame_pad_color",
+        "first_frame_crop_position",
+        "last_frame_resize_method",
+        "last_frame_mode",
+        "last_frame_pad_color",
+        "last_frame_crop_position"
+      ],
+      "optional": [
+        "audio_vae",
+        "video_settings",
+        "resources",
+        "first_frame",
+        "last_frame",
+        "ref_images",
+        "ref_videos",
+        "ref_video_audios",
+        "ref_audios"
+      ]
+    },
+    "is_input_list": false,
+    "output": [
+      "CONDITIONING",
+      "LATENT"
+    ],
+    "output_is_list": [
+      false,
+      false
+    ],
+    "output_name": [
+      "positive",
+      "latent"
+    ],
+    "output_tooltips": [
+      null,
+      null
+    ],
+    "output_matchtypes": null,
+    "name": "ArisuMiniMaxH3HybridToVideo",
+    "display_name": "MiniMax H3 Hybrid to Video",
+    "description": "MiniMax H3 conditioning with first/last keyframes and <Picture i> / <Video k> / <Audio j> references in one node. Outputs positive conditioning and the AV latent.",
+    "python_module": "custom_nodes.arisu",
+    "category": "Arisu Nodes/MiniMax H3",
+    "output_node": false,
+    "deprecated": false,
+    "experimental": false,
+    "dev_only": false,
+    "api_node": false,
+    "price_badge": null,
+    "search_aliases": null,
+    "essentials_category": null,
+    "has_intermediate_output": false
+  },
+  "ArisuMiniMaxH3HybridToVideoAdvanced": {
+    "input": {
+      "required": {
+        "clip": [
+          "CLIP",
+          {}
+        ],
+        "vae": [
+          "VAE",
+          {
+            "tooltip": "Video VAE; encodes keyframes and visual references."
+          }
+        ],
+        "prompt": [
+          "STRING",
+          {
+            "multiline": true,
+            "dynamicPrompts": true
+          }
+        ],
+        "width": [
+          "INT",
+          {
+            "default": 1344,
+            "min": 32,
+            "max": 16384,
+            "step": 32
+          }
+        ],
+        "height": [
+          "INT",
+          {
+            "default": 768,
+            "min": 32,
+            "max": 16384,
+            "step": 32
+          }
+        ],
+        "target_width": [
+          "INT",
+          {
+            "tooltip": "Width of the upscaled video, as produced by the latent upscaler between the two samplers.",
+            "default": 2688,
+            "min": 32,
+            "max": 16384,
+            "step": 32
+          }
+        ],
+        "target_height": [
+          "INT",
+          {
+            "tooltip": "Height of the upscaled video, as produced by the latent upscaler between the two samplers.",
+            "default": 1536,
+            "min": 32,
+            "max": 16384,
+            "step": 32
+          }
+        ],
+        "length": [
+          "INT",
+          {
+            "tooltip": "Frame count at 24 fps, snapped up to the model's 17k+5 grid (124 = ~5s; trained range is ~124-362).",
+            "default": 124,
+            "min": 5,
+            "max": 3600,
+            "step": 17
+          }
+        ],
+        "ref_image_size": [
+          "COMBO",
+          {
+            "tooltip": "Reference image sizing. 'match' scales each ref (down only, keeping aspect) to the generation's pixel area; 'max' uses the reference pipeline's 2048px short edge for best identity fidelity. Reference tokens ride through every sampling step, so 'max' can be several times slower.",
+            "default": "match",
+            "multiselect": false,
+            "options": [
+              "match",
+              "max"
+            ]
+          }
+        ],
+        "frame_picture_tags": [
+          "COMBO",
+          {
+            "tooltip": "How the first/last frames appear to the text encoder. 'after_refs': reference images keep <Picture 1..n> and the frames follow as <Picture n+1..>. 'before_refs': the frames take <Picture 1..> and references are numbered after them. 'none': the frames only pin the video and are invisible to the prompt.",
+            "default": "after_refs",
+            "multiselect": false,
+            "options": [
+              "after_refs",
+              "before_refs",
+              "none"
+            ]
+          }
+        ],
+        "first_frame_resize_method": [
+          "COMBO",
+          {
+            "tooltip": "Keyframes dialog. How the first frame is resampled; lanczos is the sharpest for photos, nearest-exact keeps hard edges.",
+            "default": "lanczos",
+            "multiselect": false,
+            "options": [
+              "nearest-exact",
+              "bilinear",
+              "area",
+              "bicubic",
+              "lanczos"
+            ]
+          }
+        ],
+        "first_frame_mode": [
+          "COMBO",
+          {
+            "tooltip": "Keyframes dialog. How the first frame reaches the canvas: crop cuts it to the canvas aspect first, pad fits it inside and fills the rest with its pad colour, stretch ignores the aspect ratio. The canvas is always exactly width x height.",
+            "default": "crop",
+            "multiselect": false,
+            "options": [
+              "crop",
+              "pad",
+              "stretch"
+            ]
+          }
+        ],
+        "first_frame_pad_color": [
+          "STRING",
+          {
+            "tooltip": "Keyframes dialog. The pad fill of the first frame: r, g, b (0-255, or 0.0-1.0 with a decimal point), #rrggbb, one grey value, or a colour name.",
+            "default": "0, 0, 0",
+            "multiline": false
+          }
+        ],
+        "first_frame_crop_position": [
+          "COMBO",
+          {
+            "tooltip": "Keyframes dialog. Where the first frame stays: the region kept in crop, the side it sits on in pad.",
+            "default": "center",
+            "multiselect": false,
+            "options": [
+              "center",
+              "top",
+              "bottom",
+              "left",
+              "right"
+            ]
+          }
+        ],
+        "last_frame_resize_method": [
+          "COMBO",
+          {
+            "tooltip": "Keyframes dialog. How the last frame is resampled; lanczos is the sharpest for photos, nearest-exact keeps hard edges.",
+            "default": "lanczos",
+            "multiselect": false,
+            "options": [
+              "nearest-exact",
+              "bilinear",
+              "area",
+              "bicubic",
+              "lanczos"
+            ]
+          }
+        ],
+        "last_frame_mode": [
+          "COMBO",
+          {
+            "tooltip": "Keyframes dialog. How the last frame reaches the canvas: crop cuts it to the canvas aspect first, pad fits it inside and fills the rest with its pad colour, stretch ignores the aspect ratio. The canvas is always exactly width x height.",
+            "default": "crop",
+            "multiselect": false,
+            "options": [
+              "crop",
+              "pad",
+              "stretch"
+            ]
+          }
+        ],
+        "last_frame_pad_color": [
+          "STRING",
+          {
+            "tooltip": "Keyframes dialog. The pad fill of the last frame: r, g, b (0-255, or 0.0-1.0 with a decimal point), #rrggbb, one grey value, or a colour name.",
+            "default": "0, 0, 0",
+            "multiline": false
+          }
+        ],
+        "last_frame_crop_position": [
+          "COMBO",
+          {
+            "tooltip": "Keyframes dialog. Where the last frame stays: the region kept in crop, the side it sits on in pad.",
+            "default": "center",
+            "multiselect": false,
+            "options": [
+              "center",
+              "top",
+              "bottom",
+              "left",
+              "right"
+            ]
+          }
+        ]
+      },
+      "optional": {
+        "audio_vae": [
+          "VAE",
+          {
+            "tooltip": "Audio VAE, needed only when a reference audio or a reference video soundtrack is connected."
+          }
+        ],
+        "video_settings": [
+          "ARISU_MINIMAX_H3_VIDEO_SETTINGS",
+          {
+            "tooltip": "Bundle from a MiniMax H3 Video Settings node. Overrides width, height and length, and the target size when it carries one; the frontend greys those widgets while it is wired or advertised."
+          }
+        ],
+        "resources": [
+          "ARISU_MINIMAX_H3_RESOURCES",
+          {}
+        ],
+        "first_frame": [
+          "IMAGE",
+          {
+            "tooltip": "Keyframe pinned at frame 0; fitted to the canvas as its keyframes dialog settings say (lanczos, crop, center by default)."
+          }
+        ],
+        "last_frame": [
+          "IMAGE",
+          {
+            "tooltip": "Keyframe pinned at the last frame; fitted to the canvas as its keyframes dialog settings say (lanczos, crop, center by default)."
+          }
+        ],
+        "ref_images": [
+          "COMFY_AUTOGROW_V3",
+          {
+            "template": {
+              "input": {
+                "required": {
+                  "ref_image": [
+                    "IMAGE",
+                    {
+                      "tooltip": "Reference image (downscaled to 2048 short edge if larger, never upscaled)"
+                    }
+                  ]
+                }
+              },
+              "prefix": "ref_image_",
+              "min": 0,
+              "max": 9
+            }
+          }
+        ],
+        "ref_videos": [
+          "COMFY_AUTOGROW_V3",
+          {
+            "template": {
+              "input": {
+                "required": {
+                  "ref_video": [
+                    "IMAGE",
+                    {
+                      "tooltip": "Reference video frames at 24 fps (2-15s)"
+                    }
+                  ]
+                }
+              },
+              "prefix": "ref_video_",
+              "min": 0,
+              "max": 3
+            }
+          }
+        ],
+        "ref_video_audios": [
+          "COMFY_AUTOGROW_V3",
+          {
+            "template": {
+              "input": {
+                "required": {
+                  "ref_video_audio": [
+                    "AUDIO",
+                    {
+                      "tooltip": "Soundtrack of the same-numbered reference video"
+                    }
+                  ]
+                }
+              },
+              "prefix": "ref_video_audio_",
+              "min": 0,
+              "max": 3
+            }
+          }
+        ],
+        "ref_audios": [
+          "COMFY_AUTOGROW_V3",
+          {
+            "template": {
+              "input": {
+                "required": {
+                  "ref_audio": [
+                    "AUDIO",
+                    {
+                      "tooltip": "Standalone reference audio"
+                    }
+                  ]
+                }
+              },
+              "prefix": "ref_audio_",
+              "min": 0,
+              "max": 3
+            }
+          }
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "clip",
+        "vae",
+        "prompt",
+        "width",
+        "height",
+        "target_width",
+        "target_height",
+        "length",
+        "ref_image_size",
+        "frame_picture_tags",
+        "first_frame_resize_method",
+        "first_frame_mode",
+        "first_frame_pad_color",
+        "first_frame_crop_position",
+        "last_frame_resize_method",
+        "last_frame_mode",
+        "last_frame_pad_color",
+        "last_frame_crop_position"
+      ],
+      "optional": [
+        "audio_vae",
+        "video_settings",
+        "resources",
+        "first_frame",
+        "last_frame",
+        "ref_images",
+        "ref_videos",
+        "ref_video_audios",
+        "ref_audios"
+      ]
+    },
+    "is_input_list": false,
+    "output": [
+      "CONDITIONING",
+      "LATENT",
+      "CONDITIONING"
+    ],
+    "output_is_list": [
+      false,
+      false,
+      false
+    ],
+    "output_name": [
+      "positive",
+      "latent",
+      "positive (upscaled)"
+    ],
+    "output_tooltips": [
+      null,
+      null,
+      "Same prompt and references, with the keyframes encoded at target_width x target_height."
+    ],
+    "output_matchtypes": null,
+    "name": "ArisuMiniMaxH3HybridToVideoAdvanced",
+    "display_name": "MiniMax H3 Hybrid to Video (Advanced)",
+    "description": "MiniMax H3 Hybrid to Video for two-sampler latent upscaling: also outputs a positive conditioning whose keyframes are encoded at target_width x target_height, for the sampler that refines the upscaled latent.",
+    "python_module": "custom_nodes.arisu",
+    "category": "Arisu Nodes/MiniMax H3",
+    "output_node": false,
+    "deprecated": false,
+    "experimental": false,
+    "dev_only": false,
+    "api_node": false,
+    "price_badge": null,
+    "search_aliases": null,
+    "essentials_category": null,
+    "has_intermediate_output": false
+  },
+  "ArisuMiniMaxH3VideoSettings": {
+    "input": {
+      "required": {
+        "aspect_ratio": [
+          "COMBO",
+          {
+            "tooltip": "Aspect ratio of the generation canvas.",
+            "default": "16:9 (Widescreen)",
+            "multiselect": false,
+            "options": [
+              "1:1 (Square)",
+              "2:3 (Portrait Photo)",
+              "3:2 (Photo)",
+              "3:4 (Portrait Standard)",
+              "4:3 (Standard)",
+              "9:16 (Portrait Widescreen)",
+              "16:9 (Widescreen)",
+              "21:9 (Ultrawide)"
+            ]
+          }
+        ],
+        "megapixels": [
+          "FLOAT",
+          {
+            "tooltip": "Pixel budget of the canvas in megapixels (1 MP = 1024 x 1024), rounded to multiples of 32. The stock 1344 x 768 canvas is about 0.98 MP.",
+            "default": 1.0,
+            "min": 0.1,
+            "max": 16.0,
+            "step": 0.1
+          }
+        ],
+        "duration": [
+          "FLOAT",
+          {
+            "tooltip": "Clip length in seconds at 24 fps, snapped up to the model's 17k+5 frame grid (5.0 s = 124 frames).",
+            "default": 5.0,
+            "min": 0.2,
+            "max": 150.0,
+            "step": 0.1
+          }
+        ],
+        "advertise_settings": [
+          "BOOLEAN",
+          {
+            "tooltip": "Drive every MiniMax H3 Hybrid to Video node in this graph through their video_settings input: their size and length widgets grey out at once and refuse links. Off by default. Read by the frontend; the outputs stay available either way.",
+            "default": false
+          }
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "aspect_ratio",
+        "megapixels",
+        "duration",
+        "advertise_settings"
+      ]
+    },
+    "is_input_list": false,
+    "output": [
+      "ARISU_MINIMAX_H3_VIDEO_SETTINGS",
+      "INT",
+      "INT",
+      "INT",
+      "COMBO"
+    ],
+    "output_is_list": [
+      false,
+      false,
+      false,
+      false,
+      false
+    ],
+    "output_name": [
+      "video_settings",
+      "width",
+      "height",
+      "length",
+      "aspect_ratio"
+    ],
+    "output_tooltips": [
+      "Every other output in one bundle, for the hybrid nodes' video_settings input.",
+      "Canvas width in pixels, a multiple of 32.",
+      "Canvas height in pixels, a multiple of 32.",
+      "Frame count on the 17k+5 grid, for the hybrid nodes' length input.",
+      null
+    ],
+    "output_matchtypes": null,
+    "name": "ArisuMiniMaxH3VideoSettings",
+    "display_name": "MiniMax H3 Video Settings",
+    "description": "Canvas size from an aspect ratio and a megapixel budget, and frame count from a duration in seconds, on MiniMax H3's grids. Wire video_settings into the hybrid nodes, or switch advertise_settings on and every MiniMax H3 Hybrid to Video node in this graph takes it automatically.",
+    "python_module": "custom_nodes.arisu",
+    "category": "Arisu Nodes/MiniMax H3",
+    "output_node": false,
+    "deprecated": false,
+    "experimental": false,
+    "dev_only": false,
+    "api_node": false,
+    "price_badge": null,
+    "search_aliases": null,
+    "essentials_category": null,
+    "has_intermediate_output": false
+  },
+  "ArisuMiniMaxH3VideoSettingsUpscale": {
+    "input": {
+      "required": {
+        "aspect_ratio": [
+          "COMBO",
+          {
+            "tooltip": "Aspect ratio of the generation canvas.",
+            "default": "16:9 (Widescreen)",
+            "multiselect": false,
+            "options": [
+              "1:1 (Square)",
+              "2:3 (Portrait Photo)",
+              "3:2 (Photo)",
+              "3:4 (Portrait Standard)",
+              "4:3 (Standard)",
+              "9:16 (Portrait Widescreen)",
+              "16:9 (Widescreen)",
+              "21:9 (Ultrawide)"
+            ]
+          }
+        ],
+        "megapixels": [
+          "FLOAT",
+          {
+            "tooltip": "Pixel budget of the canvas in megapixels (1 MP = 1024 x 1024), rounded to multiples of 32. The stock 1344 x 768 canvas is about 0.98 MP.",
+            "default": 1.0,
+            "min": 0.1,
+            "max": 16.0,
+            "step": 0.1
+          }
+        ],
+        "upscale_factor": [
+          "FLOAT",
+          {
+            "tooltip": "Factor of the latent upscaler between the two samplers; the target size is rounded to multiples of 32.",
+            "default": 2.0,
+            "min": 1.0,
+            "max": 8.0,
+            "step": 0.05
+          }
+        ],
+        "duration": [
+          "FLOAT",
+          {
+            "tooltip": "Clip length in seconds at 24 fps, snapped up to the model's 17k+5 frame grid (5.0 s = 124 frames).",
+            "default": 5.0,
+            "min": 0.2,
+            "max": 150.0,
+            "step": 0.1
+          }
+        ],
+        "advertise_settings": [
+          "BOOLEAN",
+          {
+            "tooltip": "Drive every MiniMax H3 Hybrid to Video node in this graph through their video_settings input: their size and length widgets grey out at once and refuse links. Off by default. Read by the frontend; the outputs stay available either way.",
+            "default": false
+          }
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "aspect_ratio",
+        "megapixels",
+        "upscale_factor",
+        "duration",
+        "advertise_settings"
+      ]
+    },
+    "is_input_list": false,
+    "output": [
+      "ARISU_MINIMAX_H3_VIDEO_SETTINGS",
+      "INT",
+      "INT",
+      "INT",
+      "FLOAT",
+      "INT",
+      "INT",
+      "COMBO"
+    ],
+    "output_is_list": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ],
+    "output_name": [
+      "video_settings",
+      "width",
+      "height",
+      "length",
+      "upscale_factor",
+      "target_width",
+      "target_height",
+      "aspect_ratio"
+    ],
+    "output_tooltips": [
+      "Every other output in one bundle, for the hybrid nodes' video_settings input.",
+      "Canvas width in pixels, a multiple of 32.",
+      "Canvas height in pixels, a multiple of 32.",
+      "Frame count on the 17k+5 grid, for the hybrid nodes' length input.",
+      "The factor, for a latent upscaler's multiplier input.",
+      "Upscaled width in pixels, a multiple of 32.",
+      "Upscaled height in pixels, a multiple of 32.",
+      null
+    ],
+    "output_matchtypes": null,
+    "name": "ArisuMiniMaxH3VideoSettingsUpscale",
+    "display_name": "MiniMax H3 Video Settings (Upscale)",
+    "description": "MiniMax H3 Video Settings for two-sampler latent-upscale workflows: also derives the upscaled target size from an upscale factor, for the Advanced hybrid node and the latent upscaler.",
+    "python_module": "custom_nodes.arisu",
+    "category": "Arisu Nodes/MiniMax H3",
+    "output_node": false,
+    "deprecated": false,
+    "experimental": false,
+    "dev_only": false,
+    "api_node": false,
+    "price_badge": null,
+    "search_aliases": null,
+    "essentials_category": null,
+    "has_intermediate_output": false
+  },
+  "ArisuPathBuilder": {
+    "input": {
+      "required": {},
+      "optional": {
+        "segment_1": [
+          "STRING",
+          {
+            "tooltip": "One path piece. Blank pieces are skipped; surrounding slashes and spaces are trimmed.",
+            "default": "",
+            "multiline": false
+          }
+        ],
+        "segment_2": [
+          "STRING",
+          {
+            "tooltip": "One path piece. Blank pieces are skipped; surrounding slashes and spaces are trimmed.",
+            "default": "",
+            "multiline": false
+          }
+        ],
+        "segment_3": [
+          "STRING",
+          {
+            "tooltip": "One path piece. Blank pieces are skipped; surrounding slashes and spaces are trimmed.",
+            "default": "",
+            "multiline": false
+          }
+        ],
+        "segment_4": [
+          "STRING",
+          {
+            "tooltip": "One path piece. Blank pieces are skipped; surrounding slashes and spaces are trimmed.",
+            "default": "",
+            "multiline": false
+          }
+        ],
+        "segment_5": [
+          "STRING",
+          {
+            "tooltip": "One path piece. Blank pieces are skipped; surrounding slashes and spaces are trimmed.",
+            "default": "",
+            "multiline": false
+          }
+        ],
+        "segment_6": [
+          "STRING",
+          {
+            "tooltip": "One path piece. Blank pieces are skipped; surrounding slashes and spaces are trimmed.",
+            "default": "",
+            "multiline": false
+          }
+        ],
+        "segment_7": [
+          "STRING",
+          {
+            "tooltip": "One path piece. Blank pieces are skipped; surrounding slashes and spaces are trimmed.",
+            "default": "",
+            "multiline": false
+          }
+        ],
+        "segment_8": [
+          "STRING",
+          {
+            "tooltip": "One path piece. Blank pieces are skipped; surrounding slashes and spaces are trimmed.",
+            "default": "",
+            "multiline": false
+          }
+        ],
+        "segment_9": [
+          "STRING",
+          {
+            "tooltip": "One path piece. Blank pieces are skipped; surrounding slashes and spaces are trimmed.",
+            "default": "",
+            "multiline": false
+          }
+        ],
+        "segment_10": [
+          "STRING",
+          {
+            "tooltip": "One path piece. Blank pieces are skipped; surrounding slashes and spaces are trimmed.",
+            "default": "",
+            "multiline": false
+          }
+        ],
+        "segment_11": [
+          "STRING",
+          {
+            "tooltip": "One path piece. Blank pieces are skipped; surrounding slashes and spaces are trimmed.",
+            "default": "",
+            "multiline": false
+          }
+        ],
+        "segment_12": [
+          "STRING",
+          {
+            "tooltip": "One path piece. Blank pieces are skipped; surrounding slashes and spaces are trimmed.",
+            "default": "",
+            "multiline": false
+          }
+        ],
+        "segment_13": [
+          "STRING",
+          {
+            "tooltip": "One path piece. Blank pieces are skipped; surrounding slashes and spaces are trimmed.",
+            "default": "",
+            "multiline": false
+          }
+        ],
+        "segment_14": [
+          "STRING",
+          {
+            "tooltip": "One path piece. Blank pieces are skipped; surrounding slashes and spaces are trimmed.",
+            "default": "",
+            "multiline": false
+          }
+        ],
+        "segment_15": [
+          "STRING",
+          {
+            "tooltip": "One path piece. Blank pieces are skipped; surrounding slashes and spaces are trimmed.",
+            "default": "",
+            "multiline": false
+          }
+        ],
+        "segment_16": [
+          "STRING",
+          {
+            "tooltip": "One path piece. Blank pieces are skipped; surrounding slashes and spaces are trimmed.",
+            "default": "",
+            "multiline": false
+          }
+        ]
+      }
+    },
+    "input_order": {
+      "required": [],
+      "optional": [
+        "segment_1",
+        "segment_2",
+        "segment_3",
+        "segment_4",
+        "segment_5",
+        "segment_6",
+        "segment_7",
+        "segment_8",
+        "segment_9",
+        "segment_10",
+        "segment_11",
+        "segment_12",
+        "segment_13",
+        "segment_14",
+        "segment_15",
+        "segment_16"
+      ]
+    },
+    "is_input_list": false,
+    "output": [
+      "STRING"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "output_name": [
+      "path"
+    ],
+    "output_tooltips": [
+      "The fields joined with '/', blanks skipped."
+    ],
+    "output_matchtypes": null,
+    "name": "ArisuPathBuilder",
+    "display_name": "Path Builder",
+    "description": "Join separate text fields into one path with '/', for filename_prefix inputs and the like. Blank fields are skipped. Use the + and - buttons to add or remove fields.",
+    "python_module": "custom_nodes.arisu",
+    "category": "Arisu Nodes/Common",
+    "output_node": false,
+    "deprecated": false,
+    "experimental": false,
+    "dev_only": false,
+    "api_node": false,
+    "price_badge": null,
+    "search_aliases": [
+      "prefix",
+      "filename prefix",
+      "join path"
+    ],
+    "essentials_category": null,
+    "has_intermediate_output": false
+  },
+  "ArisuExtractLastImages": {
+    "input": {
+      "required": {
+        "images": [
+          "IMAGE",
+          {
+            "tooltip": "An image batch, for example the decoded frames of a video."
+          }
+        ],
+        "count": [
+          "INT",
+          {
+            "tooltip": "How many images to keep from the end of the batch; capped at the batch size.",
+            "default": 1,
+            "min": 1,
+            "max": 4096
+          }
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "images",
+        "count"
+      ]
+    },
+    "is_input_list": false,
+    "output": [
+      "IMAGE"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "output_name": [
+      "images"
+    ],
+    "output_tooltips": [
+      "The last count images, in their original order."
+    ],
+    "output_matchtypes": null,
+    "name": "ArisuExtractLastImages",
+    "display_name": "Extract Last Images",
+    "description": "Keep the last N images of a batch, for example the ending frames of a decoded video.",
+    "python_module": "custom_nodes.arisu",
+    "category": "Arisu Nodes/Common",
+    "output_node": false,
+    "deprecated": false,
+    "experimental": false,
+    "dev_only": false,
+    "api_node": false,
+    "price_badge": null,
+    "search_aliases": [
+      "extract last frames",
+      "last frames",
+      "last images"
+    ],
+    "essentials_category": null,
+    "has_intermediate_output": false
+  },
+  "ArisuPreviewSaveImage": {
+    "input": {
+      "required": {
+        "images": [
+          "IMAGE",
+          {
+            "tooltip": "The batch to preview; every image in it is saved on click."
+          }
+        ],
+        "path": [
+          "STRING",
+          {
+            "tooltip": "Where the save button writes: a filename prefix under ComfyUI's output directory, with Save Image's filename_prefix rules. 'shots/a' saves output/shots/a_00001_.png; %year%, %width% and the like are expanded; absolute paths (even inside output) and '..' are refused. External image roots are not save destinations.",
+            "default": "ComfyUI",
+            "multiline": false
+          }
+        ]
+      },
+      "hidden": {
+        "prompt": [
+          "PROMPT"
+        ],
+        "extra_pnginfo": [
+          "EXTRA_PNGINFO"
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "images",
+        "path"
+      ],
+      "hidden": [
+        "prompt",
+        "extra_pnginfo"
+      ]
+    },
+    "is_input_list": false,
+    "output": [
+      "IMAGE"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "output_name": [
+      "images"
+    ],
+    "output_tooltips": [
+      "The input batch, unchanged."
+    ],
+    "output_matchtypes": null,
+    "name": "ArisuPreviewSaveImage",
+    "display_name": "Preview & Save Image",
+    "description": "Preview an image batch and pass it through unchanged. A run saves nothing; the save button writes the previewed images under ComfyUI's output directory at path, without queueing a run.",
+    "python_module": "custom_nodes.arisu",
+    "category": "Arisu Nodes/Common",
+    "output_node": true,
+    "deprecated": false,
+    "experimental": false,
+    "dev_only": false,
+    "api_node": false,
+    "price_badge": null,
+    "search_aliases": [
+      "preview save",
+      "save button",
+      "save on click"
+    ],
+    "essentials_category": null,
+    "has_intermediate_output": false
+  },
+  "ArisuPreviewSaveImageUpscale": {
+    "input": {
+      "required": {
+        "images": [
+          "IMAGE",
+          {
+            "tooltip": "The batch to preview; every image in it is saved on click."
+          }
+        ],
+        "path": [
+          "STRING",
+          {
+            "tooltip": "Where the save button writes: a filename prefix under ComfyUI's output directory, with Save Image's filename_prefix rules. 'shots/a' saves output/shots/a_00001_.png; %year%, %width% and the like are expanded; absolute paths (even inside output) and '..' are refused. External image roots are not save destinations.",
+            "default": "ComfyUI",
+            "multiline": false
+          }
+        ],
+        "upscale_model": [
+          "COMBO",
+          {
+            "tooltip": "Applied when saving, not during the run; none saves the image at its original size.",
+            "default": "none",
+            "multiselect": false,
+            "options": [
+              "none"
+            ]
+          }
+        ]
+      },
+      "hidden": {
+        "prompt": [
+          "PROMPT"
+        ],
+        "extra_pnginfo": [
+          "EXTRA_PNGINFO"
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "images",
+        "path",
+        "upscale_model"
+      ],
+      "hidden": [
+        "prompt",
+        "extra_pnginfo"
+      ]
+    },
+    "is_input_list": false,
+    "output": [
+      "IMAGE"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "output_name": [
+      "images"
+    ],
+    "output_tooltips": [
+      "The input batch, unchanged."
+    ],
+    "output_matchtypes": null,
+    "name": "ArisuPreviewSaveImageUpscale",
+    "display_name": "Preview & Save Image (Upscale)",
+    "description": "Preview an image batch and pass it through unchanged. A run saves nothing; the save button upscales the previewed images with the selected model and writes them under ComfyUI's output directory at path, without queueing a run. Select none to save at the original size.",
+    "python_module": "custom_nodes.arisu",
+    "category": "Arisu Nodes/Common",
+    "output_node": true,
+    "deprecated": false,
+    "experimental": false,
+    "dev_only": false,
+    "api_node": false,
+    "price_badge": null,
+    "search_aliases": [
+      "preview save upscale",
+      "save button upscale",
+      "upscale on save"
+    ],
+    "essentials_category": null,
+    "has_intermediate_output": false
+  },
+  "ArisuLoadImage": {
+    "input": {
+      "required": {
+        "path": [
+          "STRING",
+          {
+            "tooltip": "The image file relative to the selected configured root ('sub/a.png'), stored by Browse. Select images with Browse; manual input and wiring are unavailable in the UI. Nothing is uploaded or copied.",
+            "default": "",
+            "socketless": true,
+            "multiline": false
+          }
+        ],
+        "crop": [
+          "STRING",
+          {
+            "tooltip": "An optional crop as left,top,width,height in pixels of the upright image; blank loads the whole image. The crop button fills it in and the frontend hides it. A box reaching past the image is cut to it.",
+            "default": "",
+            "multiline": false
+          }
+        ]
+      },
+      "optional": {
+        "root": [
+          "COMBO",
+          {
+            "tooltip": "The image directory selected inside Browse. External roots are set in config.arisu.jsonc.",
+            "default": "input",
+            "socketless": true,
+            "multiselect": false,
+            "options": [
+              "input",
+              "output"
+            ]
+          }
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "path",
+        "crop"
+      ],
+      "optional": [
+        "root"
+      ]
+    },
+    "is_input_list": false,
+    "output": [
+      "IMAGE"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "output_name": [
+      "image"
+    ],
+    "output_tooltips": [
+      "The image, cropped when a crop is set, as a batch of one."
+    ],
+    "output_matchtypes": null,
+    "name": "ArisuLoadImage",
+    "display_name": "Load Image (Browse)",
+    "description": "Load one static image beneath a server-configured directory, selected with Browse, and optionally cropped in a dialog. Same image output as Load Image; nothing is uploaded or copied.",
+    "python_module": "custom_nodes.arisu",
+    "category": "Arisu Nodes/Common",
+    "output_node": false,
+    "deprecated": false,
+    "experimental": false,
+    "dev_only": false,
+    "api_node": false,
+    "price_badge": null,
+    "search_aliases": [
+      "load image path",
+      "browse image",
+      "image picker"
+    ],
+    "essentials_category": null,
+    "has_intermediate_output": false
+  },
+  "ArisuResizeImage": {
+    "input": {
+      "required": {
+        "image": [
+          "IMAGE",
+          {
+            "tooltip": "The batch to resize; every image gets the same geometry."
+          }
+        ],
+        "width": [
+          "INT",
+          {
+            "tooltip": "The output width in pixels; 0 takes it from the image (keeping the aspect ratio in resize and pad).",
+            "default": 512,
+            "min": 0,
+            "max": 16384
+          }
+        ],
+        "height": [
+          "INT",
+          {
+            "tooltip": "The output height in pixels; 0 takes it from the image (keeping the aspect ratio in resize and pad).",
+            "default": 512,
+            "min": 0,
+            "max": 16384
+          }
+        ],
+        "resize_method": [
+          "COMBO",
+          {
+            "tooltip": "How pixels are resampled; lanczos is the sharpest for photos, nearest-exact keeps hard edges.",
+            "default": "lanczos",
+            "multiselect": false,
+            "options": [
+              "nearest-exact",
+              "bilinear",
+              "area",
+              "bicubic",
+              "lanczos"
+            ]
+          }
+        ],
+        "mode": [
+          "COMBO",
+          {
+            "tooltip": "crop cuts the image to the aspect ratio of width x height first; pad fits it inside and fills the rest with pad_color; resize fits it inside width x height; stretch ignores the aspect ratio.",
+            "default": "stretch",
+            "multiselect": false,
+            "options": [
+              "crop",
+              "pad",
+              "resize",
+              "stretch"
+            ]
+          }
+        ],
+        "pad_color": [
+          "STRING",
+          {
+            "tooltip": "The pad fill: r, g, b (0-255, or 0.0-1.0 with a decimal point), #rrggbb, one grey value, or a colour name.",
+            "default": "0, 0, 0",
+            "multiline": false
+          }
+        ],
+        "crop_position": [
+          "COMBO",
+          {
+            "tooltip": "Where the image stays: the region kept in crop, the side the image sits on in pad.",
+            "default": "center",
+            "multiselect": false,
+            "options": [
+              "center",
+              "top",
+              "bottom",
+              "left",
+              "right"
+            ]
+          }
+        ],
+        "divisible_by": [
+          "INT",
+          {
+            "tooltip": "Round the output size down to a multiple of this; 0 or 1 for none. pad snaps the canvas, not the image.",
+            "default": 2,
+            "min": 0,
+            "max": 512
+          }
+        ]
+      },
+      "optional": {
+        "mask": [
+          "MASK",
+          {
+            "tooltip": "Optional; follows the image through the crop, scale and pad. Without it the mask output marks only the padding."
+          }
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "image",
+        "width",
+        "height",
+        "resize_method",
+        "mode",
+        "pad_color",
+        "crop_position",
+        "divisible_by"
+      ],
+      "optional": [
+        "mask"
+      ]
+    },
+    "is_input_list": false,
+    "output": [
+      "IMAGE",
+      "MASK"
+    ],
+    "output_is_list": [
+      false,
+      false
+    ],
+    "output_name": [
+      "image",
+      "mask"
+    ],
+    "output_tooltips": [
+      "The resized batch, exactly width x height after the grid in every mode but resize.",
+      "The input mask resized alike, 1 over any padding; ComfyUI's 64x64 empty mask when there is neither."
+    ],
+    "output_matchtypes": null,
+    "name": "ArisuResizeImage",
+    "display_name": "Resize Image",
+    "description": "Resize an image batch to width x height: cropped, padded, fitted or stretched to the size and snapped to a pixel grid, with the result shown on the node. The options live behind the settings button; 0 for a dimension takes it from the image.",
+    "python_module": "custom_nodes.arisu",
+    "category": "Arisu Nodes/Common",
+    "output_node": false,
+    "deprecated": false,
+    "experimental": false,
+    "dev_only": false,
+    "api_node": false,
+    "price_badge": null,
+    "search_aliases": [
+      "resize image",
+      "scale image",
+      "fit pad crop"
+    ],
+    "essentials_category": null,
+    "has_intermediate_output": true
   }
 }

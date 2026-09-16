@@ -18,18 +18,18 @@ const nodes = new WeakMap();
 let activeEditor;
 const STYLE = `
 .arisu-studio{box-sizing:border-box;width:100%;height:100%;overflow:hidden;display:flex;flex-direction:column;gap:10px;padding:8px 10px 12px;
- font:11px/1.3 Arial,system-ui,sans-serif;--image:#64b5f6;--video:#d9a441;--audio:#b89be0;
+ font:11px/1.3 Arial,system-ui,sans-serif;--image:var(--arisu-image);--video:var(--arisu-video);--audio:var(--arisu-audio);
  --surface:var(--comfy-input-bg,#2a2a2a);--row:var(--comfy-menu-bg,#333);--line:var(--border-color,#444);
- --label:var(--descrip-text,#999);--text:var(--input-text,#ccc);--dim:var(--descrip-text,#999);--strong:var(--fg-color,#fff);
+ --label:color-mix(in srgb,var(--descrip-text,#999),var(--fg-color,#ddd) 30%);--text:var(--input-text,#ccc);--dim:var(--descrip-text,#999);--strong:var(--fg-color,#fff);
  --hover:color-mix(in srgb,var(--row),var(--strong) 8%);color:var(--text);}
 .arisu-studio *{box-sizing:border-box;}
 .arisu-studio button{font:inherit;color:inherit;background:none;border:0;border-radius:2px;padding:0;cursor:pointer;}
-.arisu-studio :focus-visible{outline:2px solid var(--image);outline-offset:-2px;}
+.arisu-studio :focus-visible{outline:2px solid var(--arisu-accent);outline-offset:-2px;}
 .arisu-studio .status{font-size:10px;color:var(--dim);text-align:right;}
 .arisu-studio .label{color:var(--label);line-height:20px;}
 .arisu-studio .heading{display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:24px;}
 .arisu-studio .icons{display:flex;align-items:center;gap:4px;}
-.arisu-studio .icon{width:20px;height:20px;display:inline-flex;align-items:center;justify-content:center;color:var(--label);font-size:15px;line-height:1;}
+.arisu-studio .icon{width:24px;height:24px;border-radius:4px;display:inline-flex;align-items:center;justify-content:center;color:var(--label);font-size:15px;line-height:1;}
 .arisu-studio .icon svg{width:13px;height:13px;}
 .arisu-studio .icon.dot{font-size:12px;color:var(--kind,var(--image));}.arisu-studio .icon.off{color:var(--dim);}
 .arisu-studio .icon:hover{color:var(--strong);background:var(--hover);}
@@ -57,7 +57,7 @@ const STYLE = `
 .arisu-studio .reference[data-dragging]{opacity:.4;}
 .arisu-studio .reference[data-drop=before]{box-shadow:0 -4px 0 -1px var(--strong);}
 .arisu-studio .reference[data-drop=after]{box-shadow:0 4px 0 -1px var(--strong);}
-.arisu-studio .handle{width:14px;text-align:center;color:var(--dim);font-size:12px;cursor:grab;opacity:0;transition:opacity .12s;}
+.arisu-studio .handle{width:14px;text-align:center;color:var(--dim);font-size:12px;cursor:grab;opacity:.45;transition:opacity .12s;}
 .arisu-studio .reference:focus-within .handle,.arisu-studio .reference:hover .handle{opacity:1;}.arisu-studio .handle:hover{color:var(--text);}
 .arisu-studio .thumb{width:58px;height:40px;flex:none;display:flex;align-items:center;justify-content:center;object-fit:contain;color:var(--kind);
  background:color-mix(in srgb,var(--kind) 12%,transparent);border:1px solid color-mix(in srgb,var(--kind) 30%,transparent);}
@@ -442,7 +442,7 @@ function render(node) {
       const picture = el('button', {
         className: 'picture',
         textContent: card ? '' : 'Browse…',
-        ariaLabel: `${key} frame`,
+        ariaLabel: `${key === 'first' ? 'First' : 'Last'} Frame`,
         onclick: () => browse(node, key, card),
       });
       const actions = [];
@@ -450,7 +450,12 @@ function render(node) {
         // The crop size and muted state moved off the panel into the canvas tooltip.
         const { lead, rest } = details(card);
         picture.title = `${lead}${rest}${card.muted ? ' · Muted' : ''}`;
-        picture.append(el('img', { src: viewUrl(card.path, undefined, false, cropParam(card), card.root), alt: `${key} frame` }));
+        picture.append(
+          el('img', {
+            src: viewUrl(card.path, undefined, false, cropParam(card), card.root),
+            alt: `${key === 'first' ? 'First' : 'Last'} Frame`,
+          }),
+        );
         const crop = button('', () => edit(node, card, key), 'Crop');
         crop.innerHTML = CROP_ICON;
         actions.push(
@@ -468,11 +473,11 @@ function render(node) {
       }
       return el('div', { className: `keyframe${card?.muted ? ' muted' : ''}` }, [
         el('div', { className: 'heading' }, [
-          el('span', { className: 'label', textContent: `${key === 'first' ? 'First' : 'Last'} frame` }),
+          el('span', { className: 'label', textContent: `${key === 'first' ? 'First' : 'Last'} Frame` }),
           ...(card ? [el('div', { className: 'icons' }, actions)] : []),
         ]),
         picture,
-        el('div', { className: `filename${card ? '' : ' none'}`, textContent: card?.path.split('/').at(-1) ?? '— no file —' }),
+        el('div', { className: `filename${card ? '' : ' none'}`, textContent: card?.path.split('/').at(-1) ?? '— No File —' }),
       ]);
     }),
   );
@@ -583,7 +588,7 @@ function render(node) {
               }),
             'Remove',
           ),
-          ...[-1, 1].map((delta) => button(delta < 0 ? 'Move up' : 'Move down', () => move(card.id, delta), undefined, 'move')),
+          ...[-1, 1].map((delta) => button(delta < 0 ? 'Move Up' : 'Move Down', () => move(card.id, delta), undefined, 'move')),
         ],
       );
       row.dataset.cardId = card.id;
@@ -600,12 +605,12 @@ function render(node) {
       return row;
     }),
   );
-  const browseAll = button('Browse', () => browse(node), 'Browse references…', 'browse');
+  const browseAll = button('Browse', () => browse(node), 'Browse References…', 'browse');
   const box = data.references.length
     ? el('div', { className: 'box' }, [references])
     : el('div', { className: 'box empty' }, [
-        el('div', { textContent: 'no references yet' }),
-        el('div', { textContent: 'image · video · audio' }),
+        el('div', { textContent: 'No References Yet' }),
+        el('div', { textContent: 'Image · Video · Audio' }),
       ]);
   // Only kinds with active references are counted; nothing active shows no counters.
   const counts = Object.keys(LIMITS)
@@ -614,13 +619,15 @@ function render(node) {
   const status = ratio(node) ? '' : 'Aspect ratio will resolve during execution';
   const section = el('div', { className: 'section' }, [
     el('div', { className: 'heading' }, [
-      el('span', { className: 'label', textContent: 'Media references' }),
+      el('span', { className: 'label', textContent: 'Media References' }),
       ...(counts.length
         ? [
             el(
               'span',
               { className: 'counts' },
-              counts.map(([kind, count]) => el('span', { className: kind, textContent: `${kind} ${count}` })),
+              counts.map(([kind, count]) =>
+                el('span', { className: kind, textContent: `${kind[0].toUpperCase() + kind.slice(1)} ${count}` }),
+              ),
             ),
           ]
         : []),

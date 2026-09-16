@@ -60,17 +60,17 @@ test('a fresh node shows one field; the row grows and shrinks it, clamped to the
   // the canvas reports the press and the release; only the press acts
   assert.equal(buttonRow(node).mouse({ type: 'pointerup' }, [MARGIN, 0], node), false);
   assert.deepEqual(visibleFields(node), ['segment_1']);
-  // two "+ field" presses show three fields, each with a socket
-  assert.equal(click(node, '+ field'), true);
-  click(node, '+ field');
+  // two "+ Field" presses show three fields, each with a socket
+  assert.equal(click(node, '+ Field'), true);
+  click(node, '+ Field');
   assert.deepEqual(visibleFields(node), ['segment_1', 'segment_2', 'segment_3']);
   assert.deepEqual(socketNames(node), ['segment_1', 'segment_2', 'segment_3']);
-  // "- field" stops at one field
-  for (let press = 0; press < 5; press++) click(node, '- field');
+  // "- Field" stops at one field
+  for (let press = 0; press < 5; press++) click(node, '- Field');
   assert.deepEqual(visibleFields(node), ['segment_1']);
   assert.equal(node.properties[COUNT_PROPERTY], 1);
-  // "+ field" stops at the last declared field and stores the clamped count
-  for (let press = 0; press < 10; press++) click(node, '+ field');
+  // "+ Field" stops at the last declared field and stores the clamped count
+  for (let press = 0; press < 10; press++) click(node, '+ Field');
   assert.equal(visibleFields(node).length, FIELDS);
   assert.equal(node.properties[COUNT_PROPERTY], FIELDS);
 });
@@ -79,18 +79,18 @@ test('a hidden field is cleared and loses its socket; shown again it gets the so
   resetApp(makeGraph());
   const node = makePathNode();
   PathBuilder.prototype.onNodeCreated.call(node);
-  click(node, '+ field');
-  click(node, '+ field');
+  click(node, '+ Field');
+  click(node, '+ Field');
   const third = node.widgets.find((widget) => widget.name === 'segment_3');
   third.value = 'clips';
   const descriptor = node.inputs.find((input) => input.widget.name === 'segment_3').widget;
   // shrinking past the third field clears its text, so it never reaches the join, and removes its socket
-  click(node, '- field');
+  click(node, '- Field');
   assert.equal(third.hidden, true);
   assert.equal(third.value, '');
   assert.deepEqual(socketNames(node), ['segment_1', 'segment_2']);
   // growing back restores the socket with the descriptor it had, cloned from a surviving socket
-  click(node, '+ field');
+  click(node, '+ Field');
   const restored = node.inputs.find((input) => input.widget.name === 'segment_3');
   assert.equal(restored.widget, descriptor);
   assert.equal(restored.type, node.inputs[0].type);

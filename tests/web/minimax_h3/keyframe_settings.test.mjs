@@ -114,7 +114,7 @@ test('both hybrid nodes hide the eight keyframe fit widgets behind a keyframes b
     );
     // the button is last and never saved
     const button = node.widgets.at(-1);
-    assert.deepEqual([button.name, button.serialize], ['keyframes…', false], `case=${data.name}`);
+    assert.deepEqual([button.name, button.serialize], ['Keyframes…', false], `case=${data.name}`);
     // a loaded workflow restores every saved socket and knows nothing of hidden: configure hides again
     const loaded = makeHybridNode(data, { last_frame_mode: 'pad' });
     Type.prototype.onNodeCreated.call(loaded);
@@ -133,7 +133,7 @@ test('both hybrid nodes hide the eight keyframe fit widgets behind a keyframes b
   Hybrid.prototype.onNodeCreated.call(node);
   const written = [];
   for (const name of CONFIG) widget(node, name).callback = (value) => written.push([name, value]);
-  const applied = widget(node, 'keyframes…').callback();
+  const applied = widget(node, 'Keyframes…').callback();
   const dialog = openDialog();
   assert.equal(dialog.open, true);
   assert.deepEqual(
@@ -146,13 +146,18 @@ test('both hybrid nodes hide the eight keyframe fit widgets behind a keyframes b
     descendants(dialog)
       .filter((element) => element.className === 'arisu-settings-heading')
       .map((element) => element.textContent),
-    ['first frame', 'last frame'],
+    ['First Frame', 'Last Frame'],
   );
   assert.deepEqual(
     descendants(dialog)
       .filter((element) => element.className === 'arisu-settings-label')
       .map((element) => [element.htmlFor, element.textContent]),
-    CONFIG.map((name) => [`arisu-settings-${name}`, name.replace(/^(first|last)_frame_/, '')]),
+    KEYFRAMES.flatMap((frame) => [
+      [`arisu-settings-${frame}_resize_method`, 'Resize Method'],
+      [`arisu-settings-${frame}_mode`, 'Mode'],
+      [`arisu-settings-${frame}_pad_color`, 'Pad Color'],
+      [`arisu-settings-${frame}_crop_position`, 'Crop Position'],
+    ]),
   );
   for (const frame of KEYFRAMES) {
     const mode = control(dialog, `${frame}_mode`);
@@ -166,7 +171,7 @@ test('both hybrid nodes hide the eight keyframe fit widgets behind a keyframes b
   control(dialog, 'last_frame_mode').value = 'pad';
   control(dialog, 'last_frame_pad_color').value = 'white';
   descendants(dialog)
-    .find((element) => element.tagName === 'BUTTON' && element.textContent === 'apply')
+    .find((element) => element.tagName === 'BUTTON' && element.textContent === 'Apply')
     .onclick();
   await applied;
   assert.equal(openDialog(), undefined);

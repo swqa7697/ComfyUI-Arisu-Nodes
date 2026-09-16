@@ -6,7 +6,7 @@ import json
 from typing import Any, Dict
 
 import pytest
-from playwright.sync_api import Page, expect, sync_playwright
+from playwright.sync_api import Locator, Page, expect, sync_playwright
 
 from tests.browser.support.harness import DRAFT, STUDIO, WORKBENCH, FixtureServer, add_node, browser_page, screenshot
 
@@ -38,6 +38,91 @@ def pick(page: Page, name: str):
     page.locator("dialog[open] .arisu-browser-file").filter(has_text=name).click()
 
 
+def hover_button(page: Page, button: Locator, name: str, state: str):
+    """Check actual pointer feedback and its reset, without a stored pixel baseline."""
+    page.mouse.move(10, 10)
+    normal = button.evaluate("e => getComputedStyle(e).backgroundColor")
+    button.hover()
+    expect(button).not_to_have_css("background-color", normal)
+    screenshot(page, name, state)
+    page.mouse.move(10, 10)
+    expect(button).to_have_css("background-color", normal)
+
+
+def inspect_native_nodes(page: Page, name: str):
+    """Exercise the native widgets and settings dialogs alongside the custom panels."""
+    definitions = page.evaluate("async () => (await fetch('/object_info')).json()")
+    for node_type in definitions:
+        if node_type in (STUDIO, WORKBENCH):
+            continue
+        node_id = add_node(page, node_type)
+        # Defaults come from the real Colors menu. Workflow restoration must win
+        # over them when the workflow carries saved custom colors.
+        page.evaluate(
+            """id => {
+            const app = window.comfyAPI.app.app, node = app.graph.getNodeById(id);
+            const name = node.type === 'ArisuLoadImage' ? 'red' :
+                node.type.startsWith('ArisuPreviewSaveImage') ? 'yellow' : null;
+            if (name) {
+                const preset = app.canvas.constructor.node_colors[name];
+                if (node.color !== preset.color || node.bgcolor !== preset.bgcolor) throw Error('Wrong node preset');
+                const saved = node.serialize();
+                node.configure({...saved, color:'#123456', bgcolor:'#234567'});
+                if (node.color !== '#123456' || node.bgcolor !== '#234567') throw Error('Lost custom color');
+                node.configure(saved);
+            }
+        }""",
+            node_id,
+        )
+        screenshot(page, name, node_type)
+        # Canvas buttons have no DOM :hover. Sample their actual fill pixels
+        # before/after pointer entry and exit, including both Path Builder cells.
+        points = page.evaluate(
+            """id => {
+            const app = window.comfyAPI.app.app, node = app.graph.getNodeById(id), ds = app.canvas.ds;
+            const rect = app.canvas.canvas.getBoundingClientRect();
+            return (node.widgets ?? []).filter(w => ['button','arisu_button_row'].includes(w.type)).flatMap(w => {
+                const xs = w.type === 'arisu_button_row' ? [25, node.size[0] / 2 + 10] : [25];
+                return xs.map(x => [(node.pos[0] + x + ds.offset[0]) * ds.scale + rect.left,
+                    (node.pos[1] + w.last_y + 4 + ds.offset[1]) * ds.scale + rect.top]);
+            });
+        }""",
+            node_id,
+        )
+        sample = """([x,y]) => {
+            const canvas = document.querySelector('#graph-canvas'), rect = canvas.getBoundingClientRect();
+            return Array.from(canvas.getContext('2d').getImageData(
+                (x - rect.left) * canvas.width / rect.width, (y - rect.top) * canvas.height / rect.height, 1, 1).data).join(',');
+        }"""
+        for index, point in enumerate(points):
+            page.mouse.move(10, 10)
+            normal = page.evaluate(sample, point)
+            page.mouse.move(*point)
+            page.wait_for_function("([point,normal]) => (" + sample + ")(point) !== normal", arg=[point, normal])
+            screenshot(page, name, node_type + f"-hover-{index}")
+            page.mouse.move(10, 10)
+            page.wait_for_function("([point,normal]) => (" + sample + ")(point) === normal", arg=[point, normal])
+        # Click each settings widget at its actual canvas position.
+        controls = page.evaluate(
+            """id => {
+            const app = window.comfyAPI.app.app, node = app.graph.getNodeById(id), ds = app.canvas.ds;
+            const rect = app.canvas.canvas.getBoundingClientRect();
+            return (node.widgets ?? []).filter(w => w.type === 'button' && ['Settings…','Keyframes…'].includes(w.name)).map(w => [
+                (node.pos[0] + node.size[0] / 2 + ds.offset[0]) * ds.scale + rect.left,
+                (node.pos[1] + w.last_y + 10 + ds.offset[1]) * ds.scale + rect.top
+            ]);
+        }""",
+            node_id,
+        )
+        for x, y in controls:
+            page.mouse.click(x, y)
+            expect(page.locator(".arisu-settings[open]")).to_be_visible()
+            contained(page, ".arisu-settings[open]")
+            screenshot(page, name, node_type + "-settings")
+            page.keyboard.press("Escape")
+            expect(page.locator(".arisu-settings[open]")).to_have_count(0)
+
+
 def test_resource_studio():
     # One journey, repeated at two usable desktop viewports without multiplying test cases.
     with sync_playwright() as playwright:
@@ -46,14 +131,15 @@ def test_resource_studio():
             for width, height in ((1440, 900), (1024, 768)):
                 name = f"studio-{width}"
                 with FixtureServer() as server, browser_page(browser, server, name, width, height) as page:
+                    inspect_native_nodes(page, name)
                     node_id = add_node(page, STUDIO)
                     expect(page.locator(".arisu-studio")).to_be_visible()
                     contained(page, ".arisu-studio")
                     screenshot(page, name, "empty")
-                    page.get_by_role("button", name="first frame", exact=True).click()
+                    page.get_by_role("button", name="First Frame", exact=True).click()
                     expect(page.locator("dialog[open]")).to_be_visible()
                     contained(page, "dialog[open]")
-                    screenshot(page, name, "browse")
+                    screenshot(page, name, "Browse")
                     pick(page, "scene.png")
                     expect(page.locator(".arisu-studio img")).to_be_visible()
                     assert studio_state(page, node_id)["keyframes"]["first"]["path"] == "scene.png"
@@ -61,7 +147,9 @@ def test_resource_studio():
                     page.locator(".arisu-cropper-ratio").select_option("1:1")
                     contained(page, "dialog[open]")
                     screenshot(page, name, "crop")
-                    page.get_by_role("button", name="apply", exact=True).click()
+                    hover_button(page, page.get_by_role("button", name="Reset", exact=True), name, "crop-reset-hover")
+                    hover_button(page, page.get_by_role("button", name="Auto-Crop", exact=True), name, "crop-auto-hover")
+                    page.get_by_role("button", name="Apply", exact=True).click()
                     page.wait_for_function(
                         """id => {
                         const data = JSON.parse(window.comfyAPI.app.app.graph.getNodeById(id).widgets.find(w => w.name === 'resources_json').value);
@@ -71,13 +159,13 @@ def test_resource_studio():
                     )
                     crop = studio_state(page, node_id)["keyframes"]["first"]["crop"]
                     assert crop["width"] == crop["height"] and crop["width"] > 0
-                    page.get_by_role("button", name="Browse references…", exact=True).click()
+                    page.get_by_role("button", name="Browse References…", exact=True).click()
                     pick(page, "sound.wav")
-                    expect(page.get_by_label("Start seconds")).to_be_visible()
-                    page.get_by_label("Start seconds").fill("1")
-                    page.get_by_label("Start seconds").press("Tab")
-                    page.get_by_label("End seconds").fill("4")
-                    page.get_by_label("End seconds").press("Tab")
+                    expect(page.get_by_label("Start Seconds")).to_be_visible()
+                    page.get_by_label("Start Seconds").fill("1")
+                    page.get_by_label("Start Seconds").press("Tab")
+                    page.get_by_label("End Seconds").fill("4")
+                    page.get_by_label("End Seconds").press("Tab")
                     contained(page, "dialog[open]")
                     screenshot(page, name, "clip")
                     page.get_by_role("button", name="Apply", exact=True).click()
@@ -85,7 +173,7 @@ def test_resource_studio():
                     assert studio_state(page, node_id)["references"][0]["clip"] == {"start": 1, "end": 4}
                     # More rows than the panel can display exercise real scrolling.
                     for index in range(2, 10):
-                        page.get_by_role("button", name="Browse references…", exact=True).click()
+                        page.get_by_role("button", name="Browse References…", exact=True).click()
                         pick(page, f"scene-{index}.png")
                         expect(page.get_by_role("button", name=f"Edit image scene-{index}.png", exact=True)).to_be_attached()
                     references = page.locator(".arisu-studio .references")
@@ -118,7 +206,7 @@ def test_resource_studio():
                     screenshot(page, name, "resized")
                     # Canvas input is real: wheel zoom and middle-button pan over the node's DOM.
                     before = page.evaluate("window.comfyAPI.app.app.canvas.ds.scale")
-                    page.get_by_role("button", name="first frame", exact=True).hover()
+                    page.get_by_role("button", name="First Frame", exact=True).hover()
                     page.mouse.wheel(0, 150)
                     page.wait_for_function("scale => window.comfyAPI.app.app.canvas.ds.scale !== scale", arg=before)
                     offset = page.evaluate("Array.from(window.comfyAPI.app.app.canvas.ds.offset)")
@@ -139,14 +227,21 @@ def test_prompt_workbench():
             for width, height in ((1440, 900), (1024, 768)):
                 name = f"workbench-{width}"
                 with FixtureServer() as server, browser_page(browser, server, name, width, height) as page:
-                    expect(page.get_by_role("button", name="Manage agents", exact=True)).to_have_count(0)
+                    expect(page.get_by_role("button", name="Manage Agents", exact=True)).to_have_count(0)
                     node_id = add_node(page, WORKBENCH)
-                    expect(page.get_by_role("button", name="Generate prompt", exact=True)).to_be_enabled()
+                    expect(page.get_by_role("button", name="Generate Prompt", exact=True)).to_be_enabled()
                     contained(page, ".arisu-workbench")
                     page.get_by_label("Requirements", exact=True).fill("Follow a paper boat across a pond.")
-                    page.get_by_label("LoRA trigger words", exact=True).fill("paper_art")
-                    page.get_by_label("Finalized prompt", exact=True).fill("Original prompt")
+                    page.get_by_label("LoRA Trigger Words", exact=True).fill("paper_art")
+                    page.get_by_label("Finalized Prompt", exact=True).fill("Original prompt")
                     screenshot(page, name, "editing")
+                    generate = page.get_by_role("button", name="Generate Prompt", exact=True)
+                    results = page.get_by_role("button", name="Generation Results", exact=True)
+                    assert generate.evaluate("e => getComputedStyle(e).backgroundColor") != results.evaluate(
+                        "e => getComputedStyle(e).backgroundColor"
+                    )
+                    hover_button(page, results, name, "results-hover")
+                    hover_button(page, generate, name, "generate-hover")
                     # Keyboard changes keep focus on the rebuilt selector, then advance naturally.
                     agent = page.get_by_label("Agent", exact=True)
                     agent.click()
@@ -169,15 +264,22 @@ def test_prompt_workbench():
                     assert "Keep the lighting soft." in widget_value(page, node_id, "requirements")
                     screenshot(page, name, "requirements-focus")
                     requirements.press("Tab")
-                    expect(page.get_by_label("LoRA trigger words", exact=True)).to_be_focused()
+                    expect(page.get_by_label("LoRA Trigger Words", exact=True)).to_be_focused()
                     screenshot(page, name, "trigger-focus")
                     page.locator(".arisu-workbench summary").click()
-                    expect(page.get_by_label("Audio context length in frames")).to_be_disabled()
+                    expect(page.get_by_label("Audio Context Length in Frames")).to_be_disabled()
                     screenshot(page, name, "motion-expanded")
                     page.locator(".arisu-workbench summary").click()
-                    expect(page.get_by_role("button", name="Agent activity", exact=True)).to_be_disabled()
+                    expect(page.get_by_role("button", name="Generation Results", exact=True)).to_be_enabled()
+                    page.get_by_role("button", name="Generation Results", exact=True).click()
+                    empty_results = page.get_by_role("dialog", name="Generation Results", exact=True)
+                    empty_results.get_by_role("tab", name="Output Prompt", exact=True).click()
+                    expect(empty_results.get_by_role("textbox", name="Output Prompt", exact=True)).to_have_value("")
+                    expect(empty_results.get_by_role("button", name="Apply to Workbench")).to_be_disabled()
+                    screenshot(page, name, "empty-results")
+                    empty_results.get_by_role("button", name="Close", exact=True).click()
                     server.hold_generation = True
-                    page.get_by_role("button", name="Generate prompt", exact=True).click()
+                    page.get_by_role("button", name="Generate Prompt", exact=True).click()
                     expect(page.locator(".arisu-workbench .status")).to_have_text("Generating prompt…")
                     screenshot(page, name, "generating")
                     assert page.locator(".arisu-workbench .status").evaluate(
@@ -188,9 +290,9 @@ def test_prompt_workbench():
                         "e => getComputedStyle(e, '::before').animationName !== 'none'"
                     )
                     page.emulate_media(reduced_motion="reduce")
-                    page.get_by_role("button", name="Agent activity", exact=True).click()
-                    activity = page.get_by_role("dialog", name="Agent activity", exact=True)
-                    terminal = activity.get_by_label("Generation activity", exact=True)
+                    page.get_by_role("button", name="Generation Results", exact=True).click()
+                    activity = page.get_by_role("dialog", name="Generation Results", exact=True)
+                    terminal = activity.get_by_label("Generation Activity", exact=True)
                     expect(terminal).to_contain_text("workbench.read_image")
                     assert len(terminal.inner_text()) > 10000
                     assert terminal.evaluate("e => e.scrollTop > 0 && e.scrollHeight - e.clientHeight - e.scrollTop < 30")
@@ -198,7 +300,7 @@ def test_prompt_workbench():
                     screenshot(page, name, "activity-following")
                     terminal.hover()
                     page.mouse.wheel(0, -10000)
-                    expect(activity.get_by_role("button", name="Resume auto-scroll")).to_be_visible()
+                    expect(activity.get_by_role("button", name="Resume Auto-Scroll")).to_be_visible()
                     expect(terminal).to_contain_text("Live update 2")
                     assert terminal.evaluate("e => e.scrollTop < 30")
                     details = terminal.locator("details").first
@@ -212,27 +314,45 @@ def test_prompt_workbench():
                     terminal.hover()
                     page.mouse.wheel(0, -10000)
                     screenshot(page, name, "activity-reading")
-                    activity.get_by_role("button", name="Resume auto-scroll").click()
+                    activity.get_by_role("button", name="Resume Auto-Scroll").click()
                     assert terminal.evaluate("e => e.scrollHeight - e.clientHeight - e.scrollTop < 30")
                     server.hold_generation = False
-                    expect(activity.locator(".activity-state")).to_have_text("Draft ready for review")
-                    expect(page.get_by_role("button", name="Agent activity", exact=True)).to_be_disabled()
+                    expect(activity.locator(".activity-state")).to_have_text("Output ready to apply")
+                    expect(page.get_by_role("button", name="Generation Results", exact=True)).to_be_enabled()
                     screenshot(page, name, "activity-complete")
                     activity.get_by_role("button", name="Close", exact=True).click()
-                    expect(page.get_by_role("dialog", name="Review generated prompt")).to_be_visible()
-                    expect(page.get_by_label("Generated prompt draft")).to_have_value(DRAFT)
+                    expect(page.get_by_role("dialog", name="Generation Results", exact=True)).to_have_count(0)
+                    serialized = page.evaluate("JSON.stringify(window.comfyAPI.app.app.graph.serialize())")
+                    assert DRAFT not in serialized and "Preserve the folded silhouette." not in serialized
+                    page.get_by_role("button", name="Generation Results", exact=True).click()
+                    expect(page.get_by_role("textbox", name="Output Prompt", exact=True)).to_have_value(DRAFT)
                     assert widget_value(page, node_id, "finalized_prompt") == "Original prompt"
                     contained(page, "dialog[open]")
                     screenshot(page, name, "review")
-                    page.get_by_role("button", name="Apply", exact=True).click()
-                    expect(page.get_by_label("Finalized prompt", exact=True)).to_have_value(DRAFT)
+                    page.get_by_role("button", name="Apply to Workbench", exact=True).click()
+                    expect(page.get_by_label("Finalized Prompt", exact=True)).to_have_value(DRAFT)
                     assert widget_value(page, node_id, "finalized_prompt") == DRAFT
+                    page.get_by_role("dialog", name="Generation Results", exact=True).get_by_role(
+                        "button", name="Close", exact=True
+                    ).click()
+                    page.get_by_role("button", name="Generate Prompt", exact=True).click()
+                    expect(page.get_by_role("button", name="Apply Output", exact=True)).to_be_visible()
+                    expect(page.get_by_role("dialog", name="Generation Results", exact=True)).to_have_count(0)
+                    screenshot(page, name, "output-ready")
+                    page.get_by_role("button", name="Apply Output", exact=True).click()
                     server.fail_generation = True
-                    page.get_by_role("button", name="Generate prompt", exact=True).click()
+                    page.get_by_role("button", name="Generate Prompt", exact=True).click()
                     expect(page.locator(".arisu-workbench .status")).to_have_text("Simulated provider unavailable")
+                    expect(page.get_by_role("button", name="Apply Output", exact=True)).to_have_count(0)
+                    page.get_by_role("button", name="Generation Results", exact=True).click()
+                    page.get_by_role("tab", name="Output Prompt", exact=True).click()
+                    expect(page.get_by_role("textbox", name="Output Prompt", exact=True)).to_have_value("")
+                    page.get_by_role("dialog", name="Generation Results", exact=True).get_by_role(
+                        "button", name="Close", exact=True
+                    ).click()
                     screenshot(page, name, "error")
                     # Long prose scrolls within the editor without moving the canvas or losing focus.
-                    final = page.get_by_label("Finalized prompt", exact=True)
+                    final = page.get_by_label("Finalized Prompt", exact=True)
                     long_prompt = "A paper boat follows the soft reflections across the pond. " * 160
                     final.fill(long_prompt)
                     final.press("Control+End")
@@ -292,13 +412,13 @@ def test_prompt_workbench():
                     page.reload()
                     page.wait_for_function("!!window.LiteGraph?.registered_node_types.ArisuMiniMaxH3PromptWorkbench")
                     add_node(page, WORKBENCH)
-                    expect(page.get_by_role("button", name="Generate prompt", exact=True)).to_be_disabled()
-                    page.get_by_label("Finalized prompt", exact=True).fill("Still editable offline")
+                    expect(page.get_by_role("button", name="Generate Prompt", exact=True)).to_be_disabled()
+                    page.get_by_label("Finalized Prompt", exact=True).fill("Still editable offline")
                     screenshot(page, name, "unavailable")
                     page.get_by_role("button", name="Setup", exact=True).click()
-                    expect(page.get_by_role("dialog", name="Prompt Workbench agents")).to_be_visible()
+                    expect(page.get_by_role("dialog", name="Prompt Workbench Agents")).to_be_visible()
                     contained(page, "dialog[open]")
-                    terminal = page.get_by_label("Agent logs", exact=True)
+                    terminal = page.get_by_label("Agent Logs", exact=True)
                     expect(terminal).to_contain_text("ABCD-EFGH")
                     assert terminal.bounding_box()["height"] > height * 0.35
                     link = terminal.get_by_role("link", name="https://example.test/device")
@@ -308,13 +428,16 @@ def test_prompt_workbench():
                     link.click()
                     expect(link).to_have_attribute("data-clicked", "yes")
                     screenshot(page, name, "settings")
+                    hover_button(
+                        page, page.locator("dialog[open]").get_by_role("button", name="Close", exact=True), name, "agent-close-hover"
+                    )
                     page.get_by_role("tab", name="Grok Build", exact=True).click()
-                    expect(page.get_by_label("Grok Build model", exact=True)).to_be_visible()
-                    expect(page.get_by_label("Codex model", exact=True)).to_have_count(0)
+                    expect(page.get_by_label("Grok Build Model", exact=True)).to_be_visible()
+                    expect(page.get_by_label("Codex Model", exact=True)).to_have_count(0)
                     page.get_by_role("tab", name="Grok Build", exact=True).press("ArrowLeft")
                     expect(page.get_by_role("tab", name="Codex", exact=True)).to_be_focused()
-                    expect(page.get_by_label("Codex model", exact=True)).to_be_visible()
-                    page.get_by_label("Codex model", exact=True).click()
+                    expect(page.get_by_label("Codex Model", exact=True)).to_be_visible()
+                    page.get_by_label("Codex Model", exact=True).click()
                     page.keyboard.press("Escape")
                     screenshot(page, name, "settings-focus")
                     page.keyboard.press("Tab")
@@ -326,13 +449,15 @@ def test_prompt_workbench():
                     settings = page.locator('[role="dialog"]').filter(has=page.get_by_text("Settings", exact=True))
                     expect(settings).to_be_visible()
                     settings.get_by_text("Arisu Nodes", exact=True).click()
-                    settings.get_by_role("button", name="Manage agents…", exact=True).click()
+                    screenshot(page, name, "settings-page")
+                    hover_button(page, settings.get_by_role("button", name="Manage Agents…", exact=True), name, "settings-page-hover")
+                    settings.get_by_role("button", name="Manage Agents…", exact=True).click()
                     agents = page.locator("dialog.arisu-agents[open][aria-label]")
                     expect(agents).to_be_visible()
                     agents.get_by_text("Activity", exact=True).click()
                     screenshot(page, name, "settings-parent")
                     expect(settings).to_be_visible()
-                    agents.locator("#arisu-agent-codex").get_by_role("button", name="Remove completely", exact=True).click()
+                    agents.locator("#arisu-agent-codex").get_by_role("button", name="Remove Completely", exact=True).click()
                     confirmation = agents.locator("dialog[open]")
                     confirmation.get_by_role("button", name="Cancel", exact=True).click()
                     expect(settings).to_be_visible()
@@ -340,12 +465,12 @@ def test_prompt_workbench():
                     agents.get_by_role("button", name="Close", exact=True).click()
                     expect(agents).to_have_count(0)
                     expect(settings).to_be_visible()
-                    expect(settings.get_by_role("button", name="Manage agents…", exact=True)).to_be_focused()
-                    toggle = settings.get_by_role("switch", name="Show Agents shortcut")
+                    expect(settings.get_by_role("button", name="Manage Agents…", exact=True)).to_be_focused()
+                    toggle = settings.get_by_role("switch", name="Show Agents Shortcut")
                     toggle.click()
                     page.keyboard.press("Escape")
                     expect(settings).not_to_be_visible()
-                    shortcut = page.get_by_role("button", name="Manage agents", exact=True)
+                    shortcut = page.get_by_role("button", name="Manage Agents", exact=True)
                     expect(shortcut).to_be_visible()
                     # Rebuild the shared toolbar groups as other extensions do during startup.
                     page.evaluate("""async () => {
@@ -364,6 +489,7 @@ def test_prompt_workbench():
                     expect(shortcut.locator("img")).to_be_visible()
                     assert shortcut.locator("img").evaluate("image => image.complete && image.naturalWidth > 0")
                     screenshot(page, name, "agents-shortcut")
+                    hover_button(page, shortcut, name, "shortcut-hover")
                     shortcut.focus()
                     page.keyboard.press("Enter")
                     expect(agents).to_be_visible()

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import shutil
 import threading
 from pathlib import Path
@@ -84,12 +85,20 @@ def test_workbench_routes_reject_untrusted_requests_and_queue_only_preparation(t
             def inspect_agent(*args: Any) -> Dict[str, Any]:
                 entered.set()
                 assert finish.wait(5)
-                return {"authenticated": True, "auto": True, "models": [{"id": "test", "efforts": ["medium"]}]}
+                return {"authenticated": True, "restricted": True, "models": [{"id": "test", "efforts": ["medium"]}]}
 
             with monkeypatch.context() as local:
                 local.setattr(owner.agents, "status", real_status)
                 local.setattr(shutil, "which", lambda name: "/test/docker")
-                local.setattr(owner.agents, "command", lambda *args, **kwargs: "linux")
+                local.setattr(
+                    owner.agents,
+                    "command",
+                    lambda args, **kwargs: (
+                        json.dumps([{"Config": {"Labels": {"org.arisu.workbench.policy": "2"}}}])
+                        if args[:2] == ["image", "inspect"]
+                        else "linux"
+                    ),
+                )
                 local.setattr(owner.agents, "owned", lambda *args: True)
                 local.setattr(owner.agents, "invoke", inspect_agent)
                 owner.agents._status = status

@@ -25,13 +25,13 @@ export const SAVED_PATHS_SETTING = 'Arisu.LoadImage.SavedLocations';
 const SAVED_OPTION_PREFIX = 'saved:';
 /** The roots the server reported, or the built-in pair until discovery succeeds. */
 let discoveredRoots = [
-  { id: 'input', label: 'input' },
-  { id: 'output', label: 'output' },
+  { id: 'input', label: 'Input' },
+  { id: 'output', label: 'Output' },
 ];
 export const DEFAULT_ROOT_SETTING = {
   id: 'Arisu.LoadImage.DefaultRoot',
   category: ['Arisu Nodes', 'LoadImage'],
-  name: 'Load Image (Browse): default location',
+  name: 'Load Image (Browse): Default Location',
   type: 'combo',
   defaultValue: 'input',
   // The settings panel calls this on every render, so saved paths and their names stay current without mirroring.
@@ -75,15 +75,15 @@ const STYLE = `
   box-shadow 150ms ease; }
 .arisu-browser :where(button) { padding: 6px 12px; cursor: pointer; }
 .arisu-browser :where(input) { padding: 6px 10px; }
-.arisu-browser button:active { transform: scale(0.97); }
-.arisu-browser-tree button:active { transform: none; }
+.arisu-browser button:enabled:active { transform: scale(0.97); }
+.arisu-browser-tree button:enabled:active { transform: none; }
 .arisu-browser button:disabled { opacity: 0.4; cursor: default; pointer-events: none; }
-.arisu-browser :focus-visible { outline: 2px solid var(--p-primary-color, #6ea8fe); outline-offset: 2px; }
-.arisu-browser input:focus-visible { outline: none; border-color: var(--p-primary-color, #6ea8fe); }
+.arisu-browser :focus-visible { outline: 2px solid var(--arisu-accent); outline-offset: 2px; }
+.arisu-browser input:focus-visible { outline: none; border-color: var(--arisu-accent); }
 .arisu-browser-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--border-color, #444); }
 .arisu-browser-bar button { flex-shrink: 0; white-space: nowrap; }
 .arisu-browser-bar input { min-width: 0; width: 160px; max-width: 100%; }
-.arisu-browser-bar button:hover { border-color: var(--p-primary-color, #6ea8fe); }
+.arisu-browser-bar button:enabled:hover { border-color: var(--arisu-accent); }
 .arisu-browser-path { flex: 1; min-width: 0; padding: 6px 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   color: var(--descrip-text, #999); font-variant-numeric: tabular-nums; }
 .arisu-browser-body { display: flex; flex: 1; min-height: 0; transition: opacity 150ms ease; }
@@ -92,7 +92,7 @@ const STYLE = `
 .arisu-browser-tree { width: 280px; flex-shrink: 0; display: flex; flex-direction: column; gap: 2px; padding: 8px;
   border-right: 1px solid var(--border-color, #444); }
 .arisu-browser-tree-head { display: flex; justify-content: space-between; align-items: center; padding: 4px 6px;
-  font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--descrip-text, #999); }
+  font-size: 11px; letter-spacing: 0.06em; color: var(--descrip-text, #999); }
 .arisu-browser-tree-head button { padding: 2px 8px; font-size: 11px; text-transform: none; letter-spacing: 0; }
 .arisu-browser-name-editor { display: flex; flex-wrap: wrap; gap: 4px; padding: 4px 0; }
 .arisu-browser-name-editor input { width: 100%; box-sizing: border-box; }
@@ -110,24 +110,24 @@ const STYLE = `
   background: none; border-color: transparent; }
 .arisu-browser-tree-row span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .arisu-browser-tree-row:hover { background: var(--comfy-input-bg, #333); }
-.arisu-browser-tree-row[aria-current="true"] { background: var(--comfy-input-bg, #333); border-color: var(--p-primary-color, #6ea8fe); }
+.arisu-browser-tree-row[aria-current="true"] { background: var(--comfy-input-bg, #333); border-color: var(--arisu-accent); }
 .arisu-browser-grid { flex: 1; display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; padding: 12px;
   align-content: start; }
 .arisu-browser-file { display: flex; flex-direction: column; gap: 6px; padding: 6px; border-color: transparent; }
-.arisu-browser-file:hover { transform: translateY(-2px); border-color: var(--p-primary-color, #6ea8fe);
+.arisu-browser-file:hover { transform: translateY(-2px); border-color: var(--arisu-accent);
   box-shadow: 0 8px 20px rgba(0, 0, 0, 0.35); }
-.arisu-browser-file[aria-current="true"] { border-color: var(--p-primary-color, #6ea8fe); }
+.arisu-browser-file[aria-current="true"] { border-color: var(--arisu-accent); }
 .arisu-browser-file[aria-current="true"] span, .arisu-browser-file:hover span { color: inherit; }
 .arisu-browser-tile { position: relative; width: 100%; aspect-ratio: 1; display: flex; align-items: center; justify-content: center;
   box-sizing: border-box; background: #111; border-radius: 6px; color: var(--descrip-text, #999); }
 .arisu-browser-tile img { width: 100%; height: 100%; object-fit: contain; border-radius: 6px; transition: opacity 250ms ease; }
 .arisu-browser-tile.arisu-loading img { opacity: 0; }
 .arisu-browser-tile.arisu-loading::after { content: ''; position: absolute; width: 22px; height: 22px; border-radius: 50%;
-  border: 2px solid rgba(255, 255, 255, 0.15); border-top-color: var(--p-primary-color, #6ea8fe);
+  border: 2px solid rgba(255, 255, 255, 0.15); border-top-color: var(--arisu-accent);
   animation: arisu-spin 800ms linear infinite; }
 .arisu-browser-tile svg { width: 40%; height: 40%; }
-.arisu-browser-file[data-kind="video"] .arisu-browser-tile { outline: 2px solid #d9a441; outline-offset: -2px; }
-.arisu-browser-file[data-kind="audio"] .arisu-browser-tile { outline: 2px solid #b89be0; outline-offset: -2px; }
+.arisu-browser-file[data-kind="video"] .arisu-browser-tile { outline: 2px solid var(--arisu-video); outline-offset: -2px; }
+.arisu-browser-file[data-kind="audio"] .arisu-browser-tile { outline: 2px solid var(--arisu-audio); outline-offset: -2px; }
 .arisu-browser-file span { font-size: 12px; color: var(--descrip-text, #999); overflow: hidden; text-overflow: ellipsis;
   white-space: nowrap; transition: color 150ms ease; }
 .arisu-fresh .arisu-browser-file { animation: arisu-rise 160ms ease-out backwards; animation-delay: min(calc(var(--i, 0) * 10ms), 120ms); }
@@ -247,13 +247,13 @@ export async function browseResources(node, options = {}) {
   const tree = new Map();
   // Read-only: the tree, up, the roots, saved locations and thumbnails are the only ways to move.
   const pathField = el('output', { className: 'arisu-browser-path' });
-  const upButton = el('button', { textContent: '↑ up', onclick: () => navigate(listing.root, listing.parent) });
+  const upButton = el('button', { textContent: '↑ Up', onclick: () => navigate(listing.root, listing.parent) });
   const filterField = el('input', {
     type: 'search',
-    placeholder: options.mixed ? 'filter resources' : 'filter images',
+    placeholder: options.mixed ? 'Filter Resources' : 'Filter Images',
     oninput: () => renderGrid(false),
   });
-  const saveButton = el('button', { textContent: '+ save', onclick: () => editPath({ root: listing.root, path: listing.path }, false) });
+  const saveButton = el('button', { textContent: '+ Save', onclick: () => editPath({ root: listing.root, path: listing.path }, false) });
   const savedList = el('div', { className: 'arisu-browser-saved-list' });
   const treeList = el('div', { className: 'arisu-browser-tree-list' });
   const treePane = el('div', { className: 'arisu-browser-tree' }, [
@@ -261,7 +261,7 @@ export async function browseResources(node, options = {}) {
     savedList,
     el('div', { className: 'arisu-browser-tree-head' }, [
       el('span', { textContent: 'Folders' }),
-      el('button', { textContent: 'collapse', onclick: collapseAll }),
+      el('button', { textContent: 'Collapse', onclick: collapseAll }),
     ]),
     treeList,
   ]);
@@ -281,8 +281,8 @@ export async function browseResources(node, options = {}) {
       el('div', { className: 'arisu-browser-bar' }, [
         pathField,
         upButton,
-        el('button', { textContent: 'input dir', onclick: () => navigate('input', '') }),
-        el('button', { textContent: 'output dir', onclick: () => navigate('output', '') }),
+        el('button', { textContent: 'Input Dir', onclick: () => navigate('input', '') }),
+        el('button', { textContent: 'Output Dir', onclick: () => navigate('output', '') }),
         filterField,
         el('button', { textContent: '✕', onclick: () => dialog.close() }),
       ]),
@@ -401,7 +401,7 @@ export async function browseResources(node, options = {}) {
     const { root, path } = location;
     const input = el('input', {
       type: 'text',
-      ariaLabel: 'Saved path name',
+      ariaLabel: 'Saved Path Name',
       value: savedLabel(location),
     });
     const cancel = () => {
@@ -520,7 +520,7 @@ export async function browseResources(node, options = {}) {
     grid.replaceChildren(
       ...(cards.length
         ? cards
-        : [el('div', { className: 'arisu-browser-empty', textContent: options.mixed ? 'No resources here' : 'No images here' })]),
+        : [el('div', { className: 'arisu-browser-empty', textContent: options.mixed ? 'No Resources Here' : 'No Images Here' })]),
     );
   }
 

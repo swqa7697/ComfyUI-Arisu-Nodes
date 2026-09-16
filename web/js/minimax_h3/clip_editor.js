@@ -13,9 +13,9 @@ import { api } from '../../../../scripts/api.js';
 import { closeOnBackdropClick, el } from '../common/dom.js';
 
 const STYLE = `
-.arisu-clip { --video: #d9a441; --audio: #b89be0; --surface: var(--comfy-input-bg, #2a2a2a); --row: var(--comfy-menu-bg, #333);
-  --line: var(--border-color, #444); --label: var(--descrip-text, #999); --text: var(--input-text, #ccc); --dim: #777;
-  --strong: var(--fg-color, #fff); --accent: var(--p-primary-color, #6ea8fe);
+.arisu-clip { --video: var(--arisu-video); --audio: var(--arisu-audio); --surface: var(--comfy-input-bg, #2a2a2a); --row: var(--comfy-menu-bg, #333);
+  --line: var(--border-color, #444); --label: var(--descrip-text, #999); --text: var(--input-text, #ccc); --dim: var(--descrip-text, #999);
+  --strong: var(--fg-color, #fff); --accent: var(--arisu-accent);
   width: min(880px, 94vw); max-height: 92vh; padding: 0; border: 1px solid var(--line); border-radius: 14px;
   background: var(--row); color: var(--text); font: 13px system-ui, sans-serif; box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55);
   overflow: hidden; }
@@ -27,14 +27,14 @@ const STYLE = `
   background: var(--surface); transition: background-color 150ms ease, border-color 150ms ease; }
 .arisu-clip :where(button) { min-height: 34px; padding: 6px 12px; cursor: pointer; }
 .arisu-clip :where(input, select) { padding: 6px 10px; }
-.arisu-clip button:hover { border-color: var(--accent); }
+.arisu-clip button:enabled:hover { border-color: var(--accent); }
 .arisu-clip :disabled { opacity: 0.45; cursor: default; }
 .arisu-clip :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .arisu-clip :where(input, select):focus-visible { outline: none; border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
 .arisu-clip-head { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
 .arisu-clip-head h3 { margin: 0; min-width: 0; font-size: 14px; font-weight: 600; color: var(--strong); overflow: hidden;
   text-overflow: ellipsis; white-space: nowrap; }
-.arisu-clip-badge { padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; text-transform: uppercase;
+.arisu-clip-badge { padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600;
   letter-spacing: 0.04em; color: #111; background: var(--kind); }
 .arisu-clip-length { margin-left: auto; color: var(--label); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .arisu-clip-stage { background: #000; line-height: 0; }
@@ -169,10 +169,10 @@ export function editClip(item, info, options = {}) {
   const readout = el('output', { className: 'arisu-clip-time' });
   const field = (ariaLabel, value, min = '0') =>
     el('input', { type: 'number', min, max: String(limit), step: '0.1', value: String(value), ariaLabel });
-  const startField = field('Start seconds', start);
-  const endField = field('End seconds', end);
-  const duration = field('Duration seconds', tenth(end - start), '0.1');
-  const locked = el('input', { type: 'checkbox', ariaLabel: 'Lock duration' });
+  const startField = field('Start Seconds', start);
+  const endField = field('End Seconds', end);
+  const duration = field('Duration Seconds', tenth(end - start), '0.1');
+  const locked = el('input', { type: 'checkbox', ariaLabel: 'Lock Duration' });
   const snap = el(
     'select',
     { ariaLabel: 'Snapping' },
@@ -184,16 +184,16 @@ export function editClip(item, info, options = {}) {
   snap.value = '0.1';
   const loop = el(
     'select',
-    { ariaLabel: 'Selection end behavior' },
+    { ariaLabel: 'Selection End Behavior' },
     [
       ['stop', 'Stop'],
       ['loop', 'Loop'],
     ].map(([value, textContent]) => el('option', { value, textContent })),
   );
-  const selectedOnly = el('input', { type: 'checkbox', ariaLabel: 'Play selection only', checked: true });
+  const selectedOnly = el('input', { type: 'checkbox', ariaLabel: 'Play Selection Only', checked: true });
   const include = el('input', {
     type: 'checkbox',
-    ariaLabel: 'Include audio',
+    ariaLabel: 'Include Audio',
     checked: video && info.has_audio && item.include_audio !== false,
     disabled: !info.has_audio,
   });
@@ -255,7 +255,7 @@ export function editClip(item, info, options = {}) {
     button.innerHTML = icon;
     return button;
   };
-  const playButton = iconButton('Play or pause', ICONS.play, togglePlay, 'arisu-clip-play');
+  const playButton = iconButton('Play or Pause', ICONS.play, togglePlay, 'arisu-clip-play');
   const apply = el('button', {
     className: 'arisu-clip-apply',
     textContent: 'Apply',
@@ -266,7 +266,7 @@ export function editClip(item, info, options = {}) {
     },
   });
   const retry = el('button', {
-    textContent: 'Retry playback',
+    textContent: 'Retry Playback',
     hidden: true,
     onclick: () => {
       retry.hidden = true;
@@ -279,16 +279,16 @@ export function editClip(item, info, options = {}) {
     el('style', { textContent: STYLE }),
     el('header', { className: 'arisu-clip-head' }, [
       el('h3', { textContent: item.path.split('/').at(-1), title: item.path }),
-      el('span', { className: 'arisu-clip-badge', textContent: info.kind }),
-      el('span', { className: 'arisu-clip-length', textContent: timecode(limit, true), title: 'Source length' }),
+      el('span', { className: 'arisu-clip-badge', textContent: video ? 'Video' : 'Audio' }),
+      el('span', { className: 'arisu-clip-length', textContent: timecode(limit, true), title: 'Source Length' }),
     ]),
     ...(video ? [el('div', { className: 'arisu-clip-stage' }, [player])] : [player]),
     el('div', { className: 'arisu-clip-transport' }, [
-      iconButton('Go to in', ICONS.toIn, () => scrub(start)),
+      iconButton('Go to In', ICONS.toIn, () => scrub(start)),
       playButton,
-      iconButton('Go to out', ICONS.toOut, () => scrub(end)),
-      iconButton('Set in', ICONS.setIn, markIn),
-      iconButton('Set out', ICONS.setOut, markOut),
+      iconButton('Go to Out', ICONS.toOut, () => scrub(end)),
+      iconButton('Set In', ICONS.setIn, markIn),
+      iconButton('Set Out', ICONS.setOut, markOut),
       readout,
     ]),
     timeline,
@@ -297,14 +297,14 @@ export function editClip(item, info, options = {}) {
         label('In', startField),
         label('Out', endField),
         label('Duration', duration),
-        check(locked, 'Lock duration'),
+        check(locked, 'Lock Duration'),
         el('div', { className: 'arisu-clip-presets' }, chips),
       ]),
       el('div', { className: 'arisu-clip-options' }, [
         label('Snap', snap),
-        label('At out', loop),
-        check(selectedOnly, 'Play selection only'),
-        ...(video && info.has_audio ? [check(include, 'Include audio')] : []),
+        label('At Out', loop),
+        check(selectedOnly, 'Play Selection Only'),
+        ...(video && info.has_audio ? [check(include, 'Include Audio')] : []),
       ]),
       status,
       retry,

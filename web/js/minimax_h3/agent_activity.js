@@ -4,7 +4,7 @@ import { closeOnBackdropClick, el } from '../common/dom.js';
 
 export const ACTIVITY_STYLE = `
 .arisu-activity{--log-bg:var(--comfy-input-bg,#181818);--log-text:var(--input-text,#ddd);--log-muted:var(--descrip-text,#aaa);
- --log-blue:#85caff;--log-green:#9bd4a3;--log-yellow:#edcc89;--log-red:#f4a4a4;--log-purple:#d4b6ff;
+ --log-blue:var(--arisu-blue);--log-green:var(--success-text,var(--fg-color,#ddd));--log-yellow:var(--arisu-video);--log-red:var(--error-text,var(--arisu-red));--log-purple:var(--arisu-audio);
  display:flex;flex-direction:column;flex:1;min-height:0;gap:8px;}
 .arisu-activity .activity-bar{display:flex;align-items:center;gap:12px;flex-shrink:0;min-height:32px;}
 .arisu-activity .activity-bar strong{font-size:13px;}.arisu-activity .activity-state{flex:1;color:var(--log-muted);font-size:12px;}
@@ -33,7 +33,17 @@ export const ACTIVITY_STYLE = `
 .arisu-activity-modal header strong{flex:1;font-size:16px;}.arisu-activity-modal>.arisu-activity{padding:12px 18px 18px;}
 .arisu-activity-modal button,.arisu-activity button{font:inherit;color:inherit;background:var(--comfy-input-bg,#222);border:1px solid var(--border-color,#555);
  border-radius:5px;min-height:34px;padding:5px 10px;cursor:pointer;}
-.arisu-activity-modal :focus-visible,.arisu-activity :focus-visible{outline:2px solid #85caff;outline-offset:2px;}
+.arisu-activity-modal [hidden]{display:none!important;}
+.arisu-activity-modal .result-tabs{display:flex;gap:6px;padding:10px 18px 0;}
+.arisu-activity-modal [role=tab][aria-selected=true]{color:var(--arisu-blue);border-color:var(--arisu-blue);}
+.arisu-activity-modal .generation-output{display:flex;flex-direction:column;flex:1;min-height:0;gap:12px;padding:12px 18px 18px;}
+.arisu-activity-modal textarea{flex:1;min-height:100px;resize:none;box-sizing:border-box;width:100%;padding:14px;
+ background:var(--comfy-input-bg,#222);color:var(--input-text,#ddd);border:1px solid var(--border-color,#444);border-radius:6px;font:14px/1.7 Arial,system-ui,sans-serif;}
+.arisu-activity-modal footer{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;}
+.arisu-activity-modal .output-hint{color:var(--descrip-text,#aaa);font-size:12px;}
+.arisu-activity-modal .apply{background:var(--arisu-blue);color:#102331;border-color:var(--arisu-blue);}
+.arisu-activity-modal button:disabled{opacity:.5;cursor:default;}
+.arisu-activity-modal :focus-visible,.arisu-activity :focus-visible{outline:2px solid var(--arisu-blue);outline-offset:2px;}
 `;
 
 // Decode known provider envelopes; unknown structured output stays inspectable as details.
@@ -45,7 +55,7 @@ function activityText(line) {
   } catch {
     return line;
   }
-  if (!event || typeof event !== 'object' || Array.isArray(event)) return '[details] ' + raw;
+  if (!event || typeof event !== 'object' || Array.isArray(event)) return `[details] ${raw}`;
   const item = event.item ?? event;
   if (['reasoning', 'agent_message', 'thinking', 'text'].includes(item.type)) {
     const text = item.text ?? item.thinking;
@@ -55,19 +65,19 @@ function activityText(line) {
   if (Array.isArray(blocks)) {
     return blocks
       .map((block) => {
-        if (block?.type === 'thinking' && typeof block.thinking === 'string') return '[analysis] ' + block.thinking;
-        if (block?.type === 'text' && typeof block.text === 'string') return '[agent] ' + block.text;
-        if (block?.type === 'tool_use') return '[tool] ' + (block.name ?? 'Tool call') + '\n' + JSON.stringify(block.input ?? {}, null, 2);
+        if (block?.type === 'thinking' && typeof block.thinking === 'string') return `[analysis] ${block.thinking}`;
+        if (block?.type === 'text' && typeof block.text === 'string') return `[agent] ${block.text}`;
+        if (block?.type === 'tool_use') return `[tool] ${block.name ?? 'Tool call'}\n${JSON.stringify(block.input ?? {}, null, 2)}`;
         // Image bytes never belong in the activity view.
         if (['image', 'image_url'].includes(block?.type)) return '[details] Image content omitted';
-        return '[details] ' + JSON.stringify(block, null, 2);
+        return `[details] ${JSON.stringify(block, null, 2)}`;
       })
       .join('\n');
   }
   const delta = event.event?.delta ?? event.delta;
-  if (delta?.type === 'thinking_delta' && typeof delta.thinking === 'string') return '[analysis] ' + delta.thinking;
-  if (delta?.type === 'text_delta' && typeof delta.text === 'string') return '[agent] ' + delta.text;
-  if (item.type === 'command_execution') return '[command] ' + (item.command ?? '') + '\n' + (item.aggregated_output ?? '');
+  if (delta?.type === 'thinking_delta' && typeof delta.thinking === 'string') return `[analysis] ${delta.thinking}`;
+  if (delta?.type === 'text_delta' && typeof delta.text === 'string') return `[agent] ${delta.text}`;
+  if (item.type === 'command_execution') return `[command] ${item.command ?? ''}\n${item.aggregated_output ?? ''}`;
   if (item.type === 'mcp_tool_call') {
     const content = item.result?.content;
     return (
@@ -84,7 +94,7 @@ function activityText(line) {
         : '')
     );
   }
-  return '[details] ' + JSON.stringify(event, null, 2);
+  return `[details] ${JSON.stringify(event, null, 2)}`;
 }
 
 function logLine(text) {
@@ -101,7 +111,7 @@ function logLine(text) {
             : /^(#\d+|\[(prepare|job|codex|grok|thread|turn))/i.test(text)
               ? 'progress'
               : '';
-  const row = el('div', { className: 'log-line log-' + kind });
+  const row = el('div', { className: `log-line log-${kind}` });
   // Render text, never HTML or terminal escape hyperlinks. Only explicit HTTP(S) URLs are links.
   let offset = 0;
   for (const match of text.matchAll(/https?:\/\/[^\s<>"']+/g)) {
@@ -115,7 +125,7 @@ function logLine(text) {
 }
 
 /** Incrementally append a session, retaining text and scroll position across polls. */
-export function createActivity(label = 'Agent logs') {
+export function createActivity(label = 'Agent Logs') {
   const output = el('div', { className: 'terminal', tabIndex: 0, ariaLabel: label });
   output.dataset.placeholder = 'No activity yet. Start an operation above.';
   const status = el('span', { className: 'activity-state', role: 'status', ariaLive: 'polite', textContent: 'Idle' });
@@ -147,10 +157,10 @@ export function createActivity(label = 'Agent logs') {
       (group ?? output).append(logLine(part));
     }
   }
-  const follow = el('button', { textContent: 'Auto-scroll on', ariaPressed: 'true' });
+  const follow = el('button', { textContent: 'Auto-Scroll On', ariaPressed: 'true' });
   function followState(value) {
     following = value;
-    follow.textContent = value ? 'Auto-scroll on' : 'Resume auto-scroll';
+    follow.textContent = value ? 'Auto-Scroll On' : 'Resume Auto-Scroll';
     follow.ariaPressed = String(value);
   }
   follow.onclick = () => {
@@ -175,7 +185,7 @@ export function createActivity(label = 'Agent logs') {
   }
   function showStatus(message, running) {
     status.textContent = message;
-    status.className = 'activity-state' + (running ? ' running' : '');
+    status.className = `activity-state${running ? ' running' : ''}`;
   }
   return {
     element,
@@ -185,7 +195,7 @@ export function createActivity(label = 'Agent logs') {
       const current = epoch;
       const query = new URLSearchParams({ session, cursor: String(cursor), ...(job ? { job } : {}) });
       try {
-        const response = await api.fetchApi('/arisu/workbench/logs?' + query);
+        const response = await api.fetchApi(`/arisu/workbench/logs?${query}`);
         if (!response.ok) throw new Error('Unable to read activity. Retrying…');
         const data = await response.json();
         if (epoch !== current) return false;
@@ -204,7 +214,7 @@ export function createActivity(label = 'Agent logs') {
         for (const line of data.lines ?? []) appendLine(line);
         cursor = data.cursor ?? cursor;
         const live = running ?? data.state === 'running';
-        status.className = 'activity-state' + (live ? ' running' : '');
+        status.className = `activity-state${live ? ' running' : ''}`;
         status.textContent =
           message ||
           [data.agent === 'grok' ? 'Grok Build' : data.agent === 'codex' ? 'Codex' : '', data.action, data.state]
@@ -221,26 +231,83 @@ export function createActivity(label = 'Agent logs') {
   };
 }
 
-/** Show this generation's exposed CLI activity, with no cross-job log replay. */
-export function openAgentActivity(snapshot, onClose) {
-  const dialog = el('dialog', { className: 'arisu-activity-modal', ariaLabel: 'Agent activity' });
-  const activity = createActivity('Generation activity');
+let resultDialogId = 0;
+
+/** Keep generation results in the current browser session, outside workflow widgets. */
+export function openAgentActivity(snapshot, onClose, onEdit, onApply) {
+  const dialog = el('dialog', { className: 'arisu-activity-modal', ariaLabel: 'Generation Results' });
+  const id = `arisu-generation-${++resultDialogId}`;
+  const activity = createActivity('Generation Activity');
+  const draft = el('textarea', {
+    ariaLabel: 'Output Prompt',
+    spellcheck: false,
+    placeholder: 'No output yet. Generate a prompt from the Workbench.',
+  });
+  const hint = el('span', { className: 'output-hint', role: 'status' });
+  const apply = el('button', { textContent: 'Apply to Workbench', className: 'apply', onclick: onApply });
+  const output = el('div', { className: 'generation-output', role: 'tabpanel', id: `${id}-output` }, [
+    draft,
+    el('footer', {}, [hint, apply]),
+  ]);
+  activity.element.setAttribute('role', 'tabpanel');
+  activity.element.id = `${id}-activity`;
+  const panels = [activity.element, output];
+  const tabs = ['Activity', 'Output Prompt'].map((label, index) =>
+    el('button', {
+      textContent: label,
+      role: 'tab',
+      id: `${panels[index].id}-tab`,
+      ariaControls: panels[index].id,
+      onclick: () => select(index),
+      onkeydown: (event) => {
+        if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+        event.preventDefault();
+        const next = event.key === 'Home' ? 0 : event.key === 'End' ? 1 : 1 - index;
+        select(next);
+        tabs[next].focus();
+      },
+    }),
+  );
+  function select(index) {
+    tabs.forEach((tab, i) => {
+      tab.ariaSelected = String(i === index);
+      tab.tabIndex = i === index ? 0 : -1;
+      panels[i].hidden = i !== index;
+      panels[i].setAttribute('aria-labelledby', tab.id);
+    });
+  }
+  function refreshOutput() {
+    const state = snapshot();
+    if (draft.value !== state.draft) draft.value = state.draft || '';
+    draft.disabled = !state.hasOutput;
+    apply.disabled = !state.draft?.trim() || state.applied;
+    apply.textContent = state.applied ? 'Applied' : 'Apply to Workbench';
+    hint.textContent = state.running ? 'Generating…' : state.draft ? 'Only applied text is saved in the workflow.' : 'No output yet.';
+  }
+  draft.oninput = () => {
+    onEdit(draft.value);
+    refreshOutput();
+  };
   let timer;
   let closed = false;
   async function refresh() {
     const state = snapshot();
-    if (!state.job) activity.showStatus(state.message || 'Preparing workflow…', state.running);
+    refreshOutput();
+    if (!state.job) activity.showStatus(state.message || 'No generation yet', state.running);
     const more = state.job ? await activity.read(state) : false;
-    if (!closed && (state.running || more)) timer = setTimeout(refresh, more ? 0 : 750);
+    if (!closed) timer = setTimeout(refresh, more ? 0 : 750);
   }
+  dialog.refreshOutput = refreshOutput;
   dialog.append(
     el('style', { textContent: ACTIVITY_STYLE }),
     el('header', {}, [
-      el('strong', { textContent: 'Agent activity' }),
+      el('strong', { textContent: 'Generation Results' }),
       el('button', { textContent: 'Close', onclick: () => dialog.close() }),
     ]),
-    activity.element,
+    el('nav', { className: 'result-tabs', role: 'tablist', ariaLabel: 'Generation Results' }, tabs),
+    ...panels,
   );
+  select(snapshot().draft ? 1 : 0);
   closeOnBackdropClick(dialog);
   dialog.onclose = () => {
     closed = true;

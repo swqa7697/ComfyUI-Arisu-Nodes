@@ -4,10 +4,66 @@
 // The stock button widget's outer margin, and the gap between the cells of a row.
 const MARGIN = 15;
 const GAP = 4;
+const pointerPositions = new WeakMap();
+
+/** Track node-local hover without capturing gestures or changing click handlers. */
+function trackPointer(node) {
+  if (pointerPositions.has(node)) return;
+  pointerPositions.set(node, null);
+  node.redraw_on_mouse = true;
+  const move = node.onMouseMove;
+  node.onMouseMove = function (_event, position) {
+    pointerPositions.set(this, position);
+    return move?.apply(this, arguments);
+  };
+  const leave = node.onMouseLeave;
+  node.onMouseLeave = function () {
+    pointerPositions.set(this, null);
+    this.setDirtyCanvas(true, false);
+    return leave?.apply(this, arguments);
+  };
+}
+
+function drawButton(ctx, node, label, x, y, width, height, disabled = false, clicked = false) {
+  const { LiteGraph } = globalThis;
+  const pointer = pointerPositions.get(node);
+  const hovered = !disabled && pointer && pointer[0] >= x && pointer[0] <= x + width && pointer[1] >= y && pointer[1] <= y + height;
+  ctx.save();
+  ctx.fillStyle = LiteGraph.WIDGET_BGCOLOR;
+  ctx.fillRect(x, y, width, height);
+  if (hovered || clicked) {
+    const alpha = ctx.globalAlpha;
+    ctx.globalAlpha *= clicked ? 0.18 : 0.08;
+    ctx.fillStyle = LiteGraph.WIDGET_TEXT_COLOR;
+    ctx.fillRect(x, y, width, height);
+    ctx.globalAlpha = alpha;
+  }
+  ctx.strokeStyle = hovered ? LiteGraph.WIDGET_TEXT_COLOR : LiteGraph.WIDGET_OUTLINE_COLOR;
+  ctx.strokeRect(x, y, width, height);
+  ctx.fillStyle = LiteGraph.WIDGET_TEXT_COLOR;
+  ctx.textAlign = 'center';
+  ctx.fillText(label, x + width / 2, y + height * 0.7);
+  ctx.restore();
+}
 
 /** A button widget that is never written into the saved workflow. */
 export function addButton(node, label, onClick) {
+  trackPointer(node);
   const widget = node.addWidget('button', label, null, onClick);
+  widget.draw = function (ctx, owner, width, y, height) {
+    drawButton(
+      ctx,
+      owner,
+      this.label || this.name,
+      MARGIN,
+      y,
+      width - 2 * MARGIN,
+      height,
+      this.disabled || this.computedDisabled,
+      this.clicked,
+    );
+    this.clicked = false;
+  };
   widget.serialize = false;
   widget.options.serialize = false;
   return widget;
@@ -52,26 +108,17 @@ function cellWidth(width, count) {
  * to the cell under it. `buttons` is `[{ label, onClick }]`.
  */
 export function addButtonRow(node, buttons) {
+  trackPointer(node);
   const widget = node.addCustomWidget({
     type: 'arisu_button_row',
     name: buttons.map((button) => button.label).join(' / '),
     value: null,
     options: { serialize: false },
-    draw(ctx, _node, width, y, height) {
-      const { LiteGraph } = globalThis;
+    draw(ctx, owner, width, y, height) {
       const cell = cellWidth(width, buttons.length);
-      const { fillStyle, strokeStyle, textAlign } = ctx;
       buttons.forEach((button, index) => {
-        const x = MARGIN + index * (cell + GAP);
-        ctx.fillStyle = LiteGraph.WIDGET_BGCOLOR;
-        ctx.fillRect(x, y, cell, height);
-        ctx.strokeStyle = LiteGraph.WIDGET_OUTLINE_COLOR;
-        ctx.strokeRect(x, y, cell, height);
-        ctx.fillStyle = LiteGraph.WIDGET_TEXT_COLOR;
-        ctx.textAlign = 'center';
-        ctx.fillText(button.label, x + cell / 2, y + height * 0.7);
+        drawButton(ctx, owner, button.label, MARGIN + index * (cell + GAP), y, cell, height, this.disabled || this.computedDisabled);
       });
-      Object.assign(ctx, { fillStyle, strokeStyle, textAlign });
     },
     mouse(event, pos, owner) {
       // the canvas reports the press and the release; act once

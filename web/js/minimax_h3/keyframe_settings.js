@@ -18,11 +18,11 @@ app.registerExtension({
   beforeRegisterNodeDef(nodeType, nodeData) {
     if (!NODE_TYPES.has(nodeData.name)) return;
     installSettingsButton(nodeType, nodeData, {
-      label: 'keyframes…',
-      title: 'Keyframe settings',
+      label: 'Keyframes…',
+      title: 'Keyframe Settings',
       widgets: KEYFRAMES.flatMap((frame) => SETTINGS.map((setting) => `${frame}_${setting}`)),
       colorWidgets: KEYFRAMES.map((frame) => `${frame}_pad_color`),
-      sections: KEYFRAMES.map((frame) => ({ title: frame.replace('_', ' '), prefix: `${frame}_` })),
+      sections: KEYFRAMES.map((frame) => ({ title: frame === 'first_frame' ? 'First Frame' : 'Last Frame', prefix: `${frame}_` })),
     });
   },
 });

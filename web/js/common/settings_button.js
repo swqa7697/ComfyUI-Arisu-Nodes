@@ -37,7 +37,10 @@ function fieldsFrom(nodeData, names, colorWidgets, sections) {
       const section = sectionOf(name, sections);
       return {
         name,
-        label: section ? name.slice(section.prefix.length) : name,
+        label: (section ? name.slice(section.prefix.length) : name)
+          .split('_')
+          .map((word) => word[0].toUpperCase() + word.slice(1))
+          .join(' '),
         section: section?.title,
         kind,
         values: choices ?? [],

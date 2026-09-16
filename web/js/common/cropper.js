@@ -37,14 +37,25 @@ const STYLE = `
   border-radius: 8px; background: var(--comfy-input-bg, #333); transition: background-color 150ms ease, border-color 150ms ease; }
 .arisu-cropper :where(button) { min-height: 34px; padding: 6px 12px; cursor: pointer; }
 .arisu-cropper :where(input, select) { padding: 6px 10px; }
-.arisu-cropper button:hover { border-color: var(--p-primary-color, #6ea8fe); }
-.arisu-cropper :focus-visible { outline: 2px solid var(--p-primary-color, #6ea8fe); outline-offset: 2px; }
-.arisu-cropper :where(input, select):focus-visible { outline: none; border-color: var(--p-primary-color, #6ea8fe); box-shadow: inset 0 0 0 1px var(--p-primary-color, #6ea8fe); }
+.arisu-cropper button:enabled:hover { border-color: var(--arisu-accent); }
+.arisu-cropper :focus-visible { outline: 2px solid var(--arisu-accent); outline-offset: 2px; }
+.arisu-cropper :where(input, select):focus-visible { outline: none; border-color: var(--arisu-accent); box-shadow: inset 0 0 0 1px var(--arisu-accent); }
 .arisu-cropper-bar { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--border-color, #444); }
+.arisu-cropper button.arisu-cropper-tool {
+  --tool-color: var(--arisu-blue);
+  color: var(--tool-color); border-color: color-mix(in srgb, var(--tool-color) 55%, var(--border-color, #444));
+  background: color-mix(in srgb, var(--tool-color) 8%, var(--comfy-input-bg, #333)); }
+.arisu-cropper button.arisu-cropper-tool:enabled:hover {
+  color: var(--fg-color, #ddd); border-color: var(--tool-color);
+  background: color-mix(in srgb, var(--tool-color) 20%, var(--comfy-input-bg, #333)); }
+.arisu-cropper button.arisu-cropper-tool:enabled:active {
+  background: color-mix(in srgb, var(--tool-color) 28%, var(--comfy-input-bg, #333)); }
+.arisu-cropper button.arisu-cropper-tool:focus-visible { outline-color: var(--tool-color); }
+.arisu-cropper .arisu-cropper-cancel { margin-left: 8px; }
 .arisu-cropper-bar label { color: var(--descrip-text, #999); }
 .arisu-cropper-ratio { min-width: 96px; }
 .arisu-cropper-readout { flex: 1; text-align: center; color: var(--descrip-text, #999); font-variant-numeric: tabular-nums; }
-.arisu-cropper-apply { border-color: var(--p-primary-color, #6ea8fe); background: color-mix(in srgb, var(--p-primary-color, #6ea8fe) 25%, var(--comfy-input-bg, #333)); }
+.arisu-cropper-apply { border-color: var(--arisu-accent); background: color-mix(in srgb, var(--arisu-accent) 25%, var(--comfy-input-bg, #333)); }
 .arisu-cropper-body { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; padding: 16px; background: #111; }
 .arisu-cropper-stage { position: relative; display: inline-block; line-height: 0; overflow: hidden; touch-action: none; user-select: none;
   cursor: crosshair; }
@@ -168,8 +179,8 @@ export function cropImage(img, initial, options = {}) {
   const readout = el('output', { className: 'arisu-cropper-readout' });
   const ratioMenu = el(
     'select',
-    { className: 'arisu-cropper-ratio', title: 'aspect ratio, width:height', onchange: onRatioChange },
-    [RATIO_FREE, ...RATIO_PRESETS].map((value) => el('option', { value, textContent: value })),
+    { className: 'arisu-cropper-ratio', title: 'Aspect Ratio, Width:Height', onchange: onRatioChange },
+    [RATIO_FREE, ...RATIO_PRESETS].map((value) => el('option', { value, textContent: value === RATIO_FREE ? 'Free' : value })),
   );
   const handles = Object.entries(HANDLES).map(([handle, [ax, ay]]) =>
     el('div', { className: 'arisu-cropper-handle', handle, style: `left: ${ax * 100}%; top: ${ay * 100}%; cursor: ${handle}-resize;` }),
@@ -184,14 +195,20 @@ export function cropImage(img, initial, options = {}) {
   const dialog = el('dialog', { className: 'arisu-cropper' }, [
     el('style', { textContent: STYLE }),
     el('div', { className: 'arisu-cropper-bar' }, [
-      el('label', { textContent: 'ratio' }),
+      el('label', { textContent: 'Ratio' }),
       ratioMenu,
       readout,
-      el('button', { textContent: 'reset', title: 'the whole image at a free ratio: no crop', onclick: reset }),
+      el('button', {
+        className: 'arisu-cropper-tool',
+        textContent: 'Reset',
+        title: 'the whole image at a free ratio: no crop',
+        onclick: reset,
+      }),
       ...(options.aspectRatio
         ? [
             el('button', {
-              textContent: 'auto-crop',
+              className: 'arisu-cropper-tool',
+              textContent: 'Auto-Crop',
               onclick: () => {
                 const [rw, rh] = options.aspectRatio.split(' ')[0].split(':').map(Number);
                 const w = Math.max(1, Math.min(bounds.w, Math.floor((bounds.h * rw) / rh)));
@@ -204,8 +221,8 @@ export function cropImage(img, initial, options = {}) {
             }),
           ]
         : []),
-      el('button', { textContent: 'cancel', onclick: () => dialog.close() }),
-      el('button', { className: 'arisu-cropper-apply', textContent: 'apply', onclick: apply }),
+      el('button', { className: 'arisu-cropper-cancel', textContent: 'Cancel', onclick: () => dialog.close() }),
+      el('button', { className: 'arisu-cropper-apply', textContent: 'Apply', onclick: apply }),
     ]),
     el('div', { className: 'arisu-cropper-body' }, [stage]),
   ]);

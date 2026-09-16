@@ -70,6 +70,49 @@ def test_external_roots_are_local_validated_and_cached(tmp_path: Path, monkeypat
         assert paths.external_roots() == {}, f"case={text!r}"
         assert config.read_bytes() == text.encode()
         assert paths.image_roots("input", "output") == {"input": "input", "output": "output"}
+    # Preference updates preserve comments, root text, unknown fields and the startup snapshot.
+    original = '{\r\n  "roots": {}, // keep roots\r\n  "future": {"url": "https://example/a/*b"}\r\n} // eof'
+    config.write_bytes(original.encode())
+    paths.save_workbench_preferences(directory, {"codex": {"model": "first", "effort": "low"}})
+    contents = config.read_bytes().decode()
+    assert '"roots": {}, // keep roots\r\n' in contents
+    assert '"future": {"url": "https://example/a/*b"}' in contents
+    assert contents.endswith("} // eof")
+    contents = contents.replace('"model": "first"', '"model": /* preserve */ "first"')
+    config.write_bytes(contents.encode())
+    paths.save_workbench_preferences(directory, {"codex": {"model": "second"}, "grok": {"model": "other"}})
+    updated = paths.read_configuration(directory)
+    assert updated["workbench"]["codex"] == {"model": "second", "effort": "low"}
+    assert updated["workbench"]["grok"] == {"model": "other"}
+    assert "/* preserve */" in config.read_text()
+    assert paths.external_roots() == {}
+    assert paths.parse_roots(config.read_text()) == {}
+    paths.save_workbench_preferences(directory, {"codex": {}})
+    assert paths.read_configuration(directory)["workbench"] == {"codex": {}, "grok": {"model": "other"}}
+    # A failed atomic replacement leaves the original document and no temporary file.
+    before_failure = config.read_bytes()
+
+    def refuse_replace(*args: Any, **kwargs: Any):
+        raise PermissionError("read-only destination")
+
+    with monkeypatch.context() as access:
+        access.setattr(paths.os, "replace", refuse_replace)
+        with pytest.raises(PermissionError):
+            paths.save_workbench_preferences(directory, {"grok": {"model": "failed"}})
+    assert config.read_bytes() == before_failure
+    assert not list(directory.glob("config-*.tmp"))
+    config.write_text(json.dumps({"roots": {"photos": str(photos)}, "workbench": {"codex": {"model": "selected"}}}))
+    restart()
+    assert paths.external_roots() == {"photos": str(photos)}
+    # Later preference writes do not reload changed root grants.
+    config.write_text('{"roots": {}, "workbench": {}}')
+    paths.save_workbench_preferences(directory, {"codex": {"model": "updated"}})
+    assert paths.external_roots() == {"photos": str(photos)}
+    for invalid in ['{"roots": {}, "workbench": []}', '{"roots": {}, "workbench": {"codex": 1}}', '{"roots": {}, "roots": {}}']:
+        config.write_text(invalid)
+        with pytest.raises(ValueError):
+            paths.save_workbench_preferences(directory, {"codex": {"model": "refused"}})
+        assert config.read_text() == invalid
     # An unreadable file is preserved and disables roots, as does a non-file destination.
     original_open = paths.os.open
 
@@ -101,6 +144,8 @@ def test_external_roots_are_local_validated_and_cached(tmp_path: Path, monkeypat
         restart()
         assert paths.external_roots() == {}
         assert config.is_symlink()
+        with pytest.raises((OSError, ValueError)):
+            paths.save_workbench_preferences(directory, {"codex": {"model": "refused"}})
         config.unlink()
     assert outside.read_bytes() == sentinel
     assert not (tmp_path / "missing.jsonc").exists()
@@ -125,6 +170,8 @@ def test_external_roots_are_local_validated_and_cached(tmp_path: Path, monkeypat
     directory.symlink_to(photos, target_is_directory=True)
     restart()
     assert paths.external_roots() == {}
+    with pytest.raises((OSError, ValueError)):
+        paths.save_workbench_preferences(directory, {"codex": {"model": "refused"}})
     assert not (photos / config.name).exists()
     assert not (photos / "skills").exists()
     directory.unlink()

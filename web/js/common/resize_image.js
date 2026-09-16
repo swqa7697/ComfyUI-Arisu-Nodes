@@ -17,8 +17,8 @@ app.registerExtension({
   beforeRegisterNodeDef(nodeType, nodeData) {
     if (nodeData.name !== NODE_TYPE) return;
     installSettingsButton(nodeType, nodeData, {
-      label: 'settings…',
-      title: 'Resize Image settings',
+      label: 'Settings…',
+      title: 'Resize Image Settings',
       widgets: ['resize_method', 'mode', 'pad_color', 'crop_position', 'divisible_by'],
       colorWidgets: ['pad_color'],
     });

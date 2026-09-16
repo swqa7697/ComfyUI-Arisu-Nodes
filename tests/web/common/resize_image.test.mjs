@@ -88,7 +88,7 @@ test('creation and a workflow load hide the five option widgets on both renderer
   );
   // the button is last, right under height, and never saved
   const settings = node.widgets.at(-1);
-  assert.equal(settings.name, 'settings…');
+  assert.equal(settings.name, 'Settings…');
   assert.equal(settings.serialize, false);
   // a loaded workflow restores every saved socket and knows nothing of hidden: configure hides again, twice is the same
   const loaded = makeResizeNode({ mode: 'pad' });
@@ -111,7 +111,7 @@ test('the settings button opens a dialog seeded from the widgets; apply writes t
   const written = [];
   for (const name of CONFIG) widget(node, name).callback = (value) => written.push([name, value]);
   // the controls come from the definition: a combo's choices in either shape, the number's bounds, the colour's picker
-  let applied = widget(node, 'settings…').callback();
+  let applied = widget(node, 'Settings…').callback();
   let dialog = openDialog();
   assert.equal(dialog.open, true);
   const mode = control(dialog, 'mode');
@@ -141,7 +141,7 @@ test('the settings button opens a dialog seeded from the widgets; apply writes t
   // apply: the changed widgets get their values through the callback path, a number held to its bounds; the others are left alone
   mode.value = 'pad';
   grid.value = '600';
-  button(dialog, 'apply').onclick();
+  button(dialog, 'Apply').onclick();
   await applied;
   assert.equal(dialog.open, false);
   assert.equal(openDialog(), undefined);
@@ -152,12 +152,12 @@ test('the settings button opens a dialog seeded from the widgets; apply writes t
   ]);
   assert.deepEqual([widget(node, 'resize_method').value, widget(node, 'crop_position').value], ['lanczos', 'center']);
   // reopening starts from the widgets; reset is the declared defaults, applied like any edit
-  applied = widget(node, 'settings…').callback();
+  applied = widget(node, 'Settings…').callback();
   dialog = openDialog();
   assert.deepEqual([control(dialog, 'mode').value, control(dialog, 'divisible_by').value], ['pad', '512']);
-  button(dialog, 'reset').onclick();
+  button(dialog, 'Reset').onclick();
   assert.deepEqual([control(dialog, 'mode').value, control(dialog, 'divisible_by').value], ['stretch', '2']);
-  button(dialog, 'apply').onclick();
+  button(dialog, 'Apply').onclick();
   await applied;
   assert.deepEqual(written.slice(3), [
     ['mode', 'stretch'],
@@ -166,12 +166,12 @@ test('the settings button opens a dialog seeded from the widgets; apply writes t
   ]);
   // cancel, and the dialog closing on its own (Escape, a backdrop click), write nothing; a press in a field that
   // ends on the backdrop is not a backdrop click
-  applied = widget(node, 'settings…').callback();
+  applied = widget(node, 'Settings…').callback();
   dialog = openDialog();
   control(dialog, 'mode').value = 'crop';
-  button(dialog, 'cancel').onclick();
+  button(dialog, 'Cancel').onclick();
   await applied;
-  applied = widget(node, 'settings…').callback();
+  applied = widget(node, 'Settings…').callback();
   dialog = openDialog();
   control(dialog, 'divisible_by').value = '64';
   dialog.onpointerdown({ target: control(dialog, 'divisible_by') });
