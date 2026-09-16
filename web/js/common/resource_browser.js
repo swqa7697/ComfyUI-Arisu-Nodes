@@ -25,13 +25,13 @@ export const SAVED_PATHS_SETTING = 'Arisu.LoadImage.SavedLocations';
 const SAVED_OPTION_PREFIX = 'saved:';
 /** The roots the server reported, or the built-in pair until discovery succeeds. */
 let discoveredRoots = [
-  { id: 'input', label: 'input' },
-  { id: 'output', label: 'output' },
+  { id: 'input', label: 'Input' },
+  { id: 'output', label: 'Output' },
 ];
 export const DEFAULT_ROOT_SETTING = {
   id: 'Arisu.LoadImage.DefaultRoot',
   category: ['Arisu Nodes', 'LoadImage'],
-  name: 'Load Image (Browse): default location',
+  name: 'Load Image (Browse): Default Location',
   type: 'combo',
   defaultValue: 'input',
   // The settings panel calls this on every render, so saved paths and their names stay current without mirroring.
@@ -92,7 +92,7 @@ const STYLE = `
 .arisu-browser-tree { width: 280px; flex-shrink: 0; display: flex; flex-direction: column; gap: 2px; padding: 8px;
   border-right: 1px solid var(--border-color, #444); }
 .arisu-browser-tree-head { display: flex; justify-content: space-between; align-items: center; padding: 4px 6px;
-  font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--descrip-text, #999); }
+  font-size: 11px; letter-spacing: 0.06em; color: var(--descrip-text, #999); }
 .arisu-browser-tree-head button { padding: 2px 8px; font-size: 11px; text-transform: none; letter-spacing: 0; }
 .arisu-browser-name-editor { display: flex; flex-wrap: wrap; gap: 4px; padding: 4px 0; }
 .arisu-browser-name-editor input { width: 100%; box-sizing: border-box; }
@@ -247,13 +247,13 @@ export async function browseResources(node, options = {}) {
   const tree = new Map();
   // Read-only: the tree, up, the roots, saved locations and thumbnails are the only ways to move.
   const pathField = el('output', { className: 'arisu-browser-path' });
-  const upButton = el('button', { textContent: '↑ up', onclick: () => navigate(listing.root, listing.parent) });
+  const upButton = el('button', { textContent: '↑ Up', onclick: () => navigate(listing.root, listing.parent) });
   const filterField = el('input', {
     type: 'search',
-    placeholder: options.mixed ? 'filter resources' : 'filter images',
+    placeholder: options.mixed ? 'Filter Resources' : 'Filter Images',
     oninput: () => renderGrid(false),
   });
-  const saveButton = el('button', { textContent: '+ save', onclick: () => editPath({ root: listing.root, path: listing.path }, false) });
+  const saveButton = el('button', { textContent: '+ Save', onclick: () => editPath({ root: listing.root, path: listing.path }, false) });
   const savedList = el('div', { className: 'arisu-browser-saved-list' });
   const treeList = el('div', { className: 'arisu-browser-tree-list' });
   const treePane = el('div', { className: 'arisu-browser-tree' }, [
@@ -261,7 +261,7 @@ export async function browseResources(node, options = {}) {
     savedList,
     el('div', { className: 'arisu-browser-tree-head' }, [
       el('span', { textContent: 'Folders' }),
-      el('button', { textContent: 'collapse', onclick: collapseAll }),
+      el('button', { textContent: 'Collapse', onclick: collapseAll }),
     ]),
     treeList,
   ]);
@@ -281,8 +281,8 @@ export async function browseResources(node, options = {}) {
       el('div', { className: 'arisu-browser-bar' }, [
         pathField,
         upButton,
-        el('button', { textContent: 'input dir', onclick: () => navigate('input', '') }),
-        el('button', { textContent: 'output dir', onclick: () => navigate('output', '') }),
+        el('button', { textContent: 'Input Dir', onclick: () => navigate('input', '') }),
+        el('button', { textContent: 'Output Dir', onclick: () => navigate('output', '') }),
         filterField,
         el('button', { textContent: '✕', onclick: () => dialog.close() }),
       ]),
@@ -401,7 +401,7 @@ export async function browseResources(node, options = {}) {
     const { root, path } = location;
     const input = el('input', {
       type: 'text',
-      ariaLabel: 'Saved path name',
+      ariaLabel: 'Saved Path Name',
       value: savedLabel(location),
     });
     const cancel = () => {
@@ -520,7 +520,7 @@ export async function browseResources(node, options = {}) {
     grid.replaceChildren(
       ...(cards.length
         ? cards
-        : [el('div', { className: 'arisu-browser-empty', textContent: options.mixed ? 'No resources here' : 'No images here' })]),
+        : [el('div', { className: 'arisu-browser-empty', textContent: options.mixed ? 'No Resources Here' : 'No Images Here' })]),
     );
   }
 

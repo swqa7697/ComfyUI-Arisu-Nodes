@@ -125,7 +125,7 @@ function logLine(text) {
 }
 
 /** Incrementally append a session, retaining text and scroll position across polls. */
-export function createActivity(label = 'Agent logs') {
+export function createActivity(label = 'Agent Logs') {
   const output = el('div', { className: 'terminal', tabIndex: 0, ariaLabel: label });
   output.dataset.placeholder = 'No activity yet. Start an operation above.';
   const status = el('span', { className: 'activity-state', role: 'status', ariaLive: 'polite', textContent: 'Idle' });
@@ -157,10 +157,10 @@ export function createActivity(label = 'Agent logs') {
       (group ?? output).append(logLine(part));
     }
   }
-  const follow = el('button', { textContent: 'Auto-scroll on', ariaPressed: 'true' });
+  const follow = el('button', { textContent: 'Auto-Scroll On', ariaPressed: 'true' });
   function followState(value) {
     following = value;
-    follow.textContent = value ? 'Auto-scroll on' : 'Resume auto-scroll';
+    follow.textContent = value ? 'Auto-Scroll On' : 'Resume Auto-Scroll';
     follow.ariaPressed = String(value);
   }
   follow.onclick = () => {
@@ -235,11 +235,11 @@ let resultDialogId = 0;
 
 /** Keep generation results in the current browser session, outside workflow widgets. */
 export function openAgentActivity(snapshot, onClose, onEdit, onApply) {
-  const dialog = el('dialog', { className: 'arisu-activity-modal', ariaLabel: 'Generation results' });
+  const dialog = el('dialog', { className: 'arisu-activity-modal', ariaLabel: 'Generation Results' });
   const id = `arisu-generation-${++resultDialogId}`;
-  const activity = createActivity('Generation activity');
+  const activity = createActivity('Generation Activity');
   const draft = el('textarea', {
-    ariaLabel: 'Output prompt',
+    ariaLabel: 'Output Prompt',
     spellcheck: false,
     placeholder: 'No output yet. Generate a prompt from the Workbench.',
   });
@@ -252,7 +252,7 @@ export function openAgentActivity(snapshot, onClose, onEdit, onApply) {
   activity.element.setAttribute('role', 'tabpanel');
   activity.element.id = `${id}-activity`;
   const panels = [activity.element, output];
-  const tabs = ['Activity', 'Output prompt'].map((label, index) =>
+  const tabs = ['Activity', 'Output Prompt'].map((label, index) =>
     el('button', {
       textContent: label,
       role: 'tab',
@@ -301,10 +301,10 @@ export function openAgentActivity(snapshot, onClose, onEdit, onApply) {
   dialog.append(
     el('style', { textContent: ACTIVITY_STYLE }),
     el('header', {}, [
-      el('strong', { textContent: 'Generation results' }),
+      el('strong', { textContent: 'Generation Results' }),
       el('button', { textContent: 'Close', onclick: () => dialog.close() }),
     ]),
-    el('nav', { className: 'result-tabs', role: 'tablist', ariaLabel: 'Generation results' }, tabs),
+    el('nav', { className: 'result-tabs', role: 'tablist', ariaLabel: 'Generation Results' }, tabs),
     ...panels,
   );
   select(snapshot().draft ? 1 : 0);

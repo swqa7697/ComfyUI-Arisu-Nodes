@@ -588,7 +588,7 @@
     ],
     "output_name": [
       "positive",
-      "LATENT"
+      "latent"
     ],
     "output_tooltips": [
       null,

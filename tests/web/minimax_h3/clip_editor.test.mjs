@@ -22,10 +22,10 @@ test('clip drafts snap to tenths on a draggable timeline, keep locked durations 
     control(dialog, 'Snapping').children.map((option) => option.value),
     ['0.1', '1'],
   );
-  control(dialog, 'Start seconds').value = '1.23456';
-  control(dialog, 'Start seconds').onchange();
-  control(dialog, 'End seconds').value = '6.78901';
-  control(dialog, 'End seconds').onchange();
+  control(dialog, 'Start Seconds').value = '1.23456';
+  control(dialog, 'Start Seconds').onchange();
+  control(dialog, 'End Seconds').value = '6.78901';
+  control(dialog, 'End Seconds').onchange();
   const readout = descendants(dialog).find((element) => element.tagName === 'OUTPUT' && element.textContent?.includes(' in '));
   assert.match(readout.textContent, /in 0:01\.2 · out 0:06\.8$/);
   assert.doesNotMatch(readout.textContent, /\d\.\d{2}/);
@@ -35,7 +35,7 @@ test('clip drafts snap to tenths on a draggable timeline, keep locked durations 
   timeline.onpointerdown({ clientX: 100, pointerId: 1, button: 0, target: handleOf(timeline, 'start') });
   timeline.onpointermove({ clientX: 300, pointerId: 1, target: timeline });
   timeline.onpointerup({ pointerId: 1 });
-  assert.equal(control(dialog, 'Start seconds').value, '3.6');
+  assert.equal(control(dialog, 'Start Seconds').value, '3.6');
   assert.equal(handleOf(timeline, 'start').style.left, '30%');
   // A press on the ruler scrubs, and the playhead keeps scrubbing while dragged.
   timeline.onpointerdown({ clientX: 500, pointerId: 1, button: 0, target: timeline });
@@ -45,14 +45,14 @@ test('clip drafts snap to tenths on a draggable timeline, keep locked durations 
   assert.equal(player.currentTime, 6.9);
   // O and I mark the brackets at the playhead; arrows nudge by a tenth, or a second with Shift; Space plays.
   timeline.onkeydown({ key: 'o' });
-  assert.equal(control(dialog, 'End seconds').value, '6.9');
+  assert.equal(control(dialog, 'End Seconds').value, '6.9');
   timeline.onkeydown({ key: 'Home' });
   timeline.onkeydown({ key: 'ArrowRight', shiftKey: true });
   timeline.onkeydown({ key: 'ArrowLeft' });
   timeline.onkeydown({ key: 'ArrowRight' });
   assert.equal(player.currentTime, 1);
   timeline.onkeydown({ key: 'i' });
-  assert.equal(control(dialog, 'Start seconds').value, '1');
+  assert.equal(control(dialog, 'Start Seconds').value, '1');
   timeline.onkeydown({ key: ' ' });
   assert.equal(player.paused, false);
   timeline.onkeydown({ key: ' ' });
@@ -61,13 +61,13 @@ test('clip drafts snap to tenths on a draggable timeline, keep locked durations 
   assert.deepEqual(await result, { clip: { start: 1, end: 6.9 }, include_audio: true });
   result = editClip(item, { kind: 'video', duration: 12, has_audio: false, revision: 'r' });
   dialog = body.children[0];
-  assert.equal(control(dialog, 'Include audio'), undefined);
+  assert.equal(control(dialog, 'Include Audio'), undefined);
   assert.equal(control(dialog, '15s').disabled, true);
   control(dialog, '5s').onclick();
-  control(dialog, 'Start seconds').value = '11';
-  control(dialog, 'Start seconds').onchange();
-  assert.equal(control(dialog, 'Start seconds').value, '7');
-  assert.equal(control(dialog, 'End seconds').value, '12');
+  control(dialog, 'Start Seconds').value = '11';
+  control(dialog, 'Start Seconds').onchange();
+  assert.equal(control(dialog, 'Start Seconds').value, '7');
+  assert.equal(control(dialog, 'End Seconds').value, '12');
   const current = descendants(dialog).find((element) => element.tagName === 'VIDEO');
   current.currentTime = 0;
   await current.play();
@@ -75,7 +75,7 @@ test('clip drafts snap to tenths on a draggable timeline, keep locked durations 
   current.currentTime = 12;
   current.ontimeupdate();
   assert.equal(current.paused, true);
-  control(dialog, 'Selection end behavior').value = 'loop';
+  control(dialog, 'Selection End Behavior').value = 'loop';
   await current.play();
   current.currentTime = 12;
   current.ontimeupdate();
@@ -123,8 +123,8 @@ test('clip drafts snap to tenths on a draggable timeline, keep locked durations 
   ruler.onpointerdown({ clientX: 100, pointerId: 1, button: 0, target: handleOf(ruler, 'range') });
   ruler.onpointermove({ clientX: 1000, pointerId: 1, target: ruler });
   ruler.onpointerup({ pointerId: 1 });
-  assert.equal(control(dialog, 'Start seconds').value, '25');
-  assert.equal(control(dialog, 'End seconds').value, '30');
+  assert.equal(control(dialog, 'Start Seconds').value, '25');
+  assert.equal(control(dialog, 'End Seconds').value, '30');
   control(dialog, 'Cancel').onclick();
   assert.equal(await result, null);
   assert.equal(body.children.length, 0);

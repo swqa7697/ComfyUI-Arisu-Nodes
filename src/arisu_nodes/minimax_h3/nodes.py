@@ -513,7 +513,7 @@ class ArisuMiniMaxH3HybridToVideo(io.ComfyNode):
                 "references in one node. Outputs positive conditioning and the AV latent."
             ),
             inputs=[*_hybrid_inputs_head(), *_hybrid_inputs_tail()],
-            outputs=[io.Conditioning.Output(display_name="positive"), io.Latent.Output()],
+            outputs=[io.Conditioning.Output(display_name="positive"), io.Latent.Output(display_name="latent")],
         )
 
     @classmethod

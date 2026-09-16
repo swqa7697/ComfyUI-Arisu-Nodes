@@ -179,8 +179,8 @@ export function cropImage(img, initial, options = {}) {
   const readout = el('output', { className: 'arisu-cropper-readout' });
   const ratioMenu = el(
     'select',
-    { className: 'arisu-cropper-ratio', title: 'aspect ratio, width:height', onchange: onRatioChange },
-    [RATIO_FREE, ...RATIO_PRESETS].map((value) => el('option', { value, textContent: value })),
+    { className: 'arisu-cropper-ratio', title: 'Aspect Ratio, Width:Height', onchange: onRatioChange },
+    [RATIO_FREE, ...RATIO_PRESETS].map((value) => el('option', { value, textContent: value === RATIO_FREE ? 'Free' : value })),
   );
   const handles = Object.entries(HANDLES).map(([handle, [ax, ay]]) =>
     el('div', { className: 'arisu-cropper-handle', handle, style: `left: ${ax * 100}%; top: ${ay * 100}%; cursor: ${handle}-resize;` }),
@@ -195,12 +195,12 @@ export function cropImage(img, initial, options = {}) {
   const dialog = el('dialog', { className: 'arisu-cropper' }, [
     el('style', { textContent: STYLE }),
     el('div', { className: 'arisu-cropper-bar' }, [
-      el('label', { textContent: 'ratio' }),
+      el('label', { textContent: 'Ratio' }),
       ratioMenu,
       readout,
       el('button', {
         className: 'arisu-cropper-tool',
-        textContent: 'reset',
+        textContent: 'Reset',
         title: 'the whole image at a free ratio: no crop',
         onclick: reset,
       }),
@@ -208,7 +208,7 @@ export function cropImage(img, initial, options = {}) {
         ? [
             el('button', {
               className: 'arisu-cropper-tool',
-              textContent: 'auto-crop',
+              textContent: 'Auto-Crop',
               onclick: () => {
                 const [rw, rh] = options.aspectRatio.split(' ')[0].split(':').map(Number);
                 const w = Math.max(1, Math.min(bounds.w, Math.floor((bounds.h * rw) / rh)));
@@ -221,8 +221,8 @@ export function cropImage(img, initial, options = {}) {
             }),
           ]
         : []),
-      el('button', { className: 'arisu-cropper-cancel', textContent: 'cancel', onclick: () => dialog.close() }),
-      el('button', { className: 'arisu-cropper-apply', textContent: 'apply', onclick: apply }),
+      el('button', { className: 'arisu-cropper-cancel', textContent: 'Cancel', onclick: () => dialog.close() }),
+      el('button', { className: 'arisu-cropper-apply', textContent: 'Apply', onclick: apply }),
     ]),
     el('div', { className: 'arisu-cropper-body' }, [stage]),
   ]);

@@ -37,7 +37,7 @@ function cropWidget(node) {
 }
 
 function cropButton(node) {
-  return node.widgets.find((widget) => widget.name === 'crop…');
+  return node.widgets.find((widget) => widget.name === 'Crop…');
 }
 
 function openDialog() {
@@ -137,7 +137,7 @@ test('the crop button opens a box over the picked file; drags, a ratio, apply an
   release();
   assert.equal(readout(dialog), '400 × 400 at 400, 200');
   // apply: the crop widget gets the box and its callback, the dialog goes, the node previews the crop at its own size
-  button(dialog, 'apply').onclick();
+  button(dialog, 'Apply').onclick();
   await applied;
   assert.equal(cropWidget(node).value, '400,200,400,400');
   assert.deepEqual(written, ['400,200,400,400']);
@@ -158,7 +158,7 @@ test('the crop button opens a box over the picked file; drags, a ratio, apply an
   drag(750, 300);
   release();
   assert.equal(readout(dialog), '750 × 300 at 0, 0');
-  button(dialog, 'cancel').onclick();
+  button(dialog, 'Cancel').onclick();
   await applied;
   assert.equal(cropWidget(node).value, '400,200,400,400');
   assert.deepEqual(written, ['400,200,400,400']);
@@ -175,10 +175,10 @@ test('the crop button opens a box over the picked file; drags, a ratio, apply an
   chooseRatio(dialog, '16:9');
   assert.equal(readout(dialog), '800 × 450 at 0, 75');
   // reset is the whole image at a free ratio; applied, it is stored as no crop
-  button(dialog, 'reset').onclick();
+  button(dialog, 'Reset').onclick();
   assert.equal(readout(dialog), '800 × 600 at 0, 0');
   assert.equal(ratioMenu(dialog).value, 'free');
-  button(dialog, 'apply').onclick();
+  button(dialog, 'Apply').onclick();
   await applied;
   assert.deepEqual(written, ['400,200,400,400', '']);
   assert.equal(query(node.imgs[0].src).crop, undefined);
@@ -191,7 +191,7 @@ test('the crop button opens a box over the picked file; drags, a ratio, apply an
   drag(100, 100);
   release();
   chooseRatio(dialog, '16:9');
-  button(dialog, 'cancel').onclick();
+  button(dialog, 'Cancel').onclick();
   await applied;
   assert.equal(cropWidget(node).value, '');
   assert.deepEqual(written, ['400,200,400,400', '']);
@@ -204,7 +204,7 @@ test('the crop button opens a box over the picked file; drags, a ratio, apply an
     let editing = cropButton(original).callback();
     await settle();
     chooseRatio(openDialog(), mode);
-    button(openDialog(), 'apply').onclick();
+    button(openDialog(), 'Apply').onclick();
     await editing;
     const saved = JSON.parse(JSON.stringify({ crop: cropWidget(original).value, properties: original.properties }));
     if (mode === '4:3') assert.equal(saved.crop, '');
@@ -212,15 +212,15 @@ test('the crop button opens a box over the picked file; drags, a ratio, apply an
     const restored = makeLoadNode('saved.png');
     cropWidget(restored).value = saved.crop;
     restored.properties = saved.properties;
-    for (const close of ['cancel', 'escape', 'backdrop']) {
+    for (const close of ['Cancel', 'escape', 'backdrop']) {
       editing = cropButton(restored).callback();
       await settle();
       const opened = openDialog();
       assert.equal(ratioMenu(opened).value, mode, `${mode}: ${close}`);
       const before = readout(opened);
       chooseRatio(opened, mode === '1:1' ? '16:9' : '1:1');
-      button(opened, 'reset').onclick();
-      if (close === 'cancel') button(opened, 'cancel').onclick();
+      button(opened, 'Reset').onclick();
+      if (close === 'Cancel') button(opened, 'Cancel').onclick();
       else if (close === 'escape')
         opened.close(); // Native Escape closes the dialog without Apply.
       else {
@@ -248,7 +248,7 @@ test('the crop button opens a box over the picked file; drags, a ratio, apply an
     await settle();
     assert.equal(ratioMenu(openDialog()).value, 'free');
     assert.equal(readout(openDialog()), '300 × 300 at 10, 20');
-    button(openDialog(), 'cancel').onclick();
+    button(openDialog(), 'Cancel').onclick();
     await editing;
     assert.equal(cropWidget(legacy).value, '10,20,300,300');
   }
@@ -266,7 +266,7 @@ test('the crop button opens a box over the picked file; drags, a ratio, apply an
       roots: [{ id: 'photos', label: 'photos' }],
     }),
   );
-  await node.widgets.find((widget) => widget.name === 'browse').callback();
+  await node.widgets.find((widget) => widget.name === 'Browse').callback();
   await byClass(openDialog(), 'arisu-browser-file')[0].onclick();
   assert.equal(node.widgets[0].value, 'b.png');
   assert.equal(node.properties.arisu_crop_modes, undefined);
@@ -274,14 +274,14 @@ test('the crop button opens a box over the picked file; drags, a ratio, apply an
   await settle();
   assert.equal(ratioMenu(openDialog()).value, 'free');
   chooseRatio(openDialog(), '3:2');
-  button(openDialog(), 'cancel').onclick();
+  button(openDialog(), 'Cancel').onclick();
   await applied;
   // the ratio belongs to the file it was chosen for: a path typed into the field, which the browser never sees, starts free
   node.widgets[0].value = 'c.png';
   applied = cropButton(node).callback();
   await settle();
   assert.equal(ratioMenu(openDialog()).value, 'free');
-  button(openDialog(), 'cancel').onclick();
+  button(openDialog(), 'Cancel').onclick();
   await applied;
   // nothing to crop without a file, and a format the browser cannot decode has no known size: a warning, no dialog
   await cropButton(makeLoadNode('')).callback();
@@ -294,7 +294,7 @@ test('the crop button opens a box over the picked file; drags, a ratio, apply an
   dialog = openDialog();
   chooseRatio(dialog, '1:1');
   await LoadImage.prototype.onConfigure.call(node);
-  button(dialog, 'apply').onclick();
+  button(dialog, 'Apply').onclick();
   await applied;
   assert.equal(node.widgets[0].value, '');
   assert.equal(cropWidget(node).value, '');
@@ -313,7 +313,7 @@ test('the crop button opens a box over the picked file; drags, a ratio, apply an
   await superseded;
   await settle();
   assert.equal(body.children.filter((element) => element.tagName === 'DIALOG').length, 1);
-  button(openDialog(), 'cancel').onclick();
+  button(openDialog(), 'Cancel').onclick();
   await current;
   assert.equal(node.properties.arisu_crop_modes, undefined);
 });

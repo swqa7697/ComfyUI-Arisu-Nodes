@@ -94,8 +94,8 @@ app.registerExtension({
     nodeType.prototype.onNodeCreated = function () {
       onNodeCreated?.apply(this, arguments);
       addButtonRow(this, [
-        { label: '+ field', onClick: () => applyCount(this, currentCount(this) + 1) },
-        { label: '- field', onClick: () => applyCount(this, currentCount(this) - 1) },
+        { label: '+ Field', onClick: () => applyCount(this, currentCount(this) + 1) },
+        { label: '- Field', onClick: () => applyCount(this, currentCount(this) - 1) },
       ]);
       applyCount(this, 1);
     };

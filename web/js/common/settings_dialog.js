@@ -40,7 +40,7 @@ const STYLE = `
   border-bottom: 1px solid var(--border-color, #444); }
 .arisu-settings-title { margin: 0; font-size: 14px; font-weight: 600; }
 .arisu-settings-body { display: grid; grid-template-columns: max-content 1fr; align-items: center; gap: 10px 12px; padding: 14px 16px; }
-.arisu-settings-heading { grid-column: 1 / -1; margin: 0; font-size: 12px; font-weight: 600; text-transform: uppercase;
+.arisu-settings-heading { grid-column: 1 / -1; margin: 0; font-size: 12px; font-weight: 600;
   letter-spacing: 0.06em; color: var(--descrip-text, #999); }
 .arisu-settings-heading:not(:first-child) { margin-top: 6px; padding-top: 14px; border-top: 1px solid var(--border-color, #444); }
 .arisu-settings-label { color: var(--descrip-text, #999); text-align: right; }
@@ -100,7 +100,12 @@ function controlFor(field, current, id) {
     const select = el(
       'select',
       { id },
-      field.values.map((value) => el('option', { value, textContent: value })),
+      field.values.map((value) =>
+        el('option', {
+          value,
+          textContent: value.replace(/(^|[ _-])([a-z])/g, (_, separator, letter) => separator.replace('_', ' ') + letter.toUpperCase()),
+        }),
+      ),
     );
     select.value = String(current);
     return { elements: [select], get: () => select.value || current, set: (value) => (select.value = String(value)) };
@@ -117,7 +122,7 @@ function controlFor(field, current, id) {
   const input = el('input', { id, type: 'text', value: String(current ?? '') });
   const set = (value) => (input.value = String(value ?? ''));
   if (field.kind !== 'color') return { elements: [input], get: () => input.value, set };
-  const swatch = el('input', { type: 'color', className: 'arisu-settings-swatch', title: 'pick a colour' });
+  const swatch = el('input', { type: 'color', className: 'arisu-settings-swatch', title: 'Pick a Colour' });
   const sync = () => {
     const hex = parseColor(input.value);
     if (hex) swatch.value = hex;
@@ -161,22 +166,22 @@ export function editSettings(title, fields, values) {
     el('style', { textContent: STYLE }),
     el('div', { className: 'arisu-settings-head' }, [
       el('h2', { className: 'arisu-settings-title', textContent: title }),
-      el('button', { textContent: '✕', title: 'close', onclick: () => dialog.close() }),
+      el('button', { textContent: '✕', title: 'Close', onclick: () => dialog.close() }),
     ]),
     el('div', { className: 'arisu-settings-body' }, rows),
     el('div', { className: 'arisu-settings-bar' }, [
       el('button', {
-        textContent: 'reset',
-        title: 'the declared defaults',
+        textContent: 'Reset',
+        title: 'The Declared Defaults',
         onclick: () => {
           for (const control of controls) control.set(control.field.default);
         },
       }),
       el('span', { className: 'arisu-settings-spacer' }),
-      el('button', { textContent: 'cancel', onclick: () => dialog.close() }),
+      el('button', { textContent: 'Cancel', onclick: () => dialog.close() }),
       el('button', {
         className: 'arisu-settings-apply',
-        textContent: 'apply',
+        textContent: 'Apply',
         onclick: () => {
           result = Object.fromEntries(controls.map((control) => [control.field.name, control.get()]));
           dialog.close();

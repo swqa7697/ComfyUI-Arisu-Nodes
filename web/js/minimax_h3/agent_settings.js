@@ -92,7 +92,7 @@ async function confirmRemoval(agent, parent) {
       el('div', { className: 'actions' }, [
         el('button', { textContent: 'Cancel', onclick: () => dialog.close() }),
         el('button', {
-          textContent: 'Remove completely',
+          textContent: 'Remove Completely',
           className: 'danger',
           onclick: () => {
             confirmed = true;
@@ -119,7 +119,7 @@ export function openAgentSettings(selected = 'codex', parent = document.body) {
     active.focus();
     return;
   }
-  const dialog = el('dialog', { className: 'arisu-agents management', ariaLabel: 'Prompt Workbench agents' });
+  const dialog = el('dialog', { className: 'arisu-agents management', ariaLabel: 'Prompt Workbench Agents' });
   active = dialog;
   const content = el('div', { className: 'content' });
   const error = el('p', { className: 'error', role: 'status', ariaLive: 'polite' });
@@ -186,15 +186,17 @@ export function openAgentSettings(selected = 'codex', parent = document.body) {
     const title = agent === 'codex' ? 'Codex' : 'Grok Build';
     const model = el(
       'select',
-      { ariaLabel: `${title} model` },
+      { ariaLabel: `${title} Model` },
       (info.models ?? []).map((item) => el('option', { value: item.id, textContent: item.name })),
     );
     model.value = info.selection?.model ?? '';
-    const effort = el('select', { ariaLabel: `${title} effort` });
+    const effort = el('select', { ariaLabel: `${title} Effort` });
     function updateEfforts() {
       const supported = info.models?.find((item) => item.id === model.value)?.efforts ?? [];
       effort.replaceChildren(
-        ...(supported.length ? supported : ['']).map((value) => el('option', { value, textContent: value || 'Provider default' })),
+        ...(supported.length ? supported : ['']).map((value) =>
+          el('option', { value, textContent: value ? value[0].toUpperCase() + value.slice(1) : 'Provider Default' }),
+        ),
       );
       effort.value = supported.includes(info.selection?.effort)
         ? info.selection.effort
@@ -222,11 +224,11 @@ export function openAgentSettings(selected = 'codex', parent = document.body) {
               ? 'No supported models available.'
               : 'Ready';
     const buttons = [
-      ['Build image', 'build', info.installed],
+      ['Build Image', 'build', info.installed],
       ['Update CLI', 'update', !info.installed],
       ['Login', 'login', !info.installed],
       ['Logout', 'logout', !info.authenticated],
-      ['Remove completely', 'remove', !info.installed],
+      ['Remove Completely', 'remove', !info.installed],
     ].map(([label, operationName, disabled]) =>
       el('button', {
         textContent: label,
@@ -303,8 +305,8 @@ app.registerExtension({
       'button',
       {
         className: 'comfy-btn arisu-agents-shortcut',
-        title: 'Manage Prompt Workbench agents',
-        ariaLabel: 'Manage agents',
+        title: 'Manage Prompt Workbench Agents',
+        ariaLabel: 'Manage Agents',
         type: 'button',
         onclick: () => openAgentSettings(),
       },
@@ -328,7 +330,7 @@ app.registerExtension({
   settings: [
     {
       id: 'Arisu.PromptWorkbench.Agents',
-      name: 'Prompt Workbench agents',
+      name: 'Prompt Workbench Agents',
       category: ['Arisu Nodes', 'Prompt Workbench', 'Agents'],
       type: () => {
         // Keep native modals inside Settings so its outside-click handler sees them as descendants.
@@ -336,7 +338,7 @@ app.registerExtension({
         container.append(
           el('button', {
             className: 'comfy-btn',
-            textContent: 'Manage agents…',
+            textContent: 'Manage Agents…',
             onclick: () => openAgentSettings('codex', container),
           }),
         );
@@ -345,8 +347,8 @@ app.registerExtension({
     },
     {
       id: SHORTCUT_SETTING,
-      name: 'Show Agents shortcut',
-      category: ['Arisu Nodes', 'Prompt Workbench', 'Show Agents shortcut'],
+      name: 'Show Agents Shortcut',
+      category: ['Arisu Nodes', 'Prompt Workbench', 'Show Agents Shortcut'],
       type: 'boolean',
       defaultValue: false,
       tooltip: 'Show an Agents button in the ComfyUI menu to open agent management.',

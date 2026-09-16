@@ -53,7 +53,7 @@ test('settings manage shared accounts, supported effort choices, logs and confir
   assert.equal(menu.children.length, 0);
   const visibility = extension.settings.find((item) => item.type === 'boolean');
   visibility.onChange(true);
-  const shortcut = find(menu, 'Manage agents');
+  const shortcut = find(menu, 'Manage Agents');
   assert(shortcut);
   // Other extensions rebuild toolbar groups after startup; keep one registered shortcut.
   visibility.onChange(true);
@@ -71,19 +71,19 @@ test('settings manage shared accounts, supported effort choices, logs and confir
   responses();
   const setting = extension.settings[0].type();
   body.append(setting);
-  find(setting, 'Manage agents…').onclick();
+  find(setting, 'Manage Agents…').onclick();
   await settle();
   await settle();
   const dialog = descendants(setting).find((item) => item.open);
   try {
     openAgentSettings();
     assert.equal(descendants(body).filter((item) => item.open).length, 1);
-    assert.equal(find(dialog, 'Codex model').value, 'm1');
+    assert.equal(find(dialog, 'Codex Model').value, 'm1');
     assert.deepEqual(
-      find(dialog, 'Codex effort').children.map((item) => item.value),
+      find(dialog, 'Codex Effort').children.map((item) => item.value),
       ['low', 'medium', 'high'],
     );
-    assert(find(find(dialog, 'Agent logs'), '[job test] preparing'));
+    assert(find(find(dialog, 'Agent Logs'), '[job test] preparing'));
     const login = find(dialog, 'https://example.test/device');
     assert.equal(login.href, 'https://example.test/device');
     assert.equal(login.rel, 'noopener noreferrer');
@@ -91,12 +91,12 @@ test('settings manage shared accounts, supported effort choices, logs and confir
     assert.equal(descendants(dialog).filter((item) => item.tagName === 'SCRIPT').length, 0);
     assert.equal(descendants(dialog).filter((item) => item.role === 'tabpanel').length, 1);
     find(dialog, 'Grok Build').onclick();
-    assert(find(dialog, 'Grok Build model') && !find(dialog, 'Codex model'));
+    assert(find(dialog, 'Grok Build Model') && !find(dialog, 'Codex Model'));
     find(dialog, 'Codex').onclick();
     await settle();
     await settle();
     const codex = descendants(dialog).find((item) => item.id === 'arisu-agent-codex');
-    const effort = find(codex, 'Codex effort');
+    const effort = find(codex, 'Codex Effort');
     api.responses.push(jsonResponse(400, { error: 'unsupported model or effort' }));
     responses();
     effort.value = 'high';
@@ -106,24 +106,24 @@ test('settings manage shared accounts, supported effort choices, logs and confir
     assert(find(dialog, 'unsupported model or effort'));
     const current = descendants(dialog).find((item) => item.id === 'arisu-agent-codex');
     const calls = api.calls.length;
-    find(current, 'Remove completely').onclick();
+    find(current, 'Remove Completely').onclick();
     await settle();
     const confirm = descendants(dialog).find((item) => item.open);
     find(confirm, 'Cancel').onclick();
     await settle();
     assert.equal(api.calls.length, calls);
-    find(current, 'Remove completely').onclick();
+    find(current, 'Remove Completely').onclick();
     await settle();
     const approved = descendants(dialog).find((item) => item.open);
     api.responses.push(jsonResponse(200, { accepted: true }));
     status.agents.codex = { installed: false };
     responses();
-    find(approved, 'Remove completely').onclick();
+    find(approved, 'Remove Completely').onclick();
     await settle();
     await settle();
     const removed = descendants(dialog).find((item) => item.id === 'arisu-agent-codex');
     assert.equal(find(removed, 'Login').disabled, true);
-    assert.equal(find(removed, 'Build image').disabled, false);
+    assert.equal(find(removed, 'Build Image').disabled, false);
   } finally {
     dialog.close();
   }

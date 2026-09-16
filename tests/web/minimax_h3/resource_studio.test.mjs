@@ -125,11 +125,11 @@ test('Studio edits and reorders independent cards, counts only active references
     }),
   );
   for (const slot of ['first', 'last']) {
-    await pick(button(panel(node), `${slot} frame`), `${slot}.png`);
+    await pick(button(panel(node), `${slot === 'first' ? 'First' : 'Last'} Frame`), `${slot}.png`);
     assert.equal(state(node).keyframes[slot]?.path, `${slot}.png`);
     assert.equal(node.properties.arisu_crop_modes[`keyframe:${slot}`].ratio, '16:9');
   }
-  for (const path of ['one.png', 'two.png']) await pick(button(panel(node), 'Browse references…'), path);
+  for (const path of ['one.png', 'two.png']) await pick(button(panel(node), 'Browse References…'), path);
   const selected = state(node);
   assert.deepEqual(
     selected.references.map((item) => item.path),
@@ -139,18 +139,18 @@ test('Studio edits and reorders independent cards, counts only active references
   assert.equal(new Set(ids).size, 4);
   for (const id of ids) assert.match(id, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
   button(panel(node), 'Mute').onclick();
-  await pick(button(panel(node), 'first frame'), 'replacement.png');
+  await pick(button(panel(node), 'First Frame'), 'replacement.png');
   assert.equal(state(node).keyframes.first.muted, true);
   assert.equal(button(panel(node), 'Replace'), undefined);
   assert.equal(state(node).keyframes.first.id, ids[0]);
   assert.equal(state(node).keyframes.first.path, 'replacement.png');
   assert.deepEqual(node.properties.arisu_crop_modes['keyframe:first'], { root: 'input', path: 'replacement.png', ratio: '16:9' });
-  await checkBrowse(button(panel(node), 'first frame'), node, 'input:/');
+  await checkBrowse(button(panel(node), 'First Frame'), node, 'input:/');
   // Browse references marks every card already in the list, not only the last one, and never a keyframe.
   const marks = (cards) => cards.map((card) => [card.title, card.ariaCurrent, card.dataset.kind]);
   assert.deepEqual(
     marks(
-      await checkBrowse(button(panel(node), 'Browse references…'), node, 'input:/', {
+      await checkBrowse(button(panel(node), 'Browse References…'), node, 'input:/', {
         'one.png': 'image',
         'two.png': 'image',
         'first.png': 'image',
@@ -179,11 +179,11 @@ test('Studio edits and reorders independent cards, counts only active references
     menu.value = mode;
     menu.onchange();
     api.responses.push(jsonResponse(200, { kind: 'image', width: 800, height: 600, revision: 'r' }));
-    button(dialog, 'apply').onclick();
+    button(dialog, 'Apply').onclick();
     await editing;
   }
   let referenceRows = descendants(panel(node)).filter((element) => element.dataset.cardId);
-  button(referenceRows[1], 'Move up').onclick();
+  button(referenceRows[1], 'Move Up').onclick();
   assert.deepEqual(
     state(node).references.map((item) => item.id),
     referenceIds.toReversed(),
@@ -203,7 +203,7 @@ test('Studio edits and reorders independent cards, counts only active references
   widget(node, 'aspect_ratio').callback();
   await settle();
   restoreUUID();
-  await pick(button(panel(node), 'Browse references…'), 'native.png');
+  await pick(button(panel(node), 'Browse References…'), 'native.png');
   assert.equal(state(node).references[2].path, 'native.png');
   assert(!ids.includes(state(node).references[2].id));
   assert(!toastSeverities().includes('error'));
@@ -221,7 +221,7 @@ test('Studio edits and reorders independent cards, counts only active references
   widget(node, 'resources_json').value = JSON.stringify(data);
   widget(node, 'aspect_ratio').callback();
   await settle();
-  assert.deepEqual(counts(node), ['image 1', 'video 1']);
+  assert.deepEqual(counts(node), ['Image 1', 'Video 1']);
   const details = () =>
     descendants(panel(node))
       .filter((element) => element.dataset.cardId)
@@ -297,7 +297,7 @@ test('Studio edits and reorders independent cards, counts only active references
   assert.equal(thumbs()[1].tagName, 'SPAN');
   assert.match(thumbs()[1].innerHTML, /<svg/);
   // Mixed Browse draws videos as a poster still, falling back to the film glyph, and audio as a waveform glyph.
-  const cards = await checkBrowse(button(panel(node), 'Browse references…'), node, 'output:audio', {
+  const cards = await checkBrowse(button(panel(node), 'Browse References…'), node, 'output:audio', {
     'sound.wav': 'audio',
     'other.wav': 'audio',
     'clip.mkv': 'video',
@@ -319,9 +319,9 @@ test('Studio edits and reorders independent cards, counts only active references
   let rows = descendants(panel(node)).filter((element) => element.dataset.cardId);
   button(rows[0], 'Mute').onclick();
   assert.equal(state(node).references[0].muted, true);
-  assert.deepEqual(counts(node), ['video 1']);
+  assert.deepEqual(counts(node), ['Video 1']);
   rows = descendants(panel(node)).filter((element) => element.dataset.cardId);
-  button(rows[2], 'Move up').onclick();
+  button(rows[2], 'Move Up').onclick();
   assert.deepEqual(
     state(node).references.map((card) => card.id),
     ['picture', 'sound', 'video'],
@@ -368,10 +368,10 @@ test('Studio edits and reorders independent cards, counts only active references
   grip(rows[0]).ondragend();
   over(rows[1], 10);
   assert.equal(rows[1].dataset.drop, undefined);
-  await checkBrowse(button(panel(node), 'Browse references…'), node, 'input:/');
+  await checkBrowse(button(panel(node), 'Browse References…'), node, 'input:/');
   rows = descendants(panel(node)).filter((element) => element.dataset.cardId);
   button(rows[1], 'Unmute').onclick();
-  assert.deepEqual(counts(node), ['video 1', 'audio 1']);
+  assert.deepEqual(counts(node), ['Video 1', 'Audio 1']);
   // Existing card edits are drafts; Cancel and node removal cannot write stale selections.
   api.responses.push(jsonResponse(200, { kind: 'audio', duration: 12, has_audio: true, revision: 'a' }));
   rows = descendants(panel(node)).filter((element) => element.dataset.cardId);
@@ -379,7 +379,7 @@ test('Studio edits and reorders independent cards, counts only active references
   await settle();
   const dialog = body.children.find((element) => element.tagName === 'DIALOG');
   assert(dialog);
-  const end = descendants(dialog).find((element) => element.ariaLabel === 'End seconds');
+  const end = descendants(dialog).find((element) => element.ariaLabel === 'End Seconds');
   end.value = '8';
   end.onchange();
   button(dialog, 'Cancel').onclick();
@@ -387,10 +387,10 @@ test('Studio edits and reorders independent cards, counts only active references
   assert.equal(state(node).references[1].clip.end, 5);
   rows = descendants(panel(node)).filter((element) => element.dataset.cardId);
   button(rows[2], 'Remove').onclick();
-  await checkBrowse(button(panel(node), 'Browse references…'), node, 'output:audio');
+  await checkBrowse(button(panel(node), 'Browse References…'), node, 'output:audio');
   for (const row of descendants(panel(node)).filter((element) => element.dataset.cardId)) button(row, 'Remove').onclick();
   settings['Arisu.LoadImage.DefaultRoot'] = 'output';
-  await checkBrowse(button(panel(node), 'Browse references…'), node, 'output:/');
+  await checkBrowse(button(panel(node), 'Browse References…'), node, 'output:/');
   definition.prototype.onConfigure.call(node);
   assert.deepEqual(state(node), empty());
   assert.equal(node.properties.arisu_crop_modes, undefined);
@@ -461,7 +461,7 @@ test('Studio keyframes auto-crop on effective ratio changes and preserve manual 
   };
   const applyCrop = async ({ dialog, editing }) => {
     api.responses.push(jsonResponse(200, { kind: 'image', width: 800, height: 600, revision: 'r' }));
-    button(dialog, 'apply').onclick();
+    button(dialog, 'Apply').onclick();
     await editing;
   };
   for (const slot of ['first', null]) {
@@ -506,12 +506,12 @@ test('Studio keyframes auto-crop on effective ratio changes and preserve manual 
       if (ratio === '9:16') assert.equal((slot ? state(node).keyframes.first : state(node).references[0]).crop.width, 338);
       // New node instances exercise the serialized state, independent of transient editor caches.
       const restored = await restore(saved);
-      for (const close of ['cancel', 'escape', 'backdrop']) {
+      for (const close of ['Cancel', 'escape', 'backdrop']) {
         const draft = await openCrop(restored, slot);
         assert.equal(cropMenu(draft.dialog).value, ratio, `${key}: ${ratio}: ${close}`);
         choose(draft.dialog, ratio === '1:1' ? '21:9' : '1:1');
-        button(draft.dialog, 'reset').onclick();
-        if (close === 'cancel') button(draft.dialog, 'cancel').onclick();
+        button(draft.dialog, 'Reset').onclick();
+        if (close === 'Cancel') button(draft.dialog, 'Cancel').onclick();
         else if (close === 'escape') draft.dialog.close();
         else {
           draft.dialog.onpointerdown({ target: draft.dialog });
@@ -525,7 +525,7 @@ test('Studio keyframes auto-crop on effective ratio changes and preserve manual 
       const previous = await restore(undo[0]);
       const prior = await openCrop(previous, slot);
       assert.equal(cropMenu(prior.dialog).value, undo[0].properties.arisu_crop_modes[key].ratio);
-      button(prior.dialog, 'cancel').onclick();
+      button(prior.dialog, 'Cancel').onclick();
       await prior.editing;
     }
     // A changed source revision after Apply discards both draft changes.
@@ -533,7 +533,7 @@ test('Studio keyframes auto-crop on effective ratio changes and preserve manual 
     const rejected = await openCrop(node, slot);
     choose(rejected.dialog, '21:9');
     api.responses.push(jsonResponse(200, { kind: 'image', width: 800, height: 600, revision: 'changed' }));
-    button(rejected.dialog, 'apply').onclick();
+    button(rejected.dialog, 'Apply').onclick();
     await rejected.editing;
     assert.equal(JSON.stringify({ resources: state(node), properties: node.properties }), unchanged);
     assert.equal(toastSeverities().at(-1), 'error');
@@ -553,10 +553,10 @@ test('Studio keyframes auto-crop on effective ratio changes and preserve manual 
   const editing = button(panel(node), 'Crop').onclick();
   await settle();
   const dialog = body.children.find((element) => element.tagName === 'DIALOG');
-  assert(button(dialog, 'auto-crop'));
-  button(dialog, 'reset').onclick();
+  assert(button(dialog, 'Auto-Crop'));
+  button(dialog, 'Reset').onclick();
   api.responses.push(jsonResponse(200, { kind: 'image', width: 800, height: 600, revision: 'r' }));
-  button(dialog, 'apply').onclick();
+  button(dialog, 'Apply').onclick();
   await editing;
   assert.equal(state(node).keyframes.first.crop, null);
   assert.equal(node.properties.arisu_crop_modes['keyframe:first'].ratio, 'free');
@@ -566,14 +566,14 @@ test('Studio keyframes auto-crop on effective ratio changes and preserve manual 
   assert.equal(node.properties.arisu_crop_modes['keyframe:first'].ratio, 'free');
   // The dialog's automatic crop remains a draft until Apply, just like a manual preset or Reset.
   const autoDraft = await openCrop(node, 'first');
-  button(autoDraft.dialog, 'auto-crop').onclick();
+  button(autoDraft.dialog, 'Auto-Crop').onclick();
   assert.equal(cropMenu(autoDraft.dialog).value, '1:1');
-  button(autoDraft.dialog, 'cancel').onclick();
+  button(autoDraft.dialog, 'Cancel').onclick();
   await autoDraft.editing;
   assert.equal(state(node).keyframes.first.crop, null);
   assert.equal(node.properties.arisu_crop_modes['keyframe:first'].ratio, 'free');
   const autoApplied = await openCrop(node, 'first');
-  button(autoApplied.dialog, 'auto-crop').onclick();
+  button(autoApplied.dialog, 'Auto-Crop').onclick();
   await applyCrop(autoApplied);
   assert.equal(node.properties.arisu_crop_modes['keyframe:first'].ratio, '1:1');
   assert.deepEqual(state(node).keyframes.first.crop, { left: 100, top: 0, width: 600, height: 600 });
@@ -633,7 +633,7 @@ test('Studio keyframes auto-crop on effective ratio changes and preserve manual 
   const automatic = await openCrop(node, 'first');
   assert.equal(cropMenu(automatic.dialog).value, '9:16');
   assert.match(descendants(automatic.dialog).find((element) => element.className === 'arisu-cropper-readout').textContent, /^337 × 600/);
-  button(automatic.dialog, 'cancel').onclick();
+  button(automatic.dialog, 'Cancel').onclick();
   await automatic.editing;
   // Imported selections drop metadata before configuration; an old dialog cannot put it back after reset.
   const imported = await restore({ resources: state(node), properties: node.properties }, null);
@@ -642,7 +642,7 @@ test('Studio keyframes auto-crop on effective ratio changes and preserve manual 
   const stale = await openCrop(node, 'first');
   choose(stale.dialog, '21:9');
   definition.prototype.onConfigure.call(node);
-  button(stale.dialog, 'apply').onclick();
+  button(stale.dialog, 'Apply').onclick();
   await stale.editing;
   assert.deepEqual(state(node), empty());
   assert.equal(node.properties.arisu_crop_modes, undefined);

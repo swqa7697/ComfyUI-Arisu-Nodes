@@ -82,7 +82,7 @@ app.registerExtension({
     const onNodeCreated = nodeType.prototype.onNodeCreated;
     nodeType.prototype.onNodeCreated = function () {
       onNodeCreated?.apply(this, arguments);
-      const button = addButton(this, 'save', () => save(this, button));
+      const button = addButton(this, 'Save', () => save(this, button));
     };
   },
 });

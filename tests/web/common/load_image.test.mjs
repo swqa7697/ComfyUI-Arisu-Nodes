@@ -98,7 +98,7 @@ function filenameRow(node) {
 }
 
 function browseButton(node) {
-  return node.widgets.find((widget) => widget.name === 'browse');
+  return node.widgets.find((widget) => widget.name === 'Browse');
 }
 
 function openDialog() {
@@ -128,7 +128,7 @@ function savedRows(dialog) {
 }
 
 function saveButton(dialog) {
-  return descendants(dialog).find((element) => element.tagName === 'BUTTON' && element.textContent === '+ save');
+  return descendants(dialog).find((element) => element.tagName === 'BUTTON' && element.textContent === '+ Save');
 }
 
 /** The query string of a fetched route or an image URL, as an object. */
@@ -225,7 +225,7 @@ test('browse navigates configured roots, saves relative bookmarks, and selects a
   assert.equal(browseButton(node).serialize, false);
   assert.equal(filenameRow(node).serialize, false);
   assert.equal(filenameRow(node).options.socketless, true);
-  assert.equal(filenameRow(node).element.textContent, 'No image selected');
+  assert.equal(filenameRow(node).element.textContent, 'No Image Selected');
   // ComfyUI subtracts the DOM widget's margin (10px by default) from both sides of its allocated height.
   const filename = filenameRow(node);
   const contentHeight = filename.options.getMinHeight() - 2 * (filename.options.margin ?? 10);
@@ -239,17 +239,17 @@ test('browse navigates configured roots, saves relative bookmarks, and selects a
   const dialog = openDialog();
   assert.equal(dialog.open, true);
   const toolbar = byClass(dialog, 'arisu-browser-bar')[0];
-  for (const label of ['input dir', 'output dir']) {
+  for (const label of ['Input Dir', 'Output Dir']) {
     const shortcut = toolbar.children.find((element) => element.textContent === label);
-    const root = label.split(' ')[0];
+    const root = label.split(' ')[0].toLowerCase();
     api.responses.push(jsonResponse(200, listing(root, '', null, root === 'input' ? ['clips'] : [], root === 'input' ? ['a.png'] : [])));
     await shortcut.onclick();
     assert.equal(treeRow(dialog, `${root}:/`).ariaCurrent, 'true');
   }
   api.responses.push(jsonResponse(200, listing('input', '', null, ['clips'], ['a.png'])));
-  await toolbar.children.find((element) => element.textContent === 'input dir').onclick();
+  await toolbar.children.find((element) => element.textContent === 'Input Dir').onclick();
   descendants(dialog)
-    .find((element) => element.textContent === 'collapse')
+    .find((element) => element.textContent === 'Collapse')
     .onclick();
   assert.deepEqual(query(api.calls[0].route), { root: 'input', path: '' });
   assert.deepEqual(treeRows(dialog), [
@@ -258,7 +258,7 @@ test('browse navigates configured roots, saves relative bookmarks, and selects a
     ['output:/', false],
     ['photos:/', false],
   ]);
-  assert.equal(descendants(dialog).find((element) => element.textContent === '↑ up').disabled, true);
+  assert.equal(descendants(dialog).find((element) => element.textContent === '↑ Up').disabled, true);
   const thumbnail = descendants(dialog).find((element) => element.tagName === 'IMG');
   assert.deepEqual(query(thumbnail.src), { root: 'input', path: 'a.png', max: '256' });
   // Expanding another root preserves the current directory; navigating then selects that root.
@@ -383,7 +383,7 @@ test('browse navigates configured roots, saves relative bookmarks, and selects a
     [...ROOTS.map(({ id }) => id), 'saved:["photos","refs"]'],
   );
   descendants(dialog)
-    .find((element) => element.textContent === 'collapse')
+    .find((element) => element.textContent === 'Collapse')
     .onclick();
   assert.deepEqual(treeRows(dialog), [
     ['input:/', false],
@@ -463,7 +463,7 @@ test('legacy paths require reselection, invalid bookmarks stay inert, and failed
     );
     assert.equal(linked.imgs, undefined);
     assert.deepEqual(toastSeverities(), []);
-    assert.equal(filenameRow(linked).element.textContent, 'No image selected');
+    assert.equal(filenameRow(linked).element.textContent, 'No Image Selected');
     await LoadImage.prototype.onConfigure.call(linked);
     assert.deepEqual(toastSeverities(), []);
     reset();
@@ -571,7 +571,7 @@ test('workflow provenance preserves reopening and undo, while imports, paste and
   longNode.addInput('path', 'STRING', { link: 9 });
   await LoadImage.prototype.onConfigure.call(longNode);
   assert.equal(longNode.inputs.length, 0);
-  assert.equal(filenameRow(longNode).element.textContent, 'No image selected');
+  assert.equal(filenameRow(longNode).element.textContent, 'No Image Selected');
   assert.equal(filenameRow(longNode).element.title, '');
   assert.deepEqual(toastSeverities(), []);
   // Concurrent requests cannot borrow a saved workflow's restoration context.

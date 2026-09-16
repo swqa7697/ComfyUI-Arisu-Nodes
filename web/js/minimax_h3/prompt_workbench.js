@@ -322,17 +322,17 @@ function render(node) {
     max: '240',
     step: '1',
     value: String(value(node, 'audio_context_length')),
-    ariaLabel: 'Audio context length in frames',
+    ariaLabel: 'Audio Context Length in Frames',
   });
   audio.onchange = () => {
     edit(node, 'audio_context_length', Math.max(0, Math.min(240, Math.round(Number(audio.value) || 0))));
   };
   const motion = el('fieldset', { className: 'motion', disabled: !linked(node, 'context_latent') || !linked(node, 'vae') }, [
     el('label', {}, [
-      el('span', { textContent: 'Video frames' }),
-      combo('context_length', ['22', '5', '39', '56'], 'Context length in frames'),
+      el('span', { textContent: 'Video Frames' }),
+      combo('context_length', ['22', '5', '39', '56'], 'Context Length in Frames'),
     ]),
-    el('label', {}, [el('span', { textContent: 'Audio frames' }), audio]),
+    el('label', {}, [el('span', { textContent: 'Audio Frames' }), audio]),
     el('div', { className: 'hint', textContent: 'Frames at 24 fps · audio 0 follows video' }),
     textField('motion_notes', 'Notes', true, 'Notes on motion continuity…'),
   ]);
@@ -349,7 +349,7 @@ function render(node) {
     ]);
   });
   const references = el('div', { className: 'field' }, [
-    el('span', { className: 'label', textContent: 'Reference notes' }),
+    el('span', { className: 'label', textContent: 'Reference Notes' }),
     el(
       'div',
       { className: 'references', onwheel: keepScrollWheel },
@@ -357,14 +357,14 @@ function render(node) {
     ),
   ]);
   const generateButton = el('button', {
-    textContent: 'Generate prompt',
+    textContent: 'Generate Prompt',
     className: 'primary',
     disabled: !ready || state.running,
     onclick: () => void generate(node),
   });
   state.generateButton = generateButton;
   const activityButton = el('button', {
-    textContent: 'Generation results',
+    textContent: 'Generation Results',
     title: 'View agent activity and the latest output prompt',
     onclick: () => {
       if (state.activity) return;
@@ -408,7 +408,7 @@ function render(node) {
   if (state.draft)
     actions.unshift(
       el('button', {
-        textContent: state.applied ? 'Applied' : 'Apply output',
+        textContent: state.applied ? 'Applied' : 'Apply Output',
         className: 'review',
         disabled: state.applied || !state.draft.trim(),
         onclick: () => applyOutput(node),
@@ -422,7 +422,7 @@ function render(node) {
   });
   state.statusElement = statusElement;
   const left = el('div', { className: 'generation' }, [
-    el('div', { className: 'section-title', textContent: 'Prompt direction' }),
+    el('div', { className: 'section-title', textContent: 'Prompt Direction' }),
     el('fieldset', { className: 'generation-fields', disabled: !state.agents?.docker, onwheel: keepScrollWheel }, [
       el('div', { className: 'selectors' }, [
         el('label', { className: 'field' }, [
@@ -439,9 +439,9 @@ function render(node) {
         el('label', { className: 'field' }, [el('span', { className: 'label', textContent: 'Skill' }), combo('skill', skills, 'Skill')]),
       ]),
       textField('requirements', 'Requirements', true, 'Describe the shot, motion, pacing…'),
-      textField('trigger_words', 'LoRA trigger words', false, 'e.g. aiko_style, filmgrain'),
+      textField('trigger_words', 'LoRA Trigger Words', false, 'e.g. aiko_style, filmgrain'),
       el('details', { className: 'context', open: linked(node, 'context_latent') && linked(node, 'vae') }, [
-        el('summary', { textContent: 'Motion context' }),
+        el('summary', { textContent: 'Motion Context' }),
         ...(!linked(node, 'context_latent') || !linked(node, 'vae')
           ? [el('div', { className: 'hint', textContent: 'Connect context_latent and vae to use motion context.' })]
           : []),
@@ -451,7 +451,7 @@ function render(node) {
     ]),
     el('div', { className: 'footer' }, [statusElement, el('div', { className: 'actions' }, actions)]),
   ]);
-  const final = textField('finalized_prompt', 'Finalized prompt', true, 'Write a prompt here, or generate a draft to review…');
+  const final = textField('finalized_prompt', 'Finalized Prompt', true, 'Write a prompt here, or generate a draft to review…');
   final.className = 'final';
   const unavailable = state.agents?.docker
     ? ''
