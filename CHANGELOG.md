@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-09-15
+
 ### Changed
 
 - Use consistent capitalization for node buttons, dialog fields, headings, and UI labels while preserving lowercase wired input/output labels and existing workflow values.
