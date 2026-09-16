@@ -97,7 +97,7 @@ class FixtureServer:
         info = {
             "installed": True,
             "authenticated": True,
-            "restricted": True,
+            "auto": True,
             "ready": self.available,
             "version": "fixture",
             "models": [{"id": "fixture", "name": "Fixture model", "efforts": ["medium"]}],

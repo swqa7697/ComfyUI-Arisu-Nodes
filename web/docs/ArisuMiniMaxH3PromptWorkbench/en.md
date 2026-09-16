@@ -46,9 +46,7 @@ Only low, medium, and high efforts are exposed.
 
 Docker must already be installed and accessible to the ComfyUI server process.
 If unavailable, the left column is disabled and Finalized prompt stays editable.
-Images use `python:3.13-slim-trixie`, Bubblewrap, and official standalone CLI distributions.
-The Docker host and container security policies must permit the native CLI sandbox's nested user namespaces. Generation fails visibly
-when the sandbox or required policy cannot be enforced; it never falls back to an unrestricted agent.
+Images use `python:3.13-slim-trixie` and official standalone CLI distributions.
 Updates preserve login; failed updates retain the usable image. Confirmed complete removal deletes only that provider’s owned images, containers, and login volume.
 
 Agent accounts are shared by trusted users of this ComfyUI installation.
@@ -59,21 +57,9 @@ Generation requires network access to the provider and may consume account usage
 Bundled skills are **with-ref** (default; Ref2VA / Hybrid) and **no-ref** (T2VA / I2VA / FL2VA /
 L2VA). They share one MCP: `get_context` returns duration,
 aspect, requirements, trigger words, keyframes, grouped references, and motion stills;
-`read_image` serves those stills; `read_skill` reads `SKILL.md` and contained text references (up to 256 KiB each). Video references are ordered stills; audio is listed with notes
+`read_image` serves those stills. Video references are ordered stills; audio is listed with notes
 only. Administrators can add `<skill-name>/SKILL.md` folders under `user/__arisu_nodes/skills`.
-Files, skills, and policy are read-only. Shell commands, edits, web search/fetch,
-browser tools, connectors, and subagents are blocked. Custom skills supply prompt guidance,
-not executable hooks or permission overrides. Codex's fixed managed tool gate permits only
-Workbench readers; user and plugin hooks are ignored.
-
-Each operation gets a fresh CLI home with only its saved authentication JSON. Login/logout
-and provider token refresh persist in the dedicated volume; bounded non-executable scratch
-storage supports CLI maintenance. `/work` is read-only, and final drafts travel only through
-output streams. Provider API networking remains enabled. Fixed instructions limit agents to
-cinematic prompt writing; obvious code responses are rejected before draft review. This is
-not an absolute guarantee against code-like text in unrestricted natural language.
-
-For generation, the agent has no Docker socket, GPU, or
+Files and skills are mounted read-only for generation; the agent has no Docker socket, GPU, or
 mount of the ComfyUI installation.
 
 Switch **Codex / Grok Build** tabs in agent settings to leave more space for colored build
@@ -91,12 +77,12 @@ explicitly applied finalized text, travel with workflow copies.
 Only the current operation is retained until the next operation or server shutdown.
 There is no separate Docker log container. Output is paged without message clipping;
 exceeding the 16 MiB operation output budget stops the operation with an error.
-Use **Update CLI** for existing images before generating with the restricted policy.
+Use **Update CLI** for existing images to install the expanded event renderer.
 
 Selected media and motion stills are cached beneath ComfyUI temp, bounded to 2 GiB and expired
 after 30 idle minutes. Closing/removing the workflow releases its interests.
 
-The MCP offers only `get_context`, `read_image`, and `read_skill`; it cannot execute instructions or write files.
+The MCP offers `get_context` and `read_image` for the job manifest and listed images only.
 
 Scroll over the panel to zoom the graph; hold the middle mouse button to pan. Overflowing editors keep normal vertical scrolling; Ctrl+wheel zooms the graph there.
 

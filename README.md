@@ -69,7 +69,6 @@ Credentials are stored in Docker authentication volumes.
 
 - **MiniMax H3:** use the checkpoint, CLIP, video VAE, and audio VAE required by the stock H3 nodes.
 - **Agent generation:** install Docker with Linux container support and give the ComfyUI process access to its daemon.
-  The Docker host must support the native CLI sandbox's user namespaces.
   Open **Settings → Arisu Nodes → Prompt Workbench → Agents** to build an agent image, sign in,
   and select a model and reasoning effort. Provider accounts and settings are shared by users of the ComfyUI instance.
 - **Custom prompt skills:** place each skill folder, including its `SKILL.md` and supporting files, at

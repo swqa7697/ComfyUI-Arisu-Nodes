@@ -375,11 +375,7 @@ class Workbench:
             assets = self.restore_assets(job, media_key)
             if assets is None:
                 environment = {
-                    **{
-                        key: os.environ[key]
-                        for key in ("PATH", "LANG", "LC_ALL", "TZ", "LD_LIBRARY_PATH", "SYSTEMROOT")
-                        if key in os.environ
-                    },
+                    **os.environ,
                     "PYTHONDONTWRITEBYTECODE": "1",
                     "PYTHONPATH": os.pathsep.join([str(Path(__file__).resolve().parents[2]), *sys.path]),
                 }
