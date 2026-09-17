@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.2] - 2026-09-17
+
 ### Changed
 
 - Show Codex and Grok thoughts in Prompt Workbench Activity, with agent responses, tool metadata, and loaded skills collapsed; review generated prompts in the Output Prompt tab.
