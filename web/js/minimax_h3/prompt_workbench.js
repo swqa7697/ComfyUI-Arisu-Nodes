@@ -3,10 +3,11 @@ import { api } from '../../../../scripts/api.js';
 import { app } from '../../../../scripts/app.js';
 import { forwardToCanvas, keepScrollWheel } from '../common/canvas_gestures.js';
 import { el } from '../common/dom.js';
+import { installSelectionGuards, observeWorkflowLoads } from '../common/selection_context.js';
 import { hideWidget, setWidget } from '../common/widgets.js';
 import { ACTIVITY_STYLE, openAgentActivity } from './agent_activity.js';
 import { agentStatus, openAgentSettings, workbenchRequest } from './agent_settings.js';
-import { effectiveBundles, executionTarget } from './settings_broadcast.js';
+import { captureWorkbenchPrompt, effectiveBundles, executionTarget } from './settings_broadcast.js';
 
 const TYPE = 'ArisuMiniMaxH3PromptWorkbench';
 const nodes = new WeakMap();
@@ -77,7 +78,7 @@ const STYLE = `
 `;
 
 function widget(node, name) {
-  return node.widgets?.find((item) => item.name === name);
+  return node?.widgets?.find((item) => item.name === name);
 }
 function value(node, name) {
   return widget(node, name)?.value;
@@ -153,33 +154,141 @@ function noteKey(source, item) {
   return `${source}:${item.id}:${item.root}:${item.path}`;
 }
 
-function invalidate(node) {
-  const state = nodes.get(node);
-  if (!state) return;
-  if (state.running || state.draft) state.status = 'Context changed; generate a new draft.';
-  state.epoch++;
-  state.draft = '';
-  state.draftSignature = null;
-  state.applied = false;
-  state.activity?.close();
-  state.activity = null;
-  state.activityJob = null;
-  if (state.job) void workbenchRequest('/release', { id: state.job }).catch(() => {});
-  state.job = null;
-  state.running = false;
-  if (state.generateButton) state.generateButton.disabled = !state.agents?.agents?.[value(node, 'agent')]?.ready;
+// Sessions belong to frontend workflow objects, never serialized workflow IDs or node objects.
+const sessions = new Map();
+const views = new Set();
+let loading = false;
+let loadOwner = null;
+let sessionTimer;
+
+function workflowOwner() {
+  return loading ? loadOwner : (app.extensionManager?.workflow?.activeWorkflow ?? app.rootGraph ?? app.graph);
 }
+
+function bindSession(node) {
+  const state = nodes.get(node);
+  if (!state || loading || !node.graph) return;
+  let target;
+  try {
+    target = executionTarget(node);
+  } catch {
+    return;
+  }
+  if (!target) return;
+  const owner = workflowOwner();
+  let owned = sessions.get(owner);
+  if (!owned) {
+    owned = new Map();
+    sessions.set(owner, owned);
+  }
+  let run = owned.get(target.id);
+  if (!run && state.run?.owner === owner && !state.run.disposed) {
+    run = state.run;
+    owned.delete(run.key);
+    run.key = target.id;
+    owned.set(target.id, run);
+  }
+  if (!run) {
+    run = { epoch: 0, workflow: identity(), running: false, draft: '', hasOutput: false, status: '', owner, key: target.id };
+    owned.set(target.id, run);
+  }
+  if (state.run && state.run !== run && state.run.node === node) state.run.node = null;
+  state.run = run;
+  run.node = node;
+  if (!sessionTimer) sessionTimer = setInterval(reapSessions, 1500);
+  sessionTimer.unref?.();
+}
+
+function updateRun(run) {
+  if (run.node && nodes.get(run.node)?.run === run) render(run.node);
+  run.activity?.refreshOutput();
+}
+
+function cancelGeneration(run) {
+  run.epoch++;
+  if (run.job) void workbenchRequest('/release', { id: run.job }).catch(() => {});
+  run.job = null;
+  run.running = false;
+  run.status = 'Generation cancelled';
+  updateRun(run);
+}
+
+function disposeSession(run) {
+  run.epoch++;
+  run.disposed = true;
+  run.running = false;
+  run.activity?.close();
+  if (run.started) void workbenchRequest('/release', { workflow: run.workflow }).catch(() => {});
+  sessions.get(run.owner)?.delete(run.key);
+}
+
+function reapSessions() {
+  if (loading) return;
+  const manager = app.extensionManager?.workflow;
+  const open = manager?.openWorkflows;
+  for (const [owner, owned] of sessions) {
+    if (Array.isArray(open) && owner !== manager.activeWorkflow && !open.includes(owner)) {
+      for (const run of owned.values()) disposeSession(run);
+    }
+    if (!owned.size) sessions.delete(owner);
+  }
+  if (!sessions.size) {
+    clearInterval(sessionTimer);
+    sessionTimer = null;
+  }
+}
+
+globalThis.addEventListener?.('pagehide', () => {
+  for (const owned of sessions.values()) for (const run of owned.values()) disposeSession(run);
+  reapSessions();
+});
+
+observeWorkflowLoads({
+  before(_current, target) {
+    loading = true;
+    loadOwner = target;
+    for (const owned of sessions.values()) for (const run of owned.values()) run.activity?.close();
+  },
+  after(active, succeeded) {
+    loading = false;
+    // A failed or imported load cannot borrow a previous workflow's runtime state.
+    if (!succeeded || !loadOwner) {
+      const owned = sessions.get(active);
+      if (owned) for (const run of owned.values()) disposeSession(run);
+    }
+    for (const node of views) {
+      bindSession(node);
+      render(node);
+    }
+    const owned = sessions.get(active);
+    if (owned) for (const run of owned.values()) if (!run.node || !views.has(run.node)) disposeSession(run);
+    loadOwner = null;
+    reapSessions();
+  },
+});
 
 function edit(node, name, next) {
   const target = widget(node, name);
   if (!target || target.value === next) return;
-  if (name !== 'finalized_prompt') invalidate(node);
   node.graph?.beforeChange?.();
   try {
     setWidget(node, target, next);
   } finally {
     node.graph?.afterChange?.();
   }
+  if (name === 'finalized_prompt') refreshApplied(node);
+}
+
+function refreshApplied(node) {
+  const state = nodes.get(node);
+  const run = state?.run;
+  if (!run) return;
+  const applied = run.hasOutput && run.draft === value(node, 'finalized_prompt');
+  if (state.applyButton) {
+    state.applyButton.disabled = applied || !run.draft.trim();
+    state.applyButton.textContent = applied ? 'Applied' : 'Apply Output';
+  }
+  run.activity?.refreshOutput();
 }
 
 function notify(severity, detail) {
@@ -187,19 +296,11 @@ function notify(severity, detail) {
 }
 
 function applyOutput(node) {
-  const state = nodes.get(node);
-  if (!state?.draft?.trim()) return;
-  if (sourceSnapshot(node).signature !== state.draftSignature) {
-    invalidate(node);
-    state.status = 'Context changed; generate a new prompt.';
-    render(node);
-    return;
-  }
-  edit(node, 'finalized_prompt', state.draft);
-  state.status = 'Output applied';
-  state.applied = true;
-  render(node);
-  state.activity?.refreshOutput();
+  const run = nodes.get(node)?.run;
+  if (!run?.draft?.trim()) return;
+  edit(node, 'finalized_prompt', run.draft);
+  run.status = 'Output applied';
+  updateRun(run);
 }
 
 function wait(ms) {
@@ -207,22 +308,22 @@ function wait(ms) {
 }
 
 async function generate(node) {
-  const state = nodes.get(node);
-  if (!state || state.running) return;
-  invalidate(node);
-  state.running = true;
-  state.status = 'Preparing workflow…';
-  const epoch = state.epoch;
-  const sourceSignature = sourceSnapshot(node).signature;
-  const current = () => nodes.get(node) === state && state.epoch === epoch && sourceSnapshot(node).signature === sourceSignature;
-  render(node);
+  bindSession(node);
+  const run = nodes.get(node)?.run;
+  if (!run || run.running) return;
+  run.epoch++;
+  run.draft = '';
+  run.hasOutput = false;
+  run.activityJob = null;
+  run.activity?.close();
+  run.running = true;
+  run.status = 'Preparing workflow…';
+  const epoch = run.epoch;
+  const current = () => !run.disposed && run.epoch === epoch;
   try {
-    const prompt = await app.graphToPrompt();
-    if (!current()) return;
-    const target = executionTarget(node);
-    if (!target) throw new Error('Unable to resolve this Workbench in the workflow.');
-    const nodeId = target.id;
+    // Capture everything in one synchronous turn. Edits after this point belong to the next Generate.
     const snapshot = sourceSnapshot(node);
+    const prompt = captureWorkbenchPrompt(node);
     const options = Object.fromEntries(
       ['agent', 'skill', 'context_length', 'audio_context_length', 'motion_notes', 'trigger_words', 'requirements'].map((name) => [
         name,
@@ -231,10 +332,12 @@ async function generate(node) {
     );
     options.reference_notes = notes(node);
     options.source_id = snapshot.sourceId;
+    run.started = true;
+    updateRun(run);
     const response = await workbenchRequest('/generate', {
       prompt: prompt.output,
-      node_id: nodeId,
-      workflow: state.workflow,
+      node_id: prompt.nodeId,
+      workflow: run.workflow,
       client_id: api.clientId,
       options,
     });
@@ -242,14 +345,14 @@ async function generate(node) {
       void workbenchRequest('/release', { id: response.id }).catch(() => {});
       return;
     }
-    state.job = response.id;
-    state.activityJob = response.id;
+    run.job = response.id;
+    run.activityJob = response.id;
     while (current()) {
-      const response = await api.fetchApi(`/arisu/workbench/jobs/${state.job}`);
+      const response = await api.fetchApi(`/arisu/workbench/jobs/${run.job}`);
       if (!response.ok) throw new Error('Generation job is unavailable.');
       const job = await response.json();
       if (!current()) return;
-      state.status =
+      run.status =
         {
           preparing: 'Loading motion context…',
           preparing_media: 'Preparing selected references…',
@@ -258,26 +361,26 @@ async function generate(node) {
           cancelled: 'Generation cancelled',
         }[job.state] ?? job.state;
       if (job.state === 'complete') {
-        state.draft = job.draft;
-        state.draftSignature = sourceSignature;
+        run.draft = job.draft;
+        run.hasOutput = true;
         notify('success', 'Prompt ready. Open Generation results to review it, or choose Apply output.');
         break;
       }
-      if (job.state === 'failed' || job.state === 'cancelled') throw new Error(job.error || state.status);
-      if (state.statusElement) state.statusElement.textContent = state.status;
+      if (job.state === 'failed' || job.state === 'cancelled') throw new Error(job.error || run.status);
+      const state = nodes.get(run.node);
+      if (state?.statusElement) state.statusElement.textContent = run.status;
       await wait(750);
     }
   } catch (error) {
     if (current()) {
-      state.status = error.message;
+      run.status = error.message;
       notify('error', error.message);
     }
   } finally {
     if (current()) {
-      state.running = false;
-      state.job = null;
-      render(node);
-      state.activity?.refreshOutput();
+      run.running = false;
+      run.job = null;
+      updateRun(run);
     }
   }
 }
@@ -285,6 +388,8 @@ async function generate(node) {
 function render(node) {
   const state = nodes.get(node);
   if (!state) return;
+  const run = state.run ?? { running: false, draft: '', status: '' };
+  const applied = run.hasOutput && run.draft === value(node, 'finalized_prompt');
   const source = sourceSnapshot(node);
   const provider = state.agents?.agents?.[value(node, 'agent')];
   const ready = state.agents?.docker && provider?.ready;
@@ -359,7 +464,7 @@ function render(node) {
   const generateButton = el('button', {
     textContent: 'Generate Prompt',
     className: 'primary',
-    disabled: !ready || state.running,
+    disabled: !ready || run.running,
     onclick: () => void generate(node),
   });
   state.generateButton = generateButton;
@@ -367,26 +472,27 @@ function render(node) {
     textContent: 'Generation Results',
     title: 'View agent activity and the latest output prompt',
     onclick: () => {
-      if (state.activity) return;
-      state.activity = openAgentActivity(
+      if (run.activity) return;
+      run.activity = openAgentActivity(
         () => ({
-          job: state.activityJob,
-          running: state.running,
-          message: state.status,
-          draft: state.draft,
-          hasOutput: state.draftSignature != null,
-          applied: state.applied,
+          job: run.activityJob,
+          running: run.running,
+          message: run.status,
+          draft: run.draft,
+          hasOutput: run.hasOutput,
+          applied: run.hasOutput && run.draft === value(run.node, 'finalized_prompt'),
         }),
         () => {
-          state.activity = null;
+          run.activity = null;
           state.activityButton?.focus();
         },
         (draft) => {
-          state.draft = draft;
-          state.applied = false;
+          run.draft = draft;
           render(node);
         },
-        () => applyOutput(node),
+        () => {
+          if (run.node) applyOutput(run.node);
+        },
       );
     },
   });
@@ -394,31 +500,31 @@ function render(node) {
   const actions = [activityButton, generateButton];
   if (!ready && state.agents?.docker)
     actions.unshift(el('button', { textContent: 'Setup', onclick: () => openAgentSettings(value(node, 'agent')) }));
-  if (state.running)
+  if (run.running)
     actions.unshift(
       el('button', {
         textContent: 'Cancel',
         onclick: () => {
-          invalidate(node);
-          state.status = 'Generation cancelled';
+          cancelGeneration(run);
           render(node);
         },
       }),
     );
-  if (state.draft)
-    actions.unshift(
-      el('button', {
-        textContent: state.applied ? 'Applied' : 'Apply Output',
-        className: 'review',
-        disabled: state.applied || !state.draft.trim(),
-        onclick: () => applyOutput(node),
-      }),
-    );
+  state.applyButton = null;
+  if (run.draft) {
+    state.applyButton = el('button', {
+      textContent: applied ? 'Applied' : 'Apply Output',
+      className: 'review',
+      disabled: applied || !run.draft.trim(),
+      onclick: () => applyOutput(node),
+    });
+    actions.unshift(state.applyButton);
+  }
   const statusElement = el('div', {
-    className: `status${state.running ? ' running' : ''}`,
+    className: `status${run.running ? ' running' : ''}`,
     role: 'status',
     ariaLive: 'polite',
-    textContent: state.status || (ready ? 'Ready' : 'Complete agent setup to generate.'),
+    textContent: run.status || (ready ? 'Ready' : 'Complete agent setup to generate.'),
   });
   state.statusElement = statusElement;
   const left = el('div', { className: 'generation' }, [
@@ -465,9 +571,10 @@ function render(node) {
 async function refresh(node) {
   const state = nodes.get(node);
   if (!state) return;
+  bindSession(node);
+  refreshApplied(node);
   const snapshot = sourceSnapshot(node);
   if (state.sourceSignature !== snapshot.signature) {
-    if (state.sourceSignature) invalidate(node);
     state.sourceSignature = snapshot.signature;
     render(node);
   }
@@ -488,6 +595,7 @@ async function refresh(node) {
 
 app.registerExtension({
   name: 'Arisu.MiniMaxH3.PromptWorkbench',
+  init: installSelectionGuards,
   beforeRegisterNodeDef(nodeType, nodeData) {
     if (nodeData.name !== TYPE) return;
     function chain(name, callback) {
@@ -501,12 +609,10 @@ app.registerExtension({
     chain('onNodeCreated', function () {
       const body = el('div', { className: 'arisu-workbench' });
       forwardToCanvas(body);
-      const state = { body, epoch: 0, workflow: identity(), status: '', running: false, draft: '', sourceSignature: '' };
+      const state = { body, sourceSignature: '' };
       nodes.set(this, state);
-      state.hide = () => {
-        void workbenchRequest('/release', { workflow: state.workflow }).catch(() => {});
-      };
-      globalThis.addEventListener?.('pagehide', state.hide);
+      views.add(this);
+      bindSession(this);
       for (const name of FIELDS) {
         const control = widget(this, name);
         if (control) hideWidget(this, control);
@@ -522,12 +628,13 @@ app.registerExtension({
       void refresh(this);
       state.timer = setInterval(() => void refresh(this), 1500);
     });
+    chain('onAdded', function () {
+      bindSession(this);
+    });
     chain('onConfigure', function () {
       const state = nodes.get(this);
       if (!state) return;
-      invalidate(this);
-      void workbenchRequest('/release', { workflow: state.workflow }).catch(() => {});
-      state.workflow = identity();
+      bindSession(this);
       for (const name of FIELDS) {
         const control = widget(this, name);
         if (control) hideWidget(this, control);
@@ -542,17 +649,19 @@ app.registerExtension({
       size[1] = Math.max(500, size[1]);
     });
     chain('onConnectionsChange', function () {
-      invalidate(this);
       render(this);
       void refresh(this);
     });
     chain('onRemoved', function () {
       const state = nodes.get(this);
       if (!state) return;
-      invalidate(this);
       clearInterval(state.timer);
-      globalThis.removeEventListener?.('pagehide', state.hide);
-      void workbenchRequest('/release', { workflow: state.workflow }).catch(() => {});
+      views.delete(this);
+      if (state.run?.node === this) {
+        state.run.node = null;
+        if (!loading) disposeSession(state.run);
+      }
+      reapSessions();
       state.body.remove();
       nodes.delete(this);
     });

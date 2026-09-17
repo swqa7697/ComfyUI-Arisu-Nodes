@@ -1,0 +1,62 @@
+[ui]
+permission_mode = "dontAsk"
+disable_bypass_permissions_mode = true
+remember_tool_approvals = false
+
+[cli]
+auto_update = false
+
+[features]
+managed_config = false
+telemetry = false
+codebase_indexing = false
+lsp_tools = false
+
+[session]
+load_envrc = false
+
+[managed_mcps]
+enabled = false
+gateway_tools_enabled = false
+
+[subagents]
+enabled = false
+
+[memory]
+enabled = false
+[memory_v2]
+enabled = false
+[workflows]
+enabled = false
+[telemetry]
+trace_upload = false
+otel_enabled = false
+
+[compat.claude]
+agents = false
+hooks = false
+mcps = false
+rules = false
+skills = false
+[compat.codex]
+hooks = false
+skills = false
+[compat.cursor]
+agents = false
+hooks = false
+mcps = false
+rules = false
+skills = false
+
+[permission]
+allow = ["MCPTool(workbench__get_context)", "MCPTool(workbench__read_skill)"]
+# Keep a path glob: bare Read or Read(*) also blocks MCP discovery.
+deny = ["Read(**)", "Bash", "Edit", "WebFetch", "WebSearch"]
+
+[mcp_servers.workbench]
+command = "/usr/local/bin/python"
+args = ["/opt/workbench/mcp_server.py"]
+
+[[hooks.PreToolUse]]
+matcher = ".*"
+hooks = [{type = "command", command = "/usr/local/bin/python /opt/workbench/agents/grok/hook.py", timeout = 5}]

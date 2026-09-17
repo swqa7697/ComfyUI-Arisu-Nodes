@@ -12,13 +12,24 @@ from __future__ import annotations
 import copy
 import json
 import math
+import mimetypes
 import re
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple, TypeVar
 
-from ..common.core import relative_path
+from ..common.core import image_content_type, relative_path
 
 T = TypeVar("T")
+
+
+def media_kind(path: str) -> Optional[str]:
+    """Apply the image allowlist, then classify audio/video using standard MIME types."""
+    if image_content_type(path):
+        return "image"
+    mime, _ = mimetypes.guess_type(path, strict=False)
+    kind = mime.split("/", 1)[0] if mime else None
+    return kind if kind in ("video", "audio") else None
+
 
 CANVAS_MULTIPLE = 32
 BASE_SHORT_EDGE = 768
@@ -594,7 +605,7 @@ def motion_tail(total_steps: int, length: int) -> Tuple[int, int]:
     return start, total_steps
 
 
-def workbench_samples(count: int, limit: int = 12) -> List[int]:
+def workbench_samples(count: int, limit: int = 8) -> List[int]:
     """Keep evenly spaced ordered frames, including both endpoints."""
     if count < 1 or limit < 1:
         raise ValueError("empty frame sequence")
@@ -602,28 +613,23 @@ def workbench_samples(count: int, limit: int = 12) -> List[int]:
     return [round(i * (count - 1) / (kept - 1)) for i in range(kept)] if kept > 1 else [0]
 
 
+def motion_samples(length: int) -> List[int]:
+    """Select two, four, six or eight frames from the supported decoded windows."""
+    if length not in (5, 22, 39, 56):
+        raise ValueError("unsupported context length")
+    return workbench_samples(length, 2 + 2 * ((length - 5) // 17))
+
+
 def finalized_markdown(text: str) -> str:
     """Extract only a single fenced final response, never progress or thoughts."""
-    match = re.fullmatch(r"\s*```markdown[ \t]*\r?\n([\s\S]*?)\r?\n```\s*", text)
+    match = re.fullmatch(r"\s*```(?:markdown|text)?[ \t]*\r?\n([\s\S]*?)\r?\n```\s*", text)
+    if "ARISU_POLICY_REFUSAL" in text:
+        raise ValueError("request refused by the prompt-only policy")
     if not match or not match[1].strip() or "```" in match[1]:
         raise ValueError("agent must return one nonempty fenced markdown block")
     if len(match[1]) > 65536:
         raise ValueError("agent prompt is too large")
-    prompt = match[1].strip()
-    # Defense in depth, not a semantic proof: preserve normal screenplay labels,
-    # dialogue, multilingual prose and MiniMax markup while refusing obvious code.
-    executable = re.compile(
-        r"(?im)^\s*(?:#!\s*/|(?:diff --git|\*\*\* (?:Begin Patch|Update File|Add File))\b"
-        r"|(?:from\s+[\w.]+\s+import\s+|import\s+[\w.]+(?:\s*$|\s*[;,]))"
-        r"|(?:async\s+)?def\s+\w+\s*\(|class\s+\w+[^\n]*:"
-        r"|(?:export\s+)?(?:const|let|var)\s+\w+\s*=|(?:async\s+)?function\s*[\w$]*\s*\("
-        r"|(?:sudo\s+)?(?:curl|wget|pip|pip3|npm|pnpm|bash|sh|python3?)\s+(?:[-/]|-c\b)"
-        r"|(?:os\.system|subprocess\.(?:run|Popen|call)|eval|exec|print|console\.(?:log|error))\s*\("
-        r"|<script\b|#include\s*[<\"]|(?:public\s+)?static\s+void\s+main\b)"
-    )
-    if "~~~" in prompt or executable.search(prompt):
-        raise ValueError("agent response contains executable code; request an audiovisual prompt")
-    return prompt
+    return match[1].strip()
 
 
 def workbench_options(value: Any) -> Dict[str, Any]:

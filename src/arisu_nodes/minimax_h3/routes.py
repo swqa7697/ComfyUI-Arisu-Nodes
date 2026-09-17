@@ -16,7 +16,7 @@ from aiohttp import web
 
 from ..common.core import PREVIEW_CONTENT_TYPE, browse_directory, contained_path, image_content_type, is_animated_image, relative_path
 from ..common.paths import image_roots, select_root
-from .core import Resource
+from .core import Resource, media_kind
 from .media import StaleResource, UnsupportedMedia, metadata, poster, source_path
 from .proxies import ProxyBusy, ProxyJob, ProxyManager
 
@@ -36,19 +36,8 @@ def roots() -> Dict[str, str]:
     return image_roots(folder_paths.get_input_directory(), folder_paths.get_output_directory())
 
 
-def media_kind(path: str) -> Optional[str]:
-    """Classify a candidate by extension: the image policy first, then ComfyUI's stock media filter; ``None`` otherwise."""
-    if image_content_type(path):
-        return "image"
-    if folder_paths.filter_files_content_types([path], ["video"]):
-        return "video"
-    if folder_paths.filter_files_content_types([path], ["audio"]):
-        return "audio"
-    return None
-
-
 def candidate(path: str) -> bool:
-    """Preserve image policy and use ComfyUI's stock media candidate filter."""
+    """Use the same extension policy as metadata validation and media workers."""
     return media_kind(path) is not None
 
 

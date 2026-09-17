@@ -7,7 +7,6 @@ import json
 import logging
 import os
 import shutil
-import sys
 import tempfile
 import time
 import uuid
@@ -15,6 +14,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Mapping, Optional, Set
 
+from ..worker import worker_command, worker_environment
 from .core import Resource
 from .media import source_file
 
@@ -159,15 +159,8 @@ class ProxyManager:
             if job.cancelled:
                 raise asyncio.CancelledError
             job.process = await asyncio.create_subprocess_exec(
-                sys.executable,
-                "-B",
-                "-m",
-                "arisu_nodes.minimax_h3.proxy_worker",
-                env={
-                    **os.environ,
-                    "PYTHONPATH": os.pathsep.join([str(Path(__file__).resolve().parents[2]), *sys.path]),
-                    "PYTHONDONTWRITEBYTECODE": "1",
-                },
+                *worker_command("proxy"),
+                env=worker_environment(),
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,

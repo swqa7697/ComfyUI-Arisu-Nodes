@@ -10,7 +10,6 @@ import os
 import re
 import shutil
 import subprocess
-import sys
 import threading
 import time
 import uuid
@@ -20,10 +19,11 @@ from typing import Any, Callable, Dict, List, Optional
 
 from PIL import Image
 
+from ..worker import worker_command, worker_environment
 from .agent_docker import ASSETS, AgentBusy, DockerAgents
-from .core import ResourceBundle, VideoSettings, finalized_markdown, validate_bundle, workbench_options, workbench_samples
-from .media import validate_source
-from .proxy_worker import LimitedOutput
+from .core import ResourceBundle, VideoSettings, finalized_markdown, motion_samples, validate_bundle, workbench_options
+from .media import validate_workbench_source
+from .workbench_images import PROCESSING, encode_image
 
 logger = logging.getLogger(__name__)
 CACHE_LIMIT = 2 * 1024 * 1024 * 1024
@@ -112,13 +112,15 @@ def _inspect(item: Any, assets: List[Dict[str, Any]]) -> Dict[str, Any]:
 
 
 def job_context(job: Generation, assets: List[Dict[str, Any]], resources: ResourceBundle) -> Dict[str, Any]:
-    """Build the version-2 Workbench MCP manifest from staged media."""
+    """Build the version-3 Workbench MCP manifest from staged media."""
     settings = job.settings
     duration = settings.length / 24 if settings else None
     present = bool(job.motion)
     delivered = (settings.length - job.options["context_length"]) / 24 if settings and present else duration
     references = []
     for item in resources.images + resources.videos + resources.audios:
+        if item.muted:
+            continue
         key = job.options["source_id"] + ":" + item.id + ":" + item.root + ":" + item.path
         entry: Dict[str, Any] = {
             "id": item.id,
@@ -134,8 +136,13 @@ def job_context(job: Generation, assets: List[Dict[str, Any]], resources: Resour
         if item.kind == "video":
             entry["include_audio"] = item.include_audio
         references.append(entry)
+    attached = []
+    notes = {entry["id"]: entry["note"] for entry in references}
+    for index, asset in enumerate(assets):
+        note = job.options["motion_notes"] if asset["role"] == "motion" else notes.get(asset.get("resource_id"), "")
+        attached.append({**asset, "path": "/inputs/" + asset["file"], "attachment_index": index + 1, "note": note})
     return {
-        "version": 2,
+        "version": 3,
         "duration_seconds": duration,
         "frame_count": settings.length if settings else None,
         "aspect_ratio": settings.aspect_ratio if settings else None,
@@ -151,7 +158,7 @@ def job_context(job: Generation, assets: List[Dict[str, Any]], resources: Resour
             "stills": [{"asset_id": asset["id"], "timestamp": asset.get("timestamp")} for asset in job.motion],
         },
         "keyframes": {"first": _keyframe(assets, "first_keyframe"), "last": _keyframe(assets, "last_keyframe")},
-        "assets": assets,
+        "assets": attached,
         "references": references,
     }
 
@@ -279,15 +286,26 @@ class Workbench:
                 return False
             job.motion = assets
             return True
-        times = workbench_samples(job.options["context_length"])
+        times = motion_samples(job.options["context_length"])
+        if len(frames) != len(times):
+            raise ValueError("motion frame count mismatch")
         for index, frame in enumerate(frames):
-            target = job.directory / f"motion-{index:02}.png"
+            target = job.directory / (uuid.uuid4().hex + ".webp")
             encoded = io.BytesIO()
-            frame.save(LimitedOutput(encoded, min(16 * 1024 * 1024, CACHE_LIMIT - self.used_bytes())), format="PNG")
+            dimensions = encode_image(frame, encoded, CACHE_LIMIT - self.used_bytes())
             with target.open("xb") as output:
                 output.write(encoded.getvalue())
             job.motion.append(
-                {"id": target.stem, "file": target.name, "mime": "image/png", "role": "motion", "timestamp": times[index] / 24}
+                {
+                    "id": target.stem,
+                    "file": target.name,
+                    "mime": "image/webp",
+                    "role": "motion",
+                    "resource_id": "motion",
+                    "timestamp": times[index] / 24,
+                    "sequence_index": index,
+                    **dimensions,
+                }
             )
         self.store_assets(job, key, job.motion)
         return True
@@ -361,36 +379,27 @@ class Workbench:
             ):
                 for item in items:
                     if item:
-                        validate_source(job.roots, item)
+                        validate_workbench_source(job.roots, item)
                         sources.append({"role": role, "item": asdict(item)})
             used = self.used_bytes()
             payload = {
                 "directory": str(job.directory),
                 "roots": job.roots,
                 "resources": sources,
-                "frame_count": job.settings.length if job.settings else 1445,
                 "max_bytes": CACHE_LIMIT - used,
             }
-            media_key = hashlib.sha256(json.dumps([sources, payload["frame_count"]], sort_keys=True).encode()).hexdigest()
+            media_key = hashlib.sha256(json.dumps([sources, PROCESSING], sort_keys=True).encode()).hexdigest()
             assets = self.restore_assets(job, media_key)
             if assets is None:
-                environment = {
-                    **{
-                        key: os.environ[key]
-                        for key in ("PATH", "LANG", "LC_ALL", "TZ", "LD_LIBRARY_PATH", "SYSTEMROOT")
-                        if key in os.environ
-                    },
-                    "PYTHONDONTWRITEBYTECODE": "1",
-                    "PYTHONPATH": os.pathsep.join([str(Path(__file__).resolve().parents[2]), *sys.path]),
-                }
                 process = subprocess.Popen(
-                    [sys.executable, "-m", "arisu_nodes.minimax_h3.workbench_media"],
+                    worker_command("workbench"),
                     cwd=ASSETS.parents[1],
                     stdin=subprocess.PIPE,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                     text=True,
-                    env=environment,
+                    encoding="utf-8",
+                    env=worker_environment(),
                 )
                 sent = False
                 while True:
@@ -418,7 +427,7 @@ class Workbench:
                 raise ValueError("Workbench media cache capacity exceeded")
             shutil.copytree(skill, staged_skill)
             for item in resources.sources():
-                validate_source(job.roots, item)
+                validate_workbench_source(job.roots, item)
             # Docker's fixed unprivileged UID can differ from the host owner's UID.
             # These are exclusively staged files, never hard links to source originals.
             job.directory.chmod(0o755)
@@ -480,5 +489,5 @@ def motion_key(job: Generation, shape: Any, identity: str) -> str:
     """Key stills by preparation graph revisions, VAE identity and context window."""
     inputs = {key: {k: v for k, v in entry.items() if k != "_meta"} for key, entry in job.graph.items() if key != job.node_id}
     return hashlib.sha256(
-        json.dumps([inputs, list(shape), identity, job.options["context_length"]], sort_keys=True, default=str).encode()
+        json.dumps([inputs, list(shape), identity, job.options["context_length"], PROCESSING], sort_keys=True, default=str).encode()
     ).hexdigest()

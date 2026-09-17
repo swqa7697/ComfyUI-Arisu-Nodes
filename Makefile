@@ -115,3 +115,10 @@ test-browser: ## Run local Chromium scenarios (ARGS="-k studio")
 
 inspect-browser: ## Open the isolated ComfyUI frontend for interactive inspection
 	@bash scripts/browser.sh inspect
+.PHONY: test-workbench-docker test-workbench-live
+
+test-workbench-docker: ## Run optional native Docker policy checks without accounts
+	@$(_PY) scripts/smoke-workbench.py $(ARGS)
+
+test-workbench-live: ## Run real provider regressions (ARGS must supply provider auth volumes)
+	@$(_PY) scripts/smoke-workbench.py --live $(ARGS)

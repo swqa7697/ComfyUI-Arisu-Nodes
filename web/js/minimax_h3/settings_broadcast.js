@@ -484,6 +484,50 @@ export function executionTarget(node) {
   return matches[0];
 }
 
+/** Capture the preparation graph without awaiting widget serializers or rereading live ownership. */
+export function captureWorkbenchPrompt(node) {
+  const entries = executionNodes();
+  const targets = entries.filter((entry) => entry.node === node);
+  if (targets.length !== 1) throw new Error('Use a separate Workbench for each execution context.');
+  const output = {};
+  for (const { node: source, id, dto } of entries) {
+    if (!active(source) || source.isVirtualNode) continue;
+    const inputs = {};
+    for (const [index, input] of (source.inputs ?? []).entries()) {
+      if (input.link == null) continue;
+      const links = source.graph?.links;
+      const resolved = dto?.resolveInput ? dto.resolveInput(index) : (links?.get?.(input.link) ?? links?.[input.link]);
+      if (!resolved) continue;
+      if (resolved.widgetInfo) inputs[input.name] = structuredClone(resolved.widgetInfo.value);
+      else {
+        const origin = entries.find((entry) => entry.id === String(resolved.origin_id))?.node;
+        if (origin?.isVirtualNode) inputs[input.name] = structuredClone(origin.widgets?.[0]?.value);
+        else inputs[input.name] = [String(resolved.origin_id), Number(resolved.origin_slot)];
+      }
+    }
+    output[id] = { class_type: source.comfyClass ?? source.type, inputs };
+  }
+  inject(output);
+  const captured = {};
+  function visit(id) {
+    if (captured[id] || !output[id]) return;
+    const entry = output[id];
+    captured[id] = entry;
+    const source = entries.find((item) => item.id === id).node;
+    for (const control of source.widgets ?? []) {
+      if (!control.name || control.options?.serialize === false || control.serialize === false || control.name in entry.inputs) continue;
+      const stored = control.value;
+      if (stored === undefined || typeof stored === 'function') continue;
+      entry.inputs[control.name] = Array.isArray(stored) ? { __value__: structuredClone(stored) } : structuredClone(stored);
+    }
+    for (const value of Object.values(entry.inputs)) {
+      if (Array.isArray(value) && value.length === 2 && Number.isInteger(value[1])) visit(value[0]);
+    }
+  }
+  visit(targets[0].id);
+  return { output: captured, nodeId: targets[0].id };
+}
+
 /** Follow explicit bundle ports across reroutes and subgraph boundaries for UI metadata. */
 export function effectiveBundles(node) {
   function explicit(name) {

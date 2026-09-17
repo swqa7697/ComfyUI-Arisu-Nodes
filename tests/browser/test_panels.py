@@ -282,6 +282,22 @@ def test_prompt_workbench():
                     page.get_by_role("button", name="Generate Prompt", exact=True).click()
                     expect(page.locator(".arisu-workbench .status")).to_have_text("Generating prompt…")
                     screenshot(page, name, "generating")
+                    # Context and output edits, including real frontend Undo/Redo, retain the job.
+                    captured = server.generation_requests[-1]
+                    release_count = sum("/arisu/workbench/release" in request for request in server.requests)
+                    page.evaluate("window.comfyAPI.app.app.extensionManager.workflow.activeWorkflow.changeTracker.captureCanvasState()")
+                    page.get_by_label("Requirements", exact=True).fill("Next generation should use a different camera angle.")
+                    page.get_by_label("Finalized Prompt", exact=True).fill("Manual edit during generation")
+                    page.get_by_label("Finalized Prompt", exact=True).blur()
+                    page.evaluate("window.comfyAPI.app.app.extensionManager.workflow.activeWorkflow.changeTracker.captureCanvasState()")
+                    page.evaluate("window.comfyAPI.app.app.extensionManager.workflow.activeWorkflow.changeTracker.undo()")
+                    expect(page.get_by_role("button", name="Cancel", exact=True)).to_be_visible()
+                    page.evaluate("window.comfyAPI.app.app.extensionManager.workflow.activeWorkflow.changeTracker.redo()")
+                    expect(page.get_by_label("Finalized Prompt", exact=True)).to_have_value("Manual edit during generation")
+                    expect(page.get_by_role("button", name="Generate Prompt", exact=True)).to_be_disabled()
+                    assert "Next generation" not in captured["options"]["requirements"]
+                    assert sum("/arisu/workbench/release" in request for request in server.requests) == release_count
+                    screenshot(page, name, "editing-during-generation")
                     assert page.locator(".arisu-workbench .status").evaluate(
                         "e => getComputedStyle(e, '::before').animationName === 'none'"
                     )
@@ -293,7 +309,7 @@ def test_prompt_workbench():
                     page.get_by_role("button", name="Generation Results", exact=True).click()
                     activity = page.get_by_role("dialog", name="Generation Results", exact=True)
                     terminal = activity.get_by_label("Generation Activity", exact=True)
-                    expect(terminal).to_contain_text("workbench.read_image")
+                    expect(terminal).to_contain_text("workbench.read_skill")
                     assert len(terminal.inner_text()) > 10000
                     assert terminal.evaluate("e => e.scrollTop > 0 && e.scrollHeight - e.clientHeight - e.scrollTop < 30")
                     contained(page, ".arisu-activity-modal")
@@ -306,7 +322,35 @@ def test_prompt_workbench():
                     details = terminal.locator("details").first
                     expect(details).not_to_have_attribute("open", "")
                     expect(terminal).to_contain_text("Preserve the folded silhouette.")
+                    thoughts = terminal.locator(".log-analysis")
+                    assert thoughts.evaluate_all("items => items.every(e => !e.closest('details'))")
+                    expect(thoughts.filter(has_text="Inspecting the selected reference")).to_be_visible()
+                    expect(thoughts.filter(has_text="Preserve the folded silhouette.")).to_be_visible()
+                    response = terminal.locator("details").filter(has=page.locator("summary", has_text="Agent response"))
+                    expect(response).to_have_count(1)
+                    expect(response).not_to_have_attribute("open", "")
+                    assert DRAFT not in terminal.inner_text()
+                    response.locator("summary").scroll_into_view_if_needed()
+                    screenshot(page, name, "response-collapsed")
+                    response.locator("summary").click()
+                    expect(response).to_have_attribute("open", "")
+                    expect(response.locator(".log-content")).to_be_visible()
+                    assert DRAFT in terminal.inner_text()
+                    screenshot(page, name, "response-expanded")
+                    response.locator("summary").click()
+                    expect(response).not_to_have_attribute("open", "")
+                    assert DRAFT not in terminal.inner_text()
                     assert '"type": "reasoning"' not in terminal.inner_text()
+                    skill = terminal.locator("details").filter(has=page.locator("summary", has_text="workbench.read_skill"))
+                    expect(skill).to_have_count(1)
+                    expect(skill).not_to_have_attribute("open", "")
+                    assert "Hidden file content" not in terminal.inner_text()
+                    assert "private-image-bytes" not in terminal.text_content()
+                    skill.locator("summary").click()
+                    expect(skill).to_contain_text("[analysis] Hidden file content")
+                    assert "Hidden file content" not in " ".join(terminal.locator(".log-analysis").all_text_contents())
+                    screenshot(page, name, "skill-details")
+                    skill.locator("summary").click()
                     details.locator("summary").click()
                     expect(details).to_have_attribute("open", "")
                     expect(details).to_contain_text("Synthetic reference details")
@@ -326,7 +370,7 @@ def test_prompt_workbench():
                     assert DRAFT not in serialized and "Preserve the folded silhouette." not in serialized
                     page.get_by_role("button", name="Generation Results", exact=True).click()
                     expect(page.get_by_role("textbox", name="Output Prompt", exact=True)).to_have_value(DRAFT)
-                    assert widget_value(page, node_id, "finalized_prompt") == "Original prompt"
+                    assert widget_value(page, node_id, "finalized_prompt") == "Manual edit during generation"
                     contained(page, "dialog[open]")
                     screenshot(page, name, "review")
                     page.get_by_role("button", name="Apply to Workbench", exact=True).click()
@@ -335,6 +379,7 @@ def test_prompt_workbench():
                     page.get_by_role("dialog", name="Generation Results", exact=True).get_by_role(
                         "button", name="Close", exact=True
                     ).click()
+                    page.get_by_label("Finalized Prompt", exact=True).fill("Manual edit before the next draft")
                     page.get_by_role("button", name="Generate Prompt", exact=True).click()
                     expect(page.get_by_role("button", name="Apply Output", exact=True)).to_be_visible()
                     expect(page.get_by_role("dialog", name="Generation Results", exact=True)).to_have_count(0)

@@ -13,13 +13,12 @@ from fractions import Fraction
 from typing import Any, BinaryIO, Dict, Iterator, List, Mapping, Optional, Tuple, Union
 
 import av
-import folder_paths
 import numpy as np
 from PIL import Image, ImageOps
 
 from ..common.core import MAX_THUMBNAIL, MIN_THUMBNAIL, contained_path, encode_preview, image_content_type, open_raster_image
 from ..common.paths import select_root
-from .core import Resource, ResourceBundle, align_clip_frames, auto_crop, clip_interval, parse_resources, ref_video_canvas
+from .core import Resource, ResourceBundle, align_clip_frames, auto_crop, clip_interval, media_kind, parse_resources, ref_video_canvas
 
 FORMATS = "mov,matroska,webm,wav,mp3,flac,ogg,aac,aiff,avi,asf,mpeg,mpegts"
 
@@ -129,7 +128,7 @@ def stream_duration(container: av.container.InputContainer, stream: Any) -> floa
 
 def metadata(roots: Mapping[str, str], item: Resource) -> Dict[str, Any]:
     """Probe image dimensions or finite media timing through an authorized handle."""
-    if not image_content_type(item.path) and not folder_paths.filter_files_content_types([item.path], ["video", "audio"]):
+    if media_kind(item.path) is None:
         raise UnsupportedMedia("unsupported resource extension")
     with source_file(roots, item) as handle:
         stat = os.fstat(handle.fileno())
@@ -196,6 +195,15 @@ def poster(roots: Mapping[str, str], item: Resource, at: float, max_size: int) -
             return encode_preview(upright(chosen), bound)
     except (av.FFmpegError, EOFError, StopIteration) as error:
         raise UnsupportedMedia("unsupported or incomplete media") from error
+
+
+def validate_workbench_source(roots: Mapping[str, str], item: Resource):
+    """Check notes-only audio containment/revision without invoking a decoder."""
+    if item.kind == "audio":
+        with source_file(roots, item):
+            pass
+    else:
+        validate_source(roots, item)
 
 
 def validate_source(roots: Mapping[str, str], item: Resource, ratio: Optional[str] = None) -> Resource:

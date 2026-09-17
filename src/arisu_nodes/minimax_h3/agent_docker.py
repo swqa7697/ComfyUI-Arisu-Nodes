@@ -20,9 +20,9 @@ from .core import AGENT_IDS, BASIC_EFFORTS
 logger = logging.getLogger(__name__)
 ASSETS = Path(__file__).resolve().parents[3] / "assets" / "prompt_workbench"
 BASE_IMAGE = "python:3.13-slim-trixie"
-POLICY_VERSION = "2"
 LABEL = "org.arisu.workbench.instance"
 PROVIDER_LABEL = "org.arisu.workbench.provider"
+POLICY_REVISION = 6
 MAX_OUTPUT = 2 * 1024 * 1024
 
 
@@ -69,45 +69,13 @@ class DockerAgents:
 
     def command(self, args: List[str], timeout: int = 30, check: bool = True, data: Optional[str] = None) -> str:
         """Execute a fixed argv with a bounded lifetime and captured output."""
-        process = subprocess.Popen(["docker", *args], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        output = [bytearray(), bytearray()]
-        overflow = threading.Event()
-
-        def read(pipe: Any, target: bytearray):
-            while chunk := pipe.read(65536):
-                if len(target) + len(chunk) > MAX_OUTPUT:
-                    overflow.set()
-                    process.kill()
-                    break
-                target.extend(chunk)
-
-        readers = [
-            threading.Thread(target=read, args=(pipe, target), daemon=True)
-            for pipe, target in zip((process.stdout, process.stderr), output)
-        ]
-        for reader in readers:
-            reader.start()
-        try:
-            if data:
-                process.stdin.write(data.encode("utf-8"))
-            process.stdin.close()
-            process.wait(timeout=timeout)
-        finally:
-            if process.poll() is None:
-                process.kill()
-            process.wait()
-            for reader in readers:
-                reader.join()
-            process.stdin.close()
-            process.stdout.close()
-            process.stderr.close()
-        if overflow.is_set():
-            raise ValueError("Docker response exceeds limit")
-        stdout, stderr = (bytes(part).decode("utf-8", "replace") for part in output)
-        if check and process.returncode:
-            logger.warning("Workbench Docker operation failed: %s", stderr[-4000:])
+        result = subprocess.run(["docker", *args], input=data, text=True, capture_output=True, timeout=timeout, check=False)
+        if check and result.returncode:
+            logger.warning("Workbench Docker operation failed: %s", result.stderr[-4000:])
             raise ValueError("Docker operation failed; see the server log")
-        return stdout
+        if len(result.stdout) > MAX_OUTPUT:
+            raise ValueError("Docker response exceeds limit")
+        return result.stdout
 
     def owned(self, kind: str, name: str) -> bool:
         """Require this install's label before acting on an existing resource."""
@@ -118,6 +86,14 @@ class DockerAgents:
             labels = data[0].get("Labels") if kind == "volume" else data[0].get("Config", {}).get("Labels")
             return (labels or {}).get(LABEL) == self.namespace
         except (OSError, ValueError, subprocess.SubprocessError):
+            return False
+
+    def policy_image(self, agent: str) -> bool:
+        """Reject obsolete images before running their entrypoints."""
+        try:
+            data = json.loads(self.command(["image", "inspect", self.image(agent)]))
+            return len(data) == 1 and data[0].get("Config", {}).get("Labels", {}).get("org.arisu.workbench.policy") == str(POLICY_REVISION)
+        except (OSError, ValueError, TypeError, AttributeError, subprocess.SubprocessError):
             return False
 
     def begin_logs(self, agent: str, action: str, job: str = ""):
@@ -149,11 +125,27 @@ class DockerAgents:
 
     def log(self, text: str):
         """Keep complete readable output; redact credentials and remove terminal controls."""
-        text = re.sub(r"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)", "", str(text))
-        text = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", text)
-        text = re.sub(r"(?i)(bearer\s+|(?:access_token|refresh_token|api_key)[\"' :=]+)\S+", r"\1[redacted]", text)
-        text = re.sub(r"\b(?:sk-|xai-)[A-Za-z0-9_-]{16,}", "[redacted]", text)
-        text = "".join(c for c in text if c in "\n\t" or ord(c) >= 32)
+
+        def redact(value: Any) -> Any:
+            if isinstance(value, dict):
+                return {key: redact(item) for key, item in value.items()}
+            if isinstance(value, list):
+                return [redact(item) for item in value]
+            if not isinstance(value, str):
+                return value
+            value = re.sub(r"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)", "", value)
+            value = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", value)
+            value = re.sub(r"(?i)(bearer\s+|(?:access_token|refresh_token|api_key)[\"' :=]+)\S+", r"\1[redacted]", value)
+            value = re.sub(r"\b(?:sk-|xai-)[A-Za-z0-9_-]{16,}", "[redacted]", value)
+            return "".join(c for c in value if c in "\n\t" or ord(c) >= 32)
+
+        if text.startswith("ARISU_ACTIVITY "):
+            try:
+                text = "ARISU_ACTIVITY " + json.dumps(redact(json.loads(text.removeprefix("ARISU_ACTIVITY "))), ensure_ascii=False)
+            except ValueError:
+                text = "[details] Invalid activity record"
+        else:
+            text = redact(str(text))
         with self.log_lock:
             size = len(text.encode("utf-8")) + 1
             if self.log_bytes + size > 16 * 1024 * 1024:
@@ -187,9 +179,9 @@ class DockerAgents:
             "--pids-limit",
             "128",
             "--tmpfs",
-            "/tmp:rw,noexec,nosuid,nodev,size=128m,mode=1777",
+            "/tmp:rw,nosuid,nodev,size=512m,mode=1777",
             "--tmpfs",
-            "/home/agent:rw,noexec,nosuid,nodev,size=128m,uid=1000,gid=1000,mode=700",
+            "/home/agent:rw,nosuid,nodev,size=256m,uid=1000,gid=1000",
             "--mount",
             "type=volume,src=" + self.volume(agent) + ",dst=/auth",
             "--log-opt",
@@ -225,20 +217,19 @@ class DockerAgents:
             self.command(["info", "--format", "{{.OSType}}"], timeout=5)
             result["docker"] = True
             for agent in AGENT_IDS:
-                info: Dict[str, Any] = {
-                    "installed": self.owned("image", self.image(agent)),
-                    "ready": False,
-                    "restricted": False,
-                    "models": [],
-                }
+                info: Dict[str, Any] = {"installed": self.owned("image", self.image(agent)), "ready": False, "models": []}
                 if info["installed"] and self.owned("volume", self.volume(agent)):
                     try:
-                        metadata = json.loads(self.command(["image", "inspect", self.image(agent)]))
-                        if metadata[0].get("Config", {}).get("Labels", {}).get("org.arisu.workbench.policy") != POLICY_VERSION:
-                            info["restriction_error"] = "Update the agent image to enable restricted generation."
-                        else:
-                            info.update(self.invoke(agent, "inspect"))
-                        info["ready"] = bool(info.get("authenticated") and info.get("restricted") and info.get("models"))
+                        if not self.policy_image(agent):
+                            info["error"] = "Update required: Workbench policy changed."
+                            result["agents"][agent] = info
+                            continue
+                        info.update(self.invoke(agent, "inspect"))
+                        info["ready"] = bool(
+                            info.get("authenticated")
+                            and (info.get("policy_ready") and info.get("policy_revision") == POLICY_REVISION)
+                            and info.get("models")
+                        )
                     except (ValueError, OSError, subprocess.SubprocessError):
                         info["error"] = "Agent discovery failed; inspect logs or update the image."
                 choice = self.preferences.get(agent, {})
@@ -296,7 +287,7 @@ class DockerAgents:
                         raise ValueError("operation log exceeds limit")
                     if receive:
                         receive(line)
-                    if not line.startswith("ARISU_RESULT "):
+                    if not line.startswith(("ARISU_RESULT ", "ARISU_AUDIT ")):
                         self.log(line.rstrip())
             except (ValueError, OSError, KeyError, TypeError) as error:
                 errors.append(error)
@@ -321,6 +312,8 @@ class DockerAgents:
                 raise ValueError("agent operation failed; open logs for details")
         finally:
             if name and self.owned("container", name):
+                # Give the runner time to reap the CLI and persist credential rotation.
+                self.command(["stop", "--time", "5", name], timeout=10, check=False)
                 self.command(["rm", "-f", name], check=False)
             if process.poll() is None:
                 process.terminate()
@@ -421,19 +414,14 @@ class DockerAgents:
         self, agent: str, inputs: Path, skill: Path, selection: Dict[str, Any], cancelled: threading.Event, deadline: float
     ) -> str:
         """Run a single agent with only the prepared job and selected skill mounted."""
-        self.image(agent)
-        metadata = json.loads(self.command(["image", "inspect", self.image(agent)]))
-        if metadata[0].get("Config", {}).get("Labels", {}).get("org.arisu.workbench.policy") != POLICY_VERSION:
-            raise ValueError("update the agent image before generation")
+        if not self.policy_image(agent):
+            raise ValueError("update the agent image before generation: Workbench policy changed")
         name = self.namespace + "-generate-" + uuid.uuid4().hex
         result: List[str] = []
 
         def receive(line: str):
             if line.startswith("ARISU_RESULT "):
-                value = json.loads(line.removeprefix("ARISU_RESULT "))
-                if not isinstance(value, dict) or set(value) != {"final"} or not isinstance(value["final"], str) or result:
-                    raise ValueError("invalid final agent result")
-                result.append(value["final"])
+                result.append(json.loads(line.removeprefix("ARISU_RESULT "))["final"])
 
         self.log("[job " + inputs.name + "] generating with " + agent)
         self.stream(

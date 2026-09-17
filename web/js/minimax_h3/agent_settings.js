@@ -216,8 +216,8 @@ export function openAgentSettings(selected = 'codex', parent = document.body) {
       ? 'Docker is unavailable to ComfyUI.'
       : !info.installed
         ? 'Build the image to begin.'
-        : !info.restricted
-          ? info.restriction_error || 'Update required: restricted generation is unavailable.'
+        : !info.policy_ready
+          ? 'Update required: Workbench policy is incompatible.'
           : !info.authenticated
             ? 'Sign in to enable generation.'
             : !info.ready

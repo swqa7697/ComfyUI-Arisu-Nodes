@@ -16,11 +16,10 @@
   <a href="https://github.com/swqa7697/ComfyUI-Arisu-Nodes/actions/workflows/comfyui-lane.yml"><img src="https://github.com/swqa7697/ComfyUI-Arisu-Nodes/actions/workflows/comfyui-lane.yml/badge.svg" alt="ComfyUI lane" /></a>
 </p>
 
-
 ## Installation
 
 Requires **ComfyUI >= 0.30.0**, **Python >= 3.10**, Pillow, and PyAV in ComfyUI's environment.
-Use the legacy node renderer (**Nodes 2.0 disabled**) for Resource Studio.
+Recommend to use with Nodes 2.0 option **disabled**.
 
 ### ComfyUI-Manager
 
@@ -60,40 +59,42 @@ ComfyUI's `input` and `output` directories are available by default.
 Choose only media directories you intend to share with clients of this server.
 JSONC supports comments; omit trailing commas.
 
-Manage agent models and reasoning effort through
-**Settings → Arisu Nodes → Prompt Workbench → Agents**.
-These preferences are saved under `workbench` while preserving comments and other settings.
-Credentials are stored in Docker authentication volumes.
-
 #### Optional setup
 
-- **MiniMax H3:** use the checkpoint, CLIP, video VAE, and audio VAE required by the stock H3 nodes.
 - **Agent generation:** install Docker with Linux container support and give the ComfyUI process access to its daemon.
-  The Docker host must support the native CLI sandbox's user namespaces.
   Open **Settings → Arisu Nodes → Prompt Workbench → Agents** to build an agent image, sign in,
-  and select a model and reasoning effort. Provider accounts and settings are shared by users of the ComfyUI instance.
+  and select a model and reasoning effort. Docker Desktop must use Linux containers on macOS/Windows. Provider accounts and settings are shared by users of the ComfyUI instance.
 - **Custom prompt skills:** place each skill folder, including its `SKILL.md` and supporting files, at
   `user/__arisu_nodes/skills/<skill-name>/` under ComfyUI's user directory. The pack creates the `skills`
   directory on startup; administrators manage its contents. Select `custom:<skill-name>` in Prompt Workbench.
+
+In Prompt Workbench, choose a skill, connect your contexts, and click **Generate prompt**.
+Open **Generation results**, review the **Output Prompt** tab, and click **Apply to Workbench**
+to replace the finalized prompt. Use Undo to restore the previous text. Workflow edits and
+switching between open tabs preserve the running job and its result.
+
+Generation uses your selected skill, context notes, and cropped images. Videos contribute
+up to eight stills from the selected clip; audio contributes notes only. Agents are restricted
+to prompt generation, with web search, commands, and file editing disabled.
 
 ## Nodes
 
 Click a node name for its full reference, also available through the node's right-click **Help** menu.
 
-| Node | Category | Summary |
-|---|---|---|
-| [Path Builder](web/docs/ArisuPathBuilder/en.md) | Common | Build a filename prefix from separate text fields. |
-| [Extract Last Images](web/docs/ArisuExtractLastImages/en.md) | Common | Keep the last N images from a batch. |
-| [Preview & Save Image](web/docs/ArisuPreviewSaveImage/en.md) | Common | Preview images and save them on demand. |
-| [Preview & Save Image (Upscale)](web/docs/ArisuPreviewSaveImageUpscale/en.md) | Common | Upscale previewed images when saving. |
-| [Load Image (Browse)](web/docs/ArisuLoadImage/en.md) | Common | Browse and crop images from configured directories. |
-| [Resize Image](web/docs/ArisuResizeImage/en.md) | Common | Resize images by cropping, padding, fitting, or stretching. |
-| [MiniMax H3 Prompt Workbench](web/docs/ArisuMiniMaxH3PromptWorkbench/en.md) | MiniMax H3 | Edit prompts; review agent activity and output in Generation results, or Apply output directly. |
-| [MiniMax H3 Resource Studio](web/docs/ArisuMiniMaxH3ResourceStudio/en.md) | MiniMax H3 | Arrange, crop, and trim keyframes and image, video, or audio references. |
-| [MiniMax H3 Hybrid to Video](web/docs/ArisuMiniMaxH3HybridToVideo/en.md) | MiniMax H3 | Combine keyframes and media references into H3 conditioning and an AV latent. |
-| [MiniMax H3 Hybrid to Video (Advanced)](web/docs/ArisuMiniMaxH3HybridToVideoAdvanced/en.md) | MiniMax H3 | Add upscaled conditioning for two-pass workflows. |
-| [MiniMax H3 Video Settings](web/docs/ArisuMiniMaxH3VideoSettings/en.md) | MiniMax H3 | Set canvas size, aspect ratio, and duration in one bundle. |
-| [MiniMax H3 Video Settings (Upscale)](web/docs/ArisuMiniMaxH3VideoSettingsUpscale/en.md) | MiniMax H3 | Include a target size for latent upscaling. |
+| Node                                                                                        | Category   | Summary                                                                       |
+| ------------------------------------------------------------------------------------------- | ---------- | ----------------------------------------------------------------------------- |
+| [Path Builder](web/docs/ArisuPathBuilder/en.md)                                             | Common     | Build a filename prefix from separate text fields.                            |
+| [Extract Last Images](web/docs/ArisuExtractLastImages/en.md)                                | Common     | Keep the last N images from a batch.                                          |
+| [Preview & Save Image](web/docs/ArisuPreviewSaveImage/en.md)                                | Common     | Preview images and save them on demand.                                       |
+| [Preview & Save Image (Upscale)](web/docs/ArisuPreviewSaveImageUpscale/en.md)               | Common     | Upscale previewed images when saving.                                         |
+| [Load Image (Browse)](web/docs/ArisuLoadImage/en.md)                                        | Common     | Browse and crop images from configured directories.                           |
+| [Resize Image](web/docs/ArisuResizeImage/en.md)                                             | Common     | Resize images by cropping, padding, fitting, or stretching.                   |
+| [MiniMax H3 Prompt Workbench](web/docs/ArisuMiniMaxH3PromptWorkbench/en.md)                 | MiniMax H3 | Write prompts or generate and review drafts with Codex or Grok.               |
+| [MiniMax H3 Resource Studio](web/docs/ArisuMiniMaxH3ResourceStudio/en.md)                   | MiniMax H3 | Arrange, crop, and trim keyframes and image, video, or audio references.      |
+| [MiniMax H3 Hybrid to Video](web/docs/ArisuMiniMaxH3HybridToVideo/en.md)                    | MiniMax H3 | Combine keyframes and media references into H3 conditioning and an AV latent. |
+| [MiniMax H3 Hybrid to Video (Advanced)](web/docs/ArisuMiniMaxH3HybridToVideoAdvanced/en.md) | MiniMax H3 | Add upscaled conditioning for two-pass workflows.                             |
+| [MiniMax H3 Video Settings](web/docs/ArisuMiniMaxH3VideoSettings/en.md)                     | MiniMax H3 | Set canvas size, aspect ratio, and duration in one bundle.                    |
+| [MiniMax H3 Video Settings (Upscale)](web/docs/ArisuMiniMaxH3VideoSettingsUpscale/en.md)    | MiniMax H3 | Include a target size for latent upscaling.                                   |
 
 See [example workflows](example_workflows) for ready-made graphs and the [changelog](CHANGELOG.md) for release notes.
 

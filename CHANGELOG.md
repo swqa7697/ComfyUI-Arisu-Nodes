@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.2] - 2026-09-17
+
+### Changed
+
+- Show Codex and Grok thoughts in Prompt Workbench Activity, with agent responses, tool metadata, and loaded skills collapsed; review generated prompts in the Output Prompt tab.
+- Keep Prompt Workbench generation and reviewed results through context, resource, settings, connection, and output edits, Undo/Redo, and open-workflow tab switches; apply results independently of later context changes.
+- Raise Prompt Workbench's prepared-image limit to 32 MiB and container temporary space to 512 MiB; stream Grok's initial JSON prompt within a 384 MiB budget covering images, text, and metadata.
+- Attach prepared images directly to Prompt Workbench agent prompts, with applied crops, a 4000-pixel maximum edge, and up to eight stills per video clip; transfer only metadata and selected skill text through MCP.
+
+### Security
+
+- Isolate Resource Studio and Prompt Workbench media workers from host secrets and Python environment overrides.
+- Bound Prompt Workbench text reads and reject symlinks and non-regular files for context, skills, model catalogs, instructions, and tool audits.
+- Restrict Prompt Workbench agents to prompt generation with immutable tool policies, isolated CLI state, read-only mounts, stream-only output, and rejection of mixed prohibited requests.
+
 ## [1.2.1] - 2026-09-15
 
 ### Changed
@@ -15,11 +30,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Use standard red, yellow, and pale-blue node presets for Load Image/Resource Studio, Preview & Save Image, and Prompt Workbench; unify custom panels and dialogs with theme-aware media colors, prominent contrasting background-task buttons, and consistent hover/focus states. Use amber for Workbench generation and agent operations, blue for Apply confirmations, and retain native Save-button colors with subdued Cancel and navigation controls. Distinguish crop Reset and Auto-Crop tools with muted blue outlines and a separate confirmation group.
 - Combine Workbench activity and the latest output in an always-available Generation results dialog, with explicit Apply actions and completion notifications instead of automatic review popups. Keep activity and unapplied output out of workflow copies.
 - Consolidate Workbench model and reasoning preferences into `config.arisu.jsonc`, preserving comments and media-root settings.
-
-### Security
-
-- Restrict Prompt Workbench agents to verified read-only sandboxes and Workbench readers, block execution/edit/web/delegation tools, and isolate saved credentials from disposable CLI configuration.
-- Return agent drafts only through completed output streams and reject obvious executable-code responses before review while preserving explicit Apply.
 
 ## [1.2.0] - 2026-09-14
 

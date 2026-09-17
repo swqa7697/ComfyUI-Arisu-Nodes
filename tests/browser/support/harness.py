@@ -18,6 +18,8 @@ from aiohttp import web
 from PIL import Image, ImageDraw
 from playwright.sync_api import Browser, ConsoleMessage, Error, Page, Route, WebSocketRoute, sync_playwright
 
+from assets.prompt_workbench.events import activity
+
 ROOT = Path(__file__).resolve().parents[3]
 FIXTURES = ROOT / "tests/browser/fixtures"
 ARTIFACTS = ROOT / ".tmp/browser/results"
@@ -38,6 +40,7 @@ class FixtureServer:
         self.hold_generation = False
         self.log_polls = 0
         self.polls = 0
+        self.generation_requests: List[Dict[str, Any]] = []
         self.settings: Dict[str, Any] = {
             "Comfy.VueNodes.Enabled": False,
             "Comfy.UseNewMenu": "Top",
@@ -97,7 +100,8 @@ class FixtureServer:
         info = {
             "installed": True,
             "authenticated": True,
-            "restricted": True,
+            "policy_ready": True,
+            "policy_revision": 6,
             "ready": self.available,
             "version": "fixture",
             "models": [{"id": "fixture", "name": "Fixture model", "efforts": ["medium"]}],
@@ -177,14 +181,94 @@ class FixtureServer:
             job = request.query.get("job", "")
             lines = (
                 [
-                    json.dumps({"item": {"type": "reasoning", "text": "Inspecting the selected reference, motion and lighting. " * 200}}),
-                    "[tool] workbench.get_context",
-                    *json.dumps(
-                        {"references": [{"id": i, "notes": "Synthetic reference details " * 20} for i in range(20)]}, indent=2
-                    ).splitlines(),
-                    json.dumps({"message": {"content": [{"type": "thinking", "thinking": "Preserve the folded silhouette."}]}}),
-                    '[tool · item.completed] workbench.read_image\n{"asset_id": "reference-1"}',
-                    "[agent] The reference shows a paper boat with warm reflected light.",
+                    activity(
+                        {
+                            "type": "item.completed",
+                            "item": {
+                                "id": "thought",
+                                "type": "reasoning",
+                                "text": "Inspecting the selected reference, motion and lighting. " * 200,
+                            },
+                        },
+                        "codex",
+                    ),
+                    activity(
+                        {
+                            "type": "item.started",
+                            "item": {"id": "context", "type": "mcp_tool_call", "server": "workbench", "tool": "get_context"},
+                        },
+                        "codex",
+                    ),
+                    activity(
+                        {
+                            "type": "item.completed",
+                            "item": {
+                                "id": "context",
+                                "type": "mcp_tool_call",
+                                "server": "workbench",
+                                "tool": "get_context",
+                                "result": {
+                                    "content": [
+                                        {
+                                            "type": "text",
+                                            "text": json.dumps(
+                                                {
+                                                    "references": [
+                                                        {"id": i, "notes": "Synthetic reference details " * 20} for i in range(20)
+                                                    ]
+                                                },
+                                                indent=2,
+                                            ),
+                                        }
+                                    ]
+                                },
+                            },
+                        },
+                        "codex",
+                    ),
+                    activity(
+                        {
+                            "type": "assistant",
+                            "message": {
+                                "id": "grok-thought",
+                                "content": [{"type": "thinking", "thinking": "Preserve the folded silhouette."}],
+                            },
+                        },
+                        "grok",
+                    ),
+                    activity(
+                        {
+                            "type": "item.completed",
+                            "item": {
+                                "id": "skill",
+                                "type": "mcp_tool_call",
+                                "server": "workbench",
+                                "tool": "read_skill",
+                                "arguments": {"path": "SKILL.md"},
+                                "result": {
+                                    "content": [
+                                        {
+                                            "type": "text",
+                                            "text": '# Skill\n[analysis] Hidden file content\n{"metadata": "inside the loaded file"}',
+                                        },
+                                        {"type": "image", "data": "private-image-bytes"},
+                                    ]
+                                },
+                            },
+                        },
+                        "codex",
+                    ),
+                    activity(
+                        {
+                            "type": "item.completed",
+                            "item": {
+                                "id": "answer",
+                                "type": "agent_message",
+                                "text": "```markdown\n" + DRAFT + "\n```",
+                            },
+                        },
+                        "codex",
+                    ),
                 ]
                 if job
                 else ["[codex] build", "#1 [internal] load build definition from Dockerfile", "#2 resolve base image", "#3 DONE 0.4s"]
@@ -194,13 +278,12 @@ class FixtureServer:
                 lines += ["Sign in at https://example.test/device", "Device code: ABCD-EFGH", "Waiting for browser authorization…"]
             if job:
                 lines += [
-                    '[tool · item.completed] workbench.read_image\n{"asset_id": "reference-1"}',
-                    "[analysis] The reference shows a small paper boat on a calm pond. Preserve its folded silhouette and the warm light.",
-                    "[tool · item.completed] workbench.get_context\nSelected video: 22 frames · Audio: excluded",
-                    "[analysis] Match the gentle forward drift in the motion context. Keep the camera low and avoid a sudden change in direction.",
-                    "[agent] Drafting a continuous tracking shot with soft reflections and restrained motion…",
+                    activity(
+                        {"type": "item.completed", "item": {"id": f"live-{i}", "type": "reasoning", "text": f"Live update {i + 1}"}},
+                        "codex",
+                    )
+                    for i in range(self.log_polls)
                 ]
-            lines += [f"[analysis] Live update {i + 1}" for i in range(self.log_polls)]
             session = "fixture-generation" if job else "fixture-management"
             cursor = int(request.query.get("cursor", "0")) if request.query.get("session") == session else 0
             return web.json_response(
@@ -219,6 +302,7 @@ class FixtureServer:
             return web.json_response(self.status())
         if path == "/arisu/workbench/generate" and method == "POST":
             self.polls = 0
+            self.generation_requests.append(await request.json())
             return web.json_response({"id": "fixture-job"})
         if path == "/arisu/workbench/jobs/fixture-job":
             self.polls += 1

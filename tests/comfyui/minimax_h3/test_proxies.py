@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -14,15 +15,24 @@ from src.arisu_nodes.minimax_h3.core import Resource
 from src.arisu_nodes.minimax_h3.media import metadata
 from src.arisu_nodes.minimax_h3.proxies import ProxyBusy, ProxyManager
 from tests.support.media import make_audio, make_video
+from tests.support.workers import assert_worker_isolated, poison_parent
 
 pytestmark = pytest.mark.comfyui
 
 
-def test_proxy_preserves_dimensions_and_shares_interests(tmp_path: Path):
+def test_proxy_preserves_dimensions_and_shares_interests(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     make_video(tmp_path / "source.mkv")
     roots = {"input": str(tmp_path)}
     info = metadata(roots, Resource("v", "video", "input", "source.mkv"))
     item = Resource("v", "video", "input", "source.mkv", revision=info["revision"])
+    marker = poison_parent(tmp_path / "hostile", monkeypatch)
+    real_spawn = asyncio.create_subprocess_exec
+
+    async def isolated(*args: Any, **kwargs: Any) -> asyncio.subprocess.Process:
+        assert_worker_isolated(args, kwargs["env"], subprocess.Popen)
+        return await real_spawn(*args, **kwargs)
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", isolated)
 
     async def run():
         manager = ProxyManager(roots, str(tmp_path / "cache"))
@@ -61,6 +71,7 @@ def test_proxy_preserves_dimensions_and_shares_interests(tmp_path: Path):
             await manager.close()
 
     asyncio.run(run())
+    assert not marker.exists()
 
 
 def test_proxy_reaps_stalled_workers_on_cancel_and_deadline(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):

@@ -85,7 +85,12 @@ def test_workbench_routes_reject_untrusted_requests_and_queue_only_preparation(t
             def inspect_agent(*args: Any) -> Dict[str, Any]:
                 entered.set()
                 assert finish.wait(5)
-                return {"authenticated": True, "restricted": True, "models": [{"id": "test", "efforts": ["medium"]}]}
+                return {
+                    "authenticated": True,
+                    "policy_ready": True,
+                    "policy_revision": 6,
+                    "models": [{"id": "test", "efforts": ["medium"]}],
+                }
 
             with monkeypatch.context() as local:
                 local.setattr(owner.agents, "status", real_status)
@@ -94,7 +99,7 @@ def test_workbench_routes_reject_untrusted_requests_and_queue_only_preparation(t
                     owner.agents,
                     "command",
                     lambda args, **kwargs: (
-                        json.dumps([{"Config": {"Labels": {"org.arisu.workbench.policy": "2"}}}])
+                        json.dumps([{"Config": {"Labels": {"org.arisu.workbench.policy": "6"}}}])
                         if args[:2] == ["image", "inspect"]
                         else "linux"
                     ),
