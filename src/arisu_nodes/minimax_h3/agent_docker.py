@@ -163,7 +163,7 @@ class DockerAgents:
             "--pids-limit",
             "128",
             "--tmpfs",
-            "/tmp:rw,nosuid,nodev,size=128m,mode=1777",
+            "/tmp:rw,nosuid,nodev,size=512m,mode=1777",
             "--tmpfs",
             "/home/agent:rw,nosuid,nodev,size=256m,uid=1000,gid=1000",
             "--mount",

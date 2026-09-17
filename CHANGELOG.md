@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Raise Prompt Workbench's prepared-image limit to 32 MiB and container temporary space to 512 MiB; stream Grok's initial JSON prompt within a 384 MiB budget covering images, text, and metadata.
 - Read Prompt Workbench images directly from authorized mounts while transferring only metadata and selected skill text through MCP.
 
 ### Security

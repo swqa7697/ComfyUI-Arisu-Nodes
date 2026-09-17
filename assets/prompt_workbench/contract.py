@@ -51,7 +51,7 @@ def context(root: Path = INPUTS) -> Dict[str, Any]:
         if any(type(asset.get(key)) is not int or not 1 <= asset[key] <= 4000 for key in ("width", "height")):
             raise ValueError("invalid attachment dimensions")
         file = contained_file(root, asset["file"])
-        if not 12 <= file.stat().st_size <= 16 * 1024 * 1024:
+        if not 12 <= file.stat().st_size <= 32 * 1024 * 1024:
             raise ValueError("invalid raster image size")
         with file.open("rb") as handle:
             header = handle.read(12)

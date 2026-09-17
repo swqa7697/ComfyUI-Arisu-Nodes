@@ -79,10 +79,14 @@ Workbench reports an incompatible policy.
 
 Prompt generation uses selected skill text, MCP context metadata, and images attached directly
 to the agent’s initial prompt. Prepared images use lossless WebP, with crops applied and the
-longer edge capped at 4000 pixels without upscaling. Videos supply up to eight evenly spaced
-stills across the selected clip; audio is notes only. Asset IDs and attachment order match
+longer edge capped at 4000 pixels without upscaling, with a 32 MiB limit per prepared image.
+The shared media cache remains bounded to 2 GiB. Agent containers have 512 MiB of temporary
+space at `/tmp`; Grok's complete initial JSON prompt file is capped at 384 MiB, including
+Base64 images, text, and metadata (approximately 288 MiB of images before text and metadata).
+Videos supply up to eight evenly spaced stills across the selected clip; audio is notes only.
+Asset IDs and attachment order match
 each image to its role and current notes. Image/file-reading tools are disabled. Web search, shell execution, edits, delegation, and interactive questions
-are disabled. Results arrive through output streams and require Apply; no prompt file is written.
+are disabled. Results arrive through output streams and require Apply; generated output is never read from a file.
 Mixed video requests asking the agent to code, browse, or change files are rejected. Semantic
 injection detection remains probabilistic; tool and filesystem restrictions are separate controls.
 

@@ -14,6 +14,7 @@ from process import rpc, run
 from agents.grok.hook import normalize
 
 BASIC = ("low", "medium", "high")
+PROMPT_LIMIT = 384 * 1024 * 1024
 
 
 def inspect() -> Dict[str, Any]:
@@ -73,22 +74,38 @@ def inspect() -> Dict[str, Any]:
     }
 
 
+def write_prompt(path: Path, prompt: str, assets: List[Dict[str, Any]]):
+    """Stream the complete UTF-8 JSON payload within the temporary-file budget."""
+    output = path.open("xb")
+    try:
+        with output:
+
+            def write(text: str):
+                data = text.encode("utf-8")
+                if output.tell() + len(data) > PROMPT_LIMIT:
+                    raise ValueError("Grok attachments exceed the bounded prompt budget")
+                output.write(data)
+
+            write("[" + json.dumps({"type": "text", "text": prompt}, ensure_ascii=False))
+            for asset in assets:
+                identity = {key: value for key, value in asset.items() if key != "file"}
+                write("," + json.dumps({"type": "text", "text": json.dumps(identity, ensure_ascii=False)}, ensure_ascii=False))
+                write(',{"type": "image", "mimeType": "image/webp", "data": "')
+                with contained_file(INPUTS, asset["file"]).open("rb") as source:
+                    # Multiples of three keep padding confined to the final Base64 chunk.
+                    while chunk := source.read(3 * 65536):
+                        write(base64.b64encode(chunk).decode("ascii"))
+                write('"}')
+            write("]")
+    except BaseException:
+        path.unlink(missing_ok=True)
+        raise
+
+
 def command(model: str, effort: str, prompt: str, assets: List[Dict[str, Any]]) -> List[str]:
     prompt_file = Path("/tmp/workbench-prompt.json")
-    # File input avoids ARG_MAX; keep Base64 expansion inside the existing tmpfs.
-    if (
-        sum((contained_file(INPUTS, asset["file"]).stat().st_size + 2) // 3 * 4 for asset in assets) + len(prompt.encode())
-        > 90 * 1024 * 1024
-    ):
-        raise ValueError("Grok attachments exceed the bounded prompt budget")
-    with prompt_file.open("x", encoding="utf-8") as output:
-        output.write("[" + json.dumps({"type": "text", "text": prompt}))
-        for asset in assets:
-            identity = {key: value for key, value in asset.items() if key != "file"}
-            output.write("," + json.dumps({"type": "text", "text": json.dumps(identity, ensure_ascii=False)}))
-            encoded = base64.b64encode(contained_file(INPUTS, asset["file"]).read_bytes()).decode("ascii")
-            output.write("," + json.dumps({"type": "image", "mimeType": "image/webp", "data": encoded}))
-        output.write("]")
+    # File input avoids ARG_MAX; reserve 128 MiB of /tmp for other CLI files.
+    write_prompt(prompt_file, prompt, assets)
     arguments = [
         "grok",
         "--no-auto-update",

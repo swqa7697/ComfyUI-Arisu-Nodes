@@ -97,10 +97,15 @@ Scroll over the panel to zoom the graph; hold the middle mouse button to pan. Ov
 
 Agent activity displays provider-exposed thoughts as readable text. Expand tool and other detail sections to inspect their full output.
 
-Prepared images preserve transparency, apply selected crops, and use lossless WebP.
+Prepared images preserve transparency, apply selected crops, and use lossless WebP, with a
+32 MiB limit per image, including keyframes, video stills, and motion stills.
 Only images exceeding a 4000-pixel longer edge are resized, using Lanczos. Video references
 provide up to eight distinct evenly spaced frames across the entire selected clip, including
 the first and last displayed frames. No video transcoding or audio decoding occurs.
 Each attachment carries a matching asset ID, role, sequence position, and current notes.
-Lossless files exceeding the image limit or Grok’s bounded prompt payload fail preparation;
+Agent containers have 512 MiB of `/tmp` space. Grok's complete initial JSON prompt file is
+bounded to 384 MiB, including Base64 images, text, metadata, and JSON overhead. This allows
+approximately 288 MiB of prepared images before text and metadata, reserving 128 MiB of
+temporary space for other CLI files. The shared media cache remains capped at 2 GiB.
+Lossless files exceeding the image limit or Grok’s bounded prompt payload fail generation;
 quality is never silently reduced.

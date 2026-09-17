@@ -110,7 +110,11 @@ def test_agent_update_preserves_working_image_and_settings_reject_unavailable_mo
     # An obsolete image must never run its old entrypoint for discovery.
     with monkeypatch.context() as stale:
         stale.setattr(agents, "owned", lambda *args: True)
-        stale.setattr(agents, "command", lambda args, **kwargs: "linux" if args[0] == "info" else '[{"Config":{"Labels":{}}}]')
+        stale.setattr(
+            agents,
+            "command",
+            lambda args, **kwargs: "linux" if args[0] == "info" else '[{"Config":{"Labels":{"org.arisu.workbench.policy":"5"}}}]',
+        )
         stale.setattr(agents, "invoke", lambda *args, **kwargs: pytest.fail("obsolete image executed"))
         old = agents.status(refresh=True)
         assert not old["agents"]["codex"]["ready"]
@@ -308,6 +312,17 @@ def test_mcp_manifest_images_and_unlisted_or_escaping_assets(
         assert module.respond({"method": "tools/call", "params": {"name": "get_context", "arguments": {}}}, root, skill)["isError"]
     (root / "context.json").write_text(json.dumps(manifest))
 
+    # Container validation accepts the enlarged image budget, including its exact boundary.
+    for size in (16 * 1024 * 1024 + 1, 32 * 1024 * 1024, 32 * 1024 * 1024 + 1):
+        with (root / "image.webp").open("r+b") as output:
+            output.truncate(size)
+        result = module.respond({"method": "tools/call", "params": {"name": "get_context", "arguments": {}}}, root, skill)
+        if size <= 32 * 1024 * 1024:
+            assert json.loads(result["content"][0]["text"])["assets"][0]["id"] == "image"
+        else:
+            assert result["isError"]
+    (root / "image.webp").write_bytes(original)
+
     # Provider adapters normalize actual CLI envelopes, including Grok's resolved-name hook.
     codex_spec = importlib.util.spec_from_file_location("codex_hook", assets / "agents/codex/hook.py")
     codex = importlib.util.module_from_spec(codex_spec)
@@ -366,6 +381,51 @@ def test_mcp_manifest_images_and_unlisted_or_escaping_assets(
         assert json.loads(blocks[1]["text"])["note"] == "coat"
         assert blocks[2]["mimeType"] == "image/webp" and base64.b64decode(blocks[2]["data"]) == original
         assert grok_command[grok_command.index("--tools") + 1] == "search_tool,use_tool"
+
+    # The budget covers actual UTF-8, escaped JSON, metadata, and Base64 chunk boundaries.
+    with monkeypatch.context() as patches:
+        patches.setattr(grok_provider, "INPUTS", root)
+        second = original + b"x" * (3 * 65536 + 1)
+        (root / "second.webp").write_bytes(second)
+        attachments = [data["assets"][0], {**data["assets"][0], "id": "second", "file": "second.webp", "note": '雪 "coat"\n🎬'}]
+        prompt_path = tmp_path / "bounded-prompt.json"
+        prompt = 'Camera: 雪 🎬 "pan"\n'
+        grok_provider.write_prompt(prompt_path, prompt, attachments)
+        serialized = prompt_path.read_bytes()
+        blocks = json.loads(serialized)
+        assert blocks[0]["text"] == prompt
+        for index, (asset, expected) in enumerate(zip(attachments, (original, second))):
+            assert json.loads(blocks[1 + index * 2]["text"]) == {key: value for key, value in asset.items() if key != "file"}
+            assert base64.b64decode(blocks[2 + index * 2]["data"]) == expected
+        # An existing destination is never removed or overwritten on failure.
+        with pytest.raises(FileExistsError):
+            grok_provider.write_prompt(prompt_path, prompt, attachments)
+        assert prompt_path.read_bytes() == serialized
+        prompt_path.unlink()
+        with patches.context() as boundary:
+            boundary.setattr(grok_provider, "PROMPT_LIMIT", len(serialized))
+            grok_provider.write_prompt(prompt_path, prompt, attachments)
+            assert prompt_path.read_bytes() == serialized
+            prompt_path.unlink()
+            boundary.setattr(grok_provider, "PROMPT_LIMIT", len(serialized) - 1)
+            with pytest.raises(ValueError, match="prompt budget"):
+                grok_provider.write_prompt(prompt_path, prompt, attachments)
+            assert not prompt_path.exists()
+        with pytest.raises(ValueError, match="unavailable"):
+            grok_provider.write_prompt(prompt_path, prompt, [{**attachments[0], "file": "missing.webp"}])
+        assert not prompt_path.exists()
+
+        # Sparse source fixtures exercise acceptance beyond the former 90 MiB total.
+        large_assets = []
+        for index in range(3):
+            name = f"large-{index}.webp"
+            with (root / name).open("wb") as output:
+                output.write(original)
+                output.truncate(24 * 1024 * 1024)
+            large_assets.append({**attachments[0], "id": f"large-{index}", "file": name})
+        grok_provider.write_prompt(prompt_path, prompt, large_assets)
+        assert 90 * 1024 * 1024 < prompt_path.stat().st_size < 384 * 1024 * 1024
+        prompt_path.unlink()
 
     # Real subprocess pipes exercise final extraction, interrupted streams and forbidden events.
     runner_spec = importlib.util.spec_from_file_location("workbench_stream_runner", assets / "runner.py")

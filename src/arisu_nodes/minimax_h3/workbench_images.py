@@ -8,7 +8,7 @@ from PIL import Image, ImageOps
 
 from .proxy_worker import LimitedOutput
 
-IMAGE_LIMIT = 16 * 1024 * 1024
+IMAGE_LIMIT = 32 * 1024 * 1024
 PROCESSING = {"edge": 4000, "format": "webp", "lossless": True, "sampling": "clip-boundaries-v1", "motion": [2, 4, 6, 8]}
 
 

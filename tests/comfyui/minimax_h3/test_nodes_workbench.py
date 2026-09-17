@@ -199,6 +199,28 @@ def test_workbench_stages_crops_refuses_escapes_and_cancellation_retains_guard(t
     with pytest.raises(ValueError, match="capacity"):
         stage({**payload, "max_bytes": 1})
 
+    # Exercise the encoder's actual bounded sink without allocating noisy megapixel fixtures.
+    with monkeypatch.context() as patches:
+        for size in (16 * 1024 * 1024 + 1, 32 * 1024 * 1024, 32 * 1024 * 1024 + 1):
+
+            def sized_encode(self: Any, output: Any, size: int = size, **kwargs: Any):
+                chunk = b"x" * (1024 * 1024)
+                for _ in range(size // len(chunk)):
+                    output.write(chunk)
+                output.write(chunk[: size % len(chunk)])
+
+            patches.setattr(Image.Image, "save", sized_encode)
+            destination = tmp_path / f"image-budget-{size}"
+            destination.mkdir()
+            bounded = {**payload, "directory": str(destination), "max_bytes": 64 * 1024 * 1024}
+            if size <= 32 * 1024 * 1024:
+                prepared = stage(bounded)
+                assert (destination / prepared[0]["file"]).stat().st_size == size
+            else:
+                with pytest.raises(ValueError, match="capacity"):
+                    stage(bounded)
+                assert all(path.stat().st_size <= 32 * 1024 * 1024 for path in destination.iterdir())
+
     # Notes-only audio never opens a decoder, even for duration probing.
     with monkeypatch.context() as patches:
 
