@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Fix Prompt Workbench generation with Get nodes and root-to-subgraph connections by resolving their upstream sources through a shared execution map.
+
 ## [1.2.2] - 2026-09-17
 
 ### Changed

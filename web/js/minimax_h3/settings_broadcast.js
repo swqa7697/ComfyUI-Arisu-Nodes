@@ -300,10 +300,18 @@ function checkCycles(output) {
 }
 function executionNodes() {
   const result = [];
+  const executionMap = new Map();
   for (const node of rootGraph()?.nodes ?? rootGraph()?._nodes ?? []) {
     if (node.getInnerNodes) {
-      for (const dto of node.getInnerNodes(new Map())) result.push({ node: dto.node ?? dto, id: String(dto.id), dto });
+      for (const dto of node.getInnerNodes(executionMap)) result.push({ node: dto.node ?? dto, id: String(dto.id), dto });
     } else result.push({ node, id: String(node.id), dto: null });
+  }
+  // Subgraph DTOs resolve root and sibling sources through this same map. The
+  // frontend-supplied constructor preserves its native link resolution semantics.
+  const DTO = result.find((entry) => typeof entry.dto?.resolveOutput === 'function')?.dto.constructor;
+  for (const entry of result) {
+    if (!entry.dto && DTO) entry.dto = new DTO(entry.node, [], executionMap);
+    if (entry.dto) executionMap.set(entry.id, entry.dto);
   }
   return result;
 }
@@ -316,23 +324,23 @@ function bindAdvertised(entry, output, advertiser, name, label) {
   entry.inputs[name] = [id, slot];
 }
 // An explicit wire must reach a live source in the prompt; the serializer pruning it is an error, not a fallback.
-function checkExplicit(node, entry, dto, output, name, label) {
+function checkExplicit(node, entry, output, name, label) {
   const explicit = inputOf(node, name);
   if (explicit?.link == null) return false;
-  const explicitId = dto ? entry.inputs[name]?.[0] : linkSource(node, explicit);
+  const explicitId = entry.inputs[name]?.[0];
   const origin = linkOrigin(node, explicit);
   if ((origin && !active(origin)) || !explicitId || !output[explicitId] || !entry.inputs[name])
     throw new Error(`The explicitly connected ${label} source is muted, bypassed, or absent.`);
   return true;
 }
 // A hybrid's bundle socket in the prompt: the advertiser's output, else its own wire. Reports whether it is fed.
-function bindBundle(node, entry, dto, output, name, advertiser, label) {
-  if (!advertiser) return checkExplicit(node, entry, dto, output, name, label);
+function bindBundle(node, entry, output, name, advertiser, label) {
+  if (!advertiser) return checkExplicit(node, entry, output, name, label);
   bindAdvertised(entry, output, advertiser, name, label);
   return true;
 }
 function inject(output) {
-  for (const { node, id: executionId, dto } of executionNodes()) {
+  for (const { node, id: executionId } of executionNodes()) {
     if (!active(node)) continue;
     const entry = output[executionId];
     if (!entry) continue;
@@ -343,10 +351,10 @@ function inject(output) {
       continue;
     }
     if (!(node.type in HYBRID_WIDGETS)) continue;
-    if (bindBundle(node, entry, dto, output, BUNDLE.resources, advertiserFor(node, 'resources'), 'resource'))
+    if (bindBundle(node, entry, output, BUNDLE.resources, advertiserFor(node, 'resources'), 'resource'))
       for (const name of Object.keys(entry.inputs)) if (group(name)) delete entry.inputs[name];
     // the individual size and length values stay in the prompt: required inputs the bundle overrides on the backend
-    bindBundle(node, entry, dto, output, BUNDLE.settings, settings, 'settings');
+    bindBundle(node, entry, output, BUNDLE.settings, settings, 'settings');
   }
   checkCycles(output);
 }
@@ -484,6 +492,25 @@ export function executionTarget(node) {
   return matches[0];
 }
 
+// Graphs without subgraphs provide no DTO constructor; follow native virtual links.
+function resolveLegacyOutput(node, slot, seen = new Set()) {
+  if (!node) return null;
+  if (seen.has(node)) throw new Error('A virtual input contains a dependency cycle.');
+  seen.add(node);
+  if (!node.isVirtualNode) return { origin_id: node.id, origin_slot: slot };
+  const source = node.resolveVirtualOutput?.(slot);
+  if (source) return resolveLegacyOutput(source.node, source.slot, seen);
+  const link = node.getInputLink?.(slot);
+  if (link) {
+    const origin =
+      link.resolve?.(node.graph)?.outputNode ??
+      (node.graph?.nodes ?? node.graph?._nodes ?? []).find((item) => String(item.id) === String(link.origin_id));
+    return resolveLegacyOutput(origin, link.origin_slot, seen);
+  }
+  if (node.type === 'PrimitiveNode' && node.widgets?.length === 1) return { widgetInfo: { value: node.widgets[0].value } };
+  throw new Error('A virtual input could not be resolved.');
+}
+
 /** Capture the preparation graph without awaiting widget serializers or rereading live ownership. */
 export function captureWorkbenchPrompt(node) {
   const entries = executionNodes();
@@ -496,14 +523,16 @@ export function captureWorkbenchPrompt(node) {
     for (const [index, input] of (source.inputs ?? []).entries()) {
       if (input.link == null) continue;
       const links = source.graph?.links;
-      const resolved = dto?.resolveInput ? dto.resolveInput(index) : (links?.get?.(input.link) ?? links?.[input.link]);
+      const link = links?.get?.(input.link) ?? links?.[input.link];
+      const resolved = dto?.resolveInput
+        ? dto.resolveInput(index)
+        : resolveLegacyOutput(
+            (source.graph?.nodes ?? source.graph?._nodes ?? []).find((item) => String(item.id) === String(link?.origin_id)),
+            link?.origin_slot,
+          );
       if (!resolved) continue;
       if (resolved.widgetInfo) inputs[input.name] = structuredClone(resolved.widgetInfo.value);
-      else {
-        const origin = entries.find((entry) => entry.id === String(resolved.origin_id))?.node;
-        if (origin?.isVirtualNode) inputs[input.name] = structuredClone(origin.widgets?.[0]?.value);
-        else inputs[input.name] = [String(resolved.origin_id), Number(resolved.origin_slot)];
-      }
+      else inputs[input.name] = [String(resolved.origin_id), Number(resolved.origin_slot)];
     }
     output[id] = { class_type: source.comfyClass ?? source.type, inputs };
   }

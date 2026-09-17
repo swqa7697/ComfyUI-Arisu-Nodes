@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { agentStatus } from '../../../web/js/minimax_h3/agent_settings.js';
+import { captureWorkbenchPrompt } from '../../../web/js/minimax_h3/settings_broadcast.js';
 import { api, jsonResponse, resetApi } from '../support/api.mjs';
 import { app, extensionNamed, resetApp, toasts } from '../support/app.mjs';
 import { body, descendants, resetDom } from '../support/dom.mjs';
@@ -106,6 +107,23 @@ test('Workbench keeps finalized text independent of setup, source notes and revi
     node.arisuRefreshSources();
     await settle();
     assert.equal(find(panel(node), 'Notes for replacement.png').value, '');
+    // Set/Get labels are not literal input values: capture the resolved source.
+    const get = makeNode({ id: 1985, type: 'GetNode', graph, widgets: [{ name: 'key', value: 'resources' }] });
+    get.isVirtualNode = true;
+    get.resolveVirtualOutput = () => ({ node: studio, slot: 0 });
+    graph.links[14] = { origin_id: get.id, origin_slot: 0 };
+    node.inputs.find((item) => item.name === 'resources').link = 14;
+    const virtualPrompt = captureWorkbenchPrompt(node);
+    assert.deepEqual(virtualPrompt.output['1'].inputs.resources, ['2', 0]);
+    assert(virtualPrompt.output['2']);
+    assert(!virtualPrompt.output['1985']);
+    delete get.resolveVirtualOutput;
+    get.getInputLink = () => ({ origin_id: studio.id, origin_slot: 0, resolve: () => ({ outputNode: studio, inputNode: get }) });
+    assert.deepEqual(captureWorkbenchPrompt(node).output['1'].inputs.resources, ['2', 0]);
+    get.resolveVirtualOutput = () => ({ node: get, slot: 0 });
+    assert.throws(() => captureWorkbenchPrompt(node), /cycle/);
+    delete get.resolveVirtualOutput;
+    node.inputs.find((item) => item.name === 'resources').link = 10;
     // Notes still resolve when a root Studio feeds an explicit subgraph input.
     const inner = makeGraph('inner');
     inner.beforeChange = graph.beforeChange;
@@ -135,16 +153,26 @@ test('Workbench keeps finalized text independent of setup, source notes and revi
       ],
     });
     scope.subgraph = inner;
-    scope.getInnerNodes = () => [
-      {
-        node,
-        id: '20:1',
-        subgraphNodePath: [20],
-        resolveInput: (index) =>
-          ({ resources: { origin_id: 2, origin_slot: 0 }, video_settings: { origin_id: 3, origin_slot: 0 } })[node.inputs[index].name] ??
-          null,
-      },
-    ];
+    // Subgraph input resolution needs the root DTOs in the same execution map.
+    class ExecutionDTO {
+      constructor(source, path, executionMap) {
+        this.node = source;
+        this.id = [...path, source.id].join(':');
+        this.subgraphNodePath = path;
+        this.executionMap = executionMap;
+      }
+      resolveOutput(slot) {
+        return { origin_id: this.id, origin_slot: slot };
+      }
+      resolveInput(index) {
+        const id = { resources: '2', video_settings: '3' }[this.node.inputs[index].name];
+        if (!id) return null;
+        const source = this.executionMap.get(id);
+        if (!source) throw new Error(`No output node DTO found for id [${id}]`);
+        return source.resolveOutput(0);
+      }
+    }
+    scope.getInnerNodes = (executionMap) => [new ExecutionDTO(node, [20], executionMap)];
     inner.links = { 50: { originIsIoNode: true, origin_slot: 0 }, 51: { originIsIoNode: true, origin_slot: 1 } };
     node.inputs.find((item) => item.name === 'video_settings').link = 51;
     node.inputs.find((item) => item.name === 'resources').link = 50;
