@@ -243,6 +243,7 @@ test('Workbench keeps finalized text independent of setup, source notes and revi
     const framed = (...entries) => `ARISU_ACTIVITY ${JSON.stringify({ version: 1, entries })}`;
     const loaded = '# Skill\n[analysis] File content stays inside the tool\n{"metadata":true}';
     const toolRecord = { id: 'codex:tool1', kind: 'tool', text: 'workbench.read_skill', details: loaded };
+    const responseRecord = { id: 'codex:response1', kind: 'agent', text: '```markdown\nA quiet sunrise\n```', details: '' };
     api.responses.push(
       jsonResponse(200, {
         session: 'job3',
@@ -258,7 +259,7 @@ test('Workbench keeps finalized text independent of setup, source notes and revi
           JSON.stringify({ event: { delta: { type: 'thinking_delta', thinking: 'Preserve the silhouette' } } }),
           '[agent] <img src=x onerror=alert(1)>',
           '{malformed json',
-          framed({ id: 'codex:thought1', kind: 'analysis', text: 'Original thought', details: '' }, toolRecord),
+          framed({ id: 'codex:thought1', kind: 'analysis', text: 'Original thought', details: '' }, toolRecord, responseRecord),
           'ARISU_AUDIT secret audit data',
           'ARISU_ACTIVITY {malformed',
         ],
@@ -280,6 +281,12 @@ test('Workbench keeps finalized text independent of setup, source notes and revi
     assert(find(details, '  "references": []'));
     const skillDetails = descendants(activity).find((item) => item.tagName === 'DETAILS' && find(item, 'workbench.read_skill'));
     assert(skillDetails && !skillDetails.open && find(skillDetails, loaded));
+    const responses = descendants(activity).filter((item) => item.tagName === 'DETAILS' && find(item, 'Agent response'));
+    assert.equal(responses.length, 2);
+    assert(responses.every((item) => !item.open));
+    assert(find(responses[0], '[agent] <img src=x onerror=alert(1)>'));
+    assert(find(responses[1], responseRecord.text));
+    responses[1].open = true;
     assert(!find(activity, '[analysis] File content stays inside the tool'));
     assert(!find(activity, 'ARISU_AUDIT secret audit data'));
     skillDetails.open = true;
@@ -292,6 +299,7 @@ test('Workbench keeps finalized text independent of setup, source notes and revi
           framed(
             { id: 'codex:thought1', kind: 'analysis', text: 'Updated thought', details: '' },
             { ...toolRecord, details: `${loaded}\nCompleted` },
+            { ...responseRecord, text: '```markdown\nA quiet sunrise over a lake\n```' },
           ),
         ],
       }),
@@ -300,6 +308,8 @@ test('Workbench keeps finalized text independent of setup, source notes and revi
     assert(!find(activity, '[analysis] Original thought'));
     assert(find(activity, '[analysis] Updated thought'));
     assert(skillDetails.open && find(skillDetails, `${loaded}\nCompleted`));
+    assert(responses[1].open && find(responses[1], '```markdown\nA quiet sunrise over a lake\n```'));
+    assert.equal(descendants(activity).filter((item) => item.tagName === 'SUMMARY' && item.textContent === 'Agent response').length, 2);
     assert.equal(
       descendants(activity).filter((item) => item.tagName === 'SUMMARY' && item.textContent === 'workbench.read_skill').length,
       1,

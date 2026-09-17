@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Collapse Prompt Workbench agent responses in the Activity tab; review generated prompts in the Output Prompt tab.
 - Keep Prompt Workbench generation and reviewed results through context, resource, settings, connection, and output edits, Undo/Redo, and open-workflow tab switches; apply results independently of later context changes.
 - Show Codex and Grok thoughts separately from collapsed tool metadata and loaded skills, retaining activity boundaries and updating repeated provider items in place.
 

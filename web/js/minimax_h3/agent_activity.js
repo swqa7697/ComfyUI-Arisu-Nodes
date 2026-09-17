@@ -137,7 +137,7 @@ export function createActivity(label = 'Agent Logs') {
   let analysis = false;
   const records = new Map();
   function appendRecord(record) {
-    const noisy = ['tool', 'details'].includes(record.kind);
+    const noisy = ['agent', 'tool', 'details'].includes(record.kind);
     const key = record.id && `${record.kind}:${record.id}`;
     let view = key ? records.get(key) : null;
     if (!view) {
@@ -148,7 +148,7 @@ export function createActivity(label = 'Agent Logs') {
       if (key) records.set(key, view);
       output.append(element);
     }
-    if (view.summary) view.summary.textContent = record.text.slice(0, 120) || 'Details';
+    if (view.summary) view.summary.textContent = record.kind === 'agent' ? 'Agent response' : record.text.slice(0, 120) || 'Details';
     const top = view.content.scrollTop;
     view.content.replaceChildren(logLine(noisy ? record.details || record.text : `[${record.kind}] ${record.text}`));
     view.content.scrollTop = top;
@@ -184,10 +184,11 @@ export function createActivity(label = 'Agent Logs') {
         group = null;
         analysis = heading[1].toLowerCase() === 'analysis';
       }
-      const noisy = heading && /^(tool|command|search|file_change|todo_list|details)/i.test(heading[1]);
+      const agent = heading?.[1].toLowerCase() === 'agent';
+      const noisy = agent || (heading && /^(tool|command|search|file_change|todo_list|details)/i.test(heading[1]));
       if (noisy || (!group && !analysis && (part.length > 800 || part.split('\n').length > 8))) {
         const content = el('div', { className: 'log-content' });
-        const summary = part.split('\n')[0];
+        const summary = agent ? 'Agent response' : part.split('\n')[0];
         const details = el('details', { className: 'log-details' }, [
           el('summary', { textContent: summary.slice(0, 120) + (summary.length > 120 ? '…' : '') }),
           content,

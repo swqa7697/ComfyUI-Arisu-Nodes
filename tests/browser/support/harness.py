@@ -264,7 +264,7 @@ class FixtureServer:
                             "item": {
                                 "id": "answer",
                                 "type": "agent_message",
-                                "text": "The reference shows a paper boat with warm reflected light.",
+                                "text": "```markdown\n" + DRAFT + "\n```",
                             },
                         },
                         "codex",
