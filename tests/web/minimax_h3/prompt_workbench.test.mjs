@@ -5,7 +5,7 @@ import { captureWorkbenchPrompt } from '../../../web/js/minimax_h3/settings_broa
 import { api, jsonResponse, resetApi } from '../support/api.mjs';
 import { app, extensionNamed, resetApp, toasts } from '../support/app.mjs';
 import { body, descendants, resetDom } from '../support/dom.mjs';
-import { makeGraph, makeNode } from '../support/litegraph.mjs';
+import { makeGraph, makeNode, makeSetGet } from '../support/litegraph.mjs';
 import '../../../web/js/minimax_h3/prompt_workbench.js';
 
 const TYPE = 'ArisuMiniMaxH3PromptWorkbench';
@@ -124,6 +124,42 @@ test('Workbench keeps finalized text independent of setup, source notes and revi
     assert.throws(() => captureWorkbenchPrompt(node), /cycle/);
     delete get.resolveVirtualOutput;
     node.inputs.find((item) => item.name === 'resources').link = 10;
+    // Actual same-graph setter lookup drives both reference notes and capture.
+    const routed = makeSetGet(graph, 2000, studio, 0, 'resources');
+    graph.links[15] = { origin_id: routed.getter.id, origin_slot: 0 };
+    node.inputs.find((item) => item.name === 'resources').link = 15;
+    node.arisuRefreshSources();
+    await settle();
+    assert(find(panel(node), 'Notes for replacement.png'));
+    assert.deepEqual(captureWorkbenchPrompt(node).output['1'].inputs.resources, ['2', 0]);
+    routed.getter.widgets[0].value = 'missing';
+    node.arisuRefreshSources();
+    await settle();
+    assert(!find(panel(node), 'Notes for replacement.png'));
+    assert.throws(() => captureWorkbenchPrompt(node), /could not be resolved/);
+    routed.getter.widgets[0].value = 'resources';
+    // Preserve a nonzero output slot through a second Set/Get hop and reroute.
+    const relay = makeNode({ id: 2010, type: 'Reroute', graph, inputs: [{ name: 'value', link: 15 }] });
+    relay.isVirtualNode = true;
+    const chained = makeSetGet(graph, 2020, relay, 0, 'relay');
+    graph.links[16] = { origin_id: chained.getter.id, origin_slot: 0 };
+    graph.links[2000].origin_slot = 3;
+    node.inputs.find((item) => item.name === 'resources').link = 16;
+    assert.deepEqual(captureWorkbenchPrompt(node).output['1'].inputs.resources, ['2', 3]);
+    graph.links[2000] = { origin_id: chained.getter.id, origin_slot: 0 };
+    assert.throws(() => captureWorkbenchPrompt(node), /cycle/);
+    graph.links[2000] = { origin_id: studio.id, origin_slot: 0 };
+    node.inputs.find((item) => item.name === 'resources').link = 10;
+    for (const name of ['video_settings', 'context_latent', 'vae']) {
+      const socket = node.inputs.find((item) => item.name === name);
+      socket.link = 15;
+      assert.deepEqual(captureWorkbenchPrompt(node).output['1'].inputs[name], ['2', 0]);
+      // SetNode's visible passthrough output is also a native virtual route.
+      graph.links[17] = { origin_id: routed.setter.id, origin_slot: 0 };
+      socket.link = 17;
+      assert.deepEqual(captureWorkbenchPrompt(node).output['1'].inputs[name], ['2', 0]);
+      socket.link = null;
+    }
     // Notes still resolve when a root Studio feeds an explicit subgraph input.
     const inner = makeGraph('inner');
     inner.beforeChange = graph.beforeChange;

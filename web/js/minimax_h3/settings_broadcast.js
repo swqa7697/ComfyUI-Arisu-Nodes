@@ -109,7 +109,7 @@ function settingsSource(node) {
   const advertiser = advertiserFor(node, 'settings');
   if (advertiser || node.type === STUDIO) return advertiser ?? undefined;
   const input = inputOf(node, BUNDLE.settings);
-  return input?.link == null ? undefined : linkOrigin(node, input);
+  return input?.link == null ? undefined : inputSource(node, input.name);
 }
 // The widgets the settings source owns: the keys its bundle carries that the node has; an unseen source owns them all.
 function handedKeys(node) {
@@ -236,7 +236,33 @@ function refreshNode(node) {
   node.arisuRefreshSources?.();
   node.setDirtyCanvas(true, true);
 }
+const watchedRoutes = new WeakSet();
+const watchedGraphs = new WeakSet();
+function watchRoutes(graph = rootGraph(), seen = new Set()) {
+  if (!graph || seen.has(graph)) return;
+  seen.add(graph);
+  if (!watchedGraphs.has(graph)) {
+    watchedGraphs.add(graph);
+    // Frontend-only KJNodes do not receive the backend nodeCreated hook.
+    chain(graph, 'onNodeAdded', () => {
+      watchRoutes(graph);
+      queueMicrotask(() => refresh());
+    });
+  }
+  for (const node of graph.nodes ?? graph._nodes ?? []) {
+    if (node.subgraph) watchRoutes(node.subgraph, seen);
+    if (watchedRoutes.has(node) || !['SetNode', 'GetNode', 'Reroute'].includes(node.type)) continue;
+    watchedRoutes.add(node);
+    // Run after KJNodes finishes updating the other nodes in the named route.
+    const changed = () => queueMicrotask(() => refresh());
+    for (const name of ['onConnectionsChange', 'onConfigure', 'onAdded', 'onRemoved']) chain(node, name, changed);
+    const control = node.widgets?.[0];
+    if (control) chain(control, 'callback', changed);
+    watchMode(node);
+  }
+}
 function refresh(force) {
+  watchRoutes();
   if (refreshing || (app.configuringGraph && force !== true)) return;
   refreshing = true;
   try {
@@ -274,13 +300,20 @@ async function reconcile() {
 function ownership() {
   return JSON.stringify(
     allNodes()
-      .filter((node) => category(node) || node.type in HYBRID_WIDGETS)
+      .filter((node) => category(node) || node.type in HYBRID_WIDGETS || ['SetNode', 'GetNode', 'Reroute'].includes(node.type))
       .map((node) => [
         node.id,
         node.mode,
         on(node),
         node.inputs?.map((input) => [input.name, input.link]),
         node.type === STUDIO ? widget(node, 'aspect_ratio')?.value : undefined,
+        ['SetNode', 'GetNode'].includes(node.type) ? node.widgets?.[0]?.value : undefined,
+        node.type in HYBRID_WIDGETS
+          ? ['video_settings', 'resources', 'context_latent', 'vae'].map((name) => {
+              const origin = inputSource(node, name);
+              return origin ? [origin.graph?.id, origin.id] : null;
+            })
+          : undefined,
       ]),
   );
 }
@@ -328,8 +361,16 @@ function checkExplicit(node, entry, output, name, label) {
   const explicit = inputOf(node, name);
   if (explicit?.link == null) return false;
   const explicitId = entry.inputs[name]?.[0];
-  const origin = linkOrigin(node, explicit);
-  if ((origin && !active(origin)) || !explicitId || !output[explicitId] || !entry.inputs[name])
+  const immediate = linkOrigin(node, explicit);
+  const origin = inputSource(node, name);
+  if (
+    (immediate && !active(immediate)) ||
+    (['SetNode', 'GetNode', 'Reroute'].includes(immediate?.type) && !origin) ||
+    (origin?.graph === rootGraph() && String(origin.id) !== String(explicitId)) ||
+    !explicitId ||
+    !output[explicitId] ||
+    !entry.inputs[name]
+  )
     throw new Error(`The explicitly connected ${label} source is muted, bypassed, or absent.`);
   return true;
 }
@@ -364,6 +405,7 @@ app.registerExtension({
   name: 'Arisu.MiniMaxH3.SettingsBroadcast',
   init: installSelectionGuards,
   setup() {
+    watchRoutes();
     const graphToPrompt = app.graphToPrompt;
     if (graphToPrompt)
       app.graphToPrompt = async function (...args) {
@@ -483,7 +525,6 @@ app.registerExtension({
   },
 });
 
-/** Effective bundle owners for the Workbench's descriptive UI; server validation remains authoritative. */
 /** Resolve the same execution instance used by the advertising-aware serializer. */
 export function executionTarget(node) {
   const matches = executionNodes().filter((entry) => entry.node === node);
@@ -494,13 +535,16 @@ export function executionTarget(node) {
 
 // Graphs without subgraphs provide no DTO constructor; follow native virtual links.
 function resolveLegacyOutput(node, slot, seen = new Set()) {
-  if (!node) return null;
+  if (!node || !active(node)) throw new Error('The connected source is muted, bypassed, or absent.');
   if (seen.has(node)) throw new Error('A virtual input contains a dependency cycle.');
   seen.add(node);
-  if (!node.isVirtualNode) return { origin_id: node.id, origin_slot: slot };
+  if (!node.isVirtualNode && node.type !== 'Reroute') return { origin_id: node.id, origin_slot: slot, node };
   const source = node.resolveVirtualOutput?.(slot);
   if (source) return resolveLegacyOutput(source.node, source.slot, seen);
-  const link = node.getInputLink?.(slot);
+  const input = node.inputs?.[node.type === 'Reroute' ? 0 : slot];
+  const link =
+    node.getInputLink?.(slot) ??
+    (node.type === 'Reroute' ? (node.graph?.links?.get?.(input?.link) ?? node.graph?.links?.[input?.link]) : null);
   if (link) {
     const origin =
       link.resolve?.(node.graph)?.outputNode ??
@@ -558,55 +602,61 @@ export function captureWorkbenchPrompt(node) {
 }
 
 /** Follow explicit bundle ports across reroutes and subgraph boundaries for UI metadata. */
-export function effectiveBundles(node) {
-  function explicit(name) {
-    const input = inputOf(node, name);
-    if (input?.link == null) return null;
-    const parents = [];
-    let graph = rootGraph();
-    try {
-      for (const id of executionTarget(node)?.dto?.subgraphNodePath ?? []) {
-        const parent = (graph?.nodes ?? graph?._nodes ?? []).find((item) => String(item.id) === String(id));
-        if (!parent?.subgraph) return null;
-        parents.push(parent);
-        graph = parent.subgraph;
-      }
-    } catch {
-      return null;
+export function inputSource(node, name) {
+  const input = inputOf(node, name);
+  if (input?.link == null) return null;
+  const parents = [];
+  let graph = rootGraph();
+  try {
+    for (const id of executionTarget(node)?.dto?.subgraphNodePath ?? []) {
+      const parent = (graph?.nodes ?? graph?._nodes ?? []).find((item) => String(item.id) === String(id));
+      if (!parent?.subgraph) return null;
+      parents.push(parent);
+      graph = parent.subgraph;
     }
-    const seen = new Set();
-    function output(origin, slot, scopes) {
-      if (!origin || !active(origin) || seen.has(origin)) return null;
-      seen.add(origin);
-      if (origin.resolveSubgraphOutputLink && origin.subgraph) {
-        const resolved = origin.resolveSubgraphOutputLink(slot);
-        return resolved ? output(resolved.outputNode, resolved.link.origin_slot, [...scopes, origin]) : null;
-      }
-      if (origin.type === 'Reroute') return follow(origin, origin.inputs?.[0], scopes);
-      return origin;
-    }
-    function follow(consumer, socket, scopes) {
-      if (socket?.link == null) return null;
-      const links = consumer.graph?.links;
-      const link = links?.get?.(socket.link) ?? links?.[socket.link];
-      if (!link) return null;
-      if (link.originIsIoNode && scopes.length) {
-        const parent = scopes.at(-1);
-        return follow(parent, parent.inputs?.[link.origin_slot], scopes.slice(0, -1));
-      }
-      return output(linkOrigin(consumer, socket), link.origin_slot, scopes);
-    }
-    try {
-      return follow(node, input, parents);
-    } catch {
-      // The serializer reports broken links; a stale source never receives notes.
-      return null;
-    }
+  } catch {
+    return null;
   }
+  const seen = new Set();
+  function output(origin, slot, scopes) {
+    if (!origin || !active(origin) || seen.has(origin)) return null;
+    seen.add(origin);
+    if (origin.resolveSubgraphOutputLink && origin.subgraph) {
+      const resolved = origin.resolveSubgraphOutputLink(slot);
+      return resolved ? output(resolved.outputNode, resolved.link.origin_slot, [...scopes, origin]) : null;
+    }
+    if (origin.type === 'Reroute') return follow(origin, origin.inputs?.[0], scopes);
+    if (origin.isVirtualNode) {
+      const resolved = resolveLegacyOutput(origin, slot);
+      return resolved.node ? output(resolved.node, resolved.origin_slot, scopes) : null;
+    }
+    return origin;
+  }
+  function follow(consumer, socket, scopes) {
+    if (socket?.link == null) return null;
+    const links = consumer.graph?.links;
+    const link = links?.get?.(socket.link) ?? links?.[socket.link];
+    if (!link) return null;
+    if (link.originIsIoNode && scopes.length) {
+      const parent = scopes.at(-1);
+      return follow(parent, parent.inputs?.[link.origin_slot], scopes.slice(0, -1));
+    }
+    return output(linkOrigin(consumer, socket), link.origin_slot, scopes);
+  }
+  try {
+    return follow(node, input, parents);
+  } catch {
+    // The serializer reports broken links; a stale source never receives notes.
+    return null;
+  }
+}
+
+/** Effective sources for descriptive UI; server validation remains authoritative. */
+export function effectiveBundles(node) {
   return {
-    settings: advertiserFor(node, 'settings') ?? explicit('video_settings'),
-    resources: advertiserFor(node, 'resources') ?? explicit('resources'),
-    motion: explicit('context_latent'),
-    vae: explicit('vae'),
+    settings: advertiserFor(node, 'settings') ?? inputSource(node, 'video_settings'),
+    resources: advertiserFor(node, 'resources') ?? inputSource(node, 'resources'),
+    motion: inputSource(node, 'context_latent'),
+    vae: inputSource(node, 'vae'),
   };
 }

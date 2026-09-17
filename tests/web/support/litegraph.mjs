@@ -64,3 +64,25 @@ export function makeNode({ id, type, graph = null, widgets = [], inputs = [], ou
   graph?.nodes.push(node);
   return node;
 }
+
+/** Same-graph KJNodes contract: getters return the selected setter's upstream link. */
+export function makeSetGet(graph, id, source, slot = 0, key = 'source') {
+  graph.links ??= {};
+  const setter = makeNode({
+    id,
+    type: 'SetNode',
+    graph,
+    widgets: [{ name: 'key', value: key }],
+    inputs: [{ name: 'value', link: id }],
+    outputs: ['value'],
+  });
+  const getter = makeNode({ id: id + 1, type: 'GetNode', graph, widgets: [{ name: 'key', value: key }], outputs: ['value'] });
+  setter.isVirtualNode = getter.isVirtualNode = true;
+  graph.links[id] = { origin_id: source.id, origin_slot: slot };
+  setter.getInputLink = (index) => graph.links[setter.inputs[index]?.link];
+  getter.getInputLink = (index) => {
+    const selected = graph.nodes.find((node) => node.type === 'SetNode' && node.widgets[0].value === getter.widgets[0].value);
+    return graph.links[selected?.inputs[index]?.link];
+  };
+  return { setter, getter };
+}
