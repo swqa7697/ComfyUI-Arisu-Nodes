@@ -27,8 +27,6 @@ def normalize(message: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
                 return "invalid", {}
             arguments = arguments["tool_input"]
         return name.removeprefix("workbench__"), arguments
-    if name == "read_file" and isinstance(arguments, dict) and set(arguments) == {"target_file"}:
-        return "image", {"path": arguments["target_file"]}
     return "invalid", {}
 
 

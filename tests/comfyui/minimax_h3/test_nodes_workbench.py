@@ -2,24 +2,23 @@
 
 from __future__ import annotations
 
+import importlib
 import json
 import threading
-import wave
 from dataclasses import replace
 from pathlib import Path
 from typing import Any, Dict
 
-import av
 import pytest
 import torch
 from PIL import Image
 
-from src.arisu_nodes.minimax_h3 import nodes, workbench
+from src.arisu_nodes.minimax_h3 import media, nodes, workbench
 from src.arisu_nodes.minimax_h3.core import Resource, ResourceBundle, VideoSettings, workbench_options
 from src.arisu_nodes.minimax_h3.media import revision_for
 from src.arisu_nodes.minimax_h3.workbench import Generation, Workbench, job_context, skill_catalog
 from src.arisu_nodes.minimax_h3.workbench_media import stage
-from tests.support.media import make_audio, make_av
+from tests.support.media import make_audio, make_av, make_video
 
 pytestmark = pytest.mark.comfyui
 
@@ -47,12 +46,14 @@ def test_workbench_plain_string_first_clip_and_phase_aligned_tail(tmp_path: Path
 
     class Vae:
         calls = 0
+        length = 22
 
         def decode(self, latent: torch.Tensor) -> torch.Tensor:
             self.calls += 1
-            assert latent.shape == (1, 1, 7, 2, 2)
-            assert latent[0, 0, 0, 0, 0] == 15
-            return torch.linspace(0, 1, 22)[:, None, None, None].expand(22, 4, 4, 3).unsqueeze(0)
+            steps = 2 + ((self.length - 5) // 17) * 5
+            assert latent.shape == (1, 1, steps, 2, 2)
+            assert latent[0, 0, 0, 0, 0] == 22 - steps
+            return torch.linspace(0, 1, self.length)[:, None, None, None].expand(self.length, 4, 4, 3).unsqueeze(0)
 
     vae = Vae()
     latent = {"samples": [torch.arange(22).view(1, 1, 22, 1, 1).expand(1, 1, 22, 2, 2), object()]}
@@ -61,14 +62,14 @@ def test_workbench_plain_string_first_clip_and_phase_aligned_tail(tmp_path: Path
     assert node.execute(**inputs(context_latent=latent, vae=vae)).result == ("original prompt",)
     assert vae.calls == 0
 
-    def job(identifier: str) -> Generation:
+    def job(identifier: str, length: int = 22) -> Generation:
         directory = owner.temp / identifier
         directory.mkdir(parents=True)
         value = Generation(
             identifier,
             "w",
             "workflow",
-            {"context_length": 22},
+            {"context_length": length},
             {},
             directory,
             {"w": {"inputs": {"context_latent": ["l", 0], "vae": ["v", 0]}}, "l": {"class_type": "loader", "inputs": {}}},
@@ -85,14 +86,20 @@ def test_workbench_plain_string_first_clip_and_phase_aligned_tail(tmp_path: Path
     continued = job("continued")
     assert "vae" in node.check_lazy_status(prepare_job="continued", context_latent=latent)
     node.execute(**inputs(prepare_job="continued", context_latent=latent, vae=vae))
-    assert vae.calls == 1 and len(continued.motion) == 12
+    assert vae.calls == 1 and len(continued.motion) == 4
     with Image.open(continued.directory / continued.motion[0]["file"]) as image:
         assert image.getpixel((0, 0)) == (0, 0, 0)
     with Image.open(continued.directory / continued.motion[-1]["file"]) as image:
         assert image.getpixel((0, 0)) == (255, 255, 255)
     repeated = job("repeated")
     node.execute(**inputs(prepare_job="repeated", context_latent=latent, vae=vae))
-    assert len(repeated.motion) == 12 and vae.calls == 1
+    assert len(repeated.motion) == 4 and vae.calls == 1
+    for length, count in ((5, 2), (39, 6), (56, 8)):
+        vae.length = length
+        selected = job("motion-" + str(length), length)
+        node.execute(**inputs(prepare_job=selected.id, context_latent=latent, vae=vae))
+        assert len(selected.motion) == count
+        assert selected.motion[0]["timestamp"] == 0 and selected.motion[-1]["timestamp"] == (length - 1) / 24
     malformed = job("malformed")
     with pytest.raises(ValueError, match="short|phase"):
         node.execute(**inputs(prepare_job="malformed", context_latent={"samples": [torch.zeros(1, 1, 2, 2, 2)]}, vae=vae))
@@ -121,7 +128,7 @@ def test_workbench_stages_crops_refuses_escapes_and_cancellation_retains_guard(t
     with Image.open(directory / assets[0]["file"]) as cropped:
         assert cropped.size == (8, 6) and cropped.getpixel((0, 0)) == (255, 0, 0)
     assert image_path.read_bytes() == original
-    # Clip contents and soundtrack inclusion are applied to staged files, not originals.
+    # Video sampling ignores soundtrack inclusion; audio is notes only.
     video_path = source / "clip.mkv"
     make_av(video_path)
     sound_path = source / "sound.wav"
@@ -144,18 +151,62 @@ def test_workbench_stages_crops_refuses_escapes_and_cancellation_retains_guard(t
             }
         )
         assert not any(asset.get("resource_id") == "ref" for asset in prepared)
-        assert sum(asset["role"] == "reference_soundtrack" for asset in prepared) == int(include)
-        selected_video = next(asset for asset in prepared if asset["mime"] == "video/webm")
-        with av.open(str(destination / selected_video["file"])) as container:
-            assert not container.streams.audio
-            frames = list(container.decode(video=0))
-            assert len(frames) == 22
-        stills = [asset for asset in prepared if asset["role"] == "reference_video_frame"]
+        assert len(prepared) == 8 and all(asset["mime"] == "image/webp" for asset in prepared)
+        assert all(asset["resource_id"] == "video" for asset in prepared)
+        stills = prepared
         with Image.open(destination / stills[0]["file"]) as still:
             assert still.getpixel((0, 0))[0] == 12
-        selected_audio = next(asset for asset in prepared if asset.get("resource_id") == "sound")
-        with wave.open(str(destination / selected_audio["file"])) as encoded:
-            assert encoded.getnframes() == 4000 and encoded.getframerate() == 8000
+        with Image.open(destination / stills[-1]["file"]) as still:
+            assert still.getpixel((0, 0))[0] == 35
+        assert stills[0]["timestamp"] == 0 and stills[-1]["source_timestamp"] < 1.5
+        assert [asset["sequence_index"] for asset in stills] == list(range(8))
+
+    # Presentation timestamps, short intervals and exclusive endpoints determine samples.
+    variable = source / "variable.mkv"
+    make_video(variable, timestamps=[0, 100, 200, 900, 1000, 1100, 1600, 1700, 1900])
+    for number, clip in enumerate(((0.1, 1.7), (0.11, 0.19), (0.1, 0.2))):
+        destination = tmp_path / ("vfr-" + str(number))
+        destination.mkdir()
+        selected = replace(video, path=variable.name, clip=clip, revision=revision_for(variable.stat()))
+        sampled = stage({**payload, "directory": str(destination), "resources": [{"role": "reference", "item": selected.__dict__}]})
+        stamps = [asset["source_timestamp"] for asset in sampled]
+        assert stamps == sorted(set(stamps)) and len(stamps) <= 8
+        assert stamps[0] == 0.1 and stamps[-1] == (1.6 if number == 0 else 0.1)
+
+    # Cap only oversized pixels, preserve alpha, and retain lossless small pixels.
+    for number, size in enumerate(((39, 17), (4000, 20), (5000, 100))):
+        alpha = source / ("alpha-" + str(number) + ".png")
+        Image.new("RGBA", size, (123, 45, 67, 89)).save(alpha)
+        selected = replace(image, path=alpha.name, crop=None, revision=revision_for(alpha.stat()))
+        destination = tmp_path / ("alpha-" + str(number))
+        destination.mkdir()
+        asset = stage({**payload, "directory": str(destination), "resources": [{"role": "reference", "item": selected.__dict__}]})[0]
+        with Image.open(destination / asset["file"]) as result:
+            assert result.format == "WEBP" and result.size == ((4000, 80) if number == 2 else size)
+            if number < 2:
+                assert result.getpixel((0, 0)) == (123, 45, 67, 89)
+    oriented = source / "oriented.png"
+    portrait = Image.new("RGBA", (6, 4), (7, 8, 9, 255))
+    exif = portrait.getexif()
+    exif[274] = 6
+    portrait.save(oriented, exif=exif)
+    selected = replace(image, path=oriented.name, crop=(0, 2, 4, 4), revision=revision_for(oriented.stat()))
+    destination = tmp_path / "orientation"
+    destination.mkdir()
+    oriented_asset = stage({**payload, "directory": str(destination), "resources": [{"role": "reference", "item": selected.__dict__}]})[0]
+    with Image.open(destination / oriented_asset["file"]) as result:
+        assert result.size == (4, 4) and not result.getexif()
+    with pytest.raises(ValueError, match="capacity"):
+        stage({**payload, "max_bytes": 1})
+
+    # Notes-only audio never opens a decoder, even for duration probing.
+    with monkeypatch.context() as patches:
+
+        def forbidden_decoder(*args: Any, **kwargs: Any):
+            raise AssertionError("audio must not open a decoder")
+
+        patches.setattr(media, "open_media", forbidden_decoder)
+        assert stage({**payload, "resources": [{"role": "reference", "item": sound.__dict__}]}) == []
     assert video_path.read_bytes() == video_original
     outside = tmp_path / "outside.png"
     outside.write_bytes(original)
@@ -202,7 +253,9 @@ def test_workbench_stages_crops_refuses_escapes_and_cancellation_retains_guard(t
         context = json.loads((directory / "context.json").read_text())
         assert context["version"] == 3 and context["keyframes"] == {"first": None, "last": None}
         assert context["motion"]["present"] is False and context["motion"]["stills"] == []
-        assert context["references"][0]["note"] == "red coat"
+        assert context["references"][0]["note"] == ("red coat" if index == 0 else "blue coat")
+        assert context["assets"][0]["note"] == context["references"][0]["note"]
+        assert context["assets"][0]["attachment_index"] == 1
         assert context["references"][0]["inspect"]["type"] == "image"
         assert context["assets"][0]["id"] in context["references"][0]["inspect"]["asset_ids"]
         with Image.open(directory / context["assets"][0]["file"]) as prepared:
@@ -212,7 +265,9 @@ def test_workbench_stages_crops_refuses_escapes_and_cancellation_retains_guard(t
 
     monkeypatch.setattr(owner.agents, "generate", generated)
     for index in range(2):
-        options = workbench_options({"source_id": "studio", "reference_notes": {"studio:ref:input:reference.png": "red coat"}})
+        options = workbench_options(
+            {"source_id": "studio", "reference_notes": {"studio:ref:input:reference.png": "red coat" if index == 0 else "blue coat"}}
+        )
         prepared_job = owner.create("w", "active", options, {"w": {"inputs": {}}})
         prepared_job.resources = ResourceBundle(images=(image,))
         prepared_job.roots = {"input": str(source)}
@@ -237,33 +292,46 @@ def test_workbench_stages_crops_refuses_escapes_and_cancellation_retains_guard(t
         {},
     )
     grouped_job.settings = VideoSettings(1280, 720, 145, "16:9 (Widescreen)")
-    grouped_job.motion = [{"id": "motion-00", "file": "motion-00.png", "mime": "image/png", "role": "motion", "timestamp": 0.91}]
-    grouped = job_context(
-        grouped_job,
-        [
-            {
-                "id": "0",
-                "file": "0.png",
-                "mime": "image/png",
-                "resource_id": "ref",
-                "role": "first_keyframe",
-                "name": "reference.png",
-            },
-            {
-                "id": "1",
-                "file": "1.png",
-                "mime": "image/png",
-                "resource_id": "video",
-                "role": "reference_video_frame",
-                "name": "clip.mkv",
-                "timestamp": 0.0,
-            },
-        ],
-        ResourceBundle(first=image, videos=(replace(video, include_audio=False),)),
+    mixed = tmp_path / "mixed"
+    mixed.mkdir()
+    grouped_job.directory = mixed
+    first_image = replace(image, id="first")
+    second_video = replace(video, id="second-video")
+    mixed_assets = stage(
+        {
+            **payload,
+            "directory": str(mixed),
+            "max_bytes": 1000000,
+            "resources": [
+                {"role": role, "item": item.__dict__}
+                for role, item in (("first_keyframe", first_image), ("reference", image), ("reference", video), ("reference", second_video))
+            ],
+        }
     )
-    assert grouped["keyframes"]["first"]["asset_id"] == "0" and grouped["keyframes"]["last"] is None
-    assert grouped["references"][0]["kind"] == "video" and grouped["references"][0]["inspect"]["frames"][0]["asset_id"] == "1"
-    assert grouped["motion"]["present"] and grouped["motion"]["stills"][0]["asset_id"] == "motion-00"
+    owner.cache_motion(grouped_job, "mixed-motion", [Image.new("RGB", (16, 16), "blue") for _ in range(4)])
+    grouped_job.options["source_id"] = "studio"
+    grouped_job.options["reference_notes"] = {
+        "studio:ref:input:reference.png": "red coat",
+        "studio:video:input:clip.mkv": "slow camera",
+        "studio:second-video:input:clip.mkv": "fast camera",
+    }
+    grouped = job_context(
+        grouped_job, mixed_assets + grouped_job.motion, ResourceBundle(first=first_image, images=(image,), videos=(video, second_video))
+    )
+    (mixed / "context.json").write_text(json.dumps(grouped))
+    monkeypatch.syspath_prepend(str(workbench.ASSETS))
+    validated = importlib.import_module("contract").context(mixed)
+    assert len(validated["assets"]) == 22 and len({a["id"] for a in validated["assets"]}) == 22
+    for asset in validated["assets"]:
+        assert asset["file"] == asset["id"] + ".webp"
+        assert (
+            asset["note"]
+            == {"first": "", "ref": "red coat", "video": "slow camera", "second-video": "fast camera", "motion": "camera still pushing"}[
+                asset["resource_id"]
+            ]
+        )
+    assert grouped["keyframes"]["first"]["asset_id"] == mixed_assets[0]["id"] and grouped["keyframes"]["last"] is None
+    assert grouped["motion"]["present"] and len(grouped["motion"]["stills"]) == 4
     assert grouped["duration_seconds"] == 145 / 24
     assert grouped["motion"]["delivered_duration_seconds"] == (145 - 22) / 24
     owner.release("active")

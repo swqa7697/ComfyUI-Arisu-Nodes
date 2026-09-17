@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import importlib
 import importlib.util
 import json
@@ -13,10 +14,18 @@ from pathlib import Path
 from typing import Any, List
 
 import pytest
+from PIL import Image
 
 from src.arisu_nodes.common.paths import CONFIG_TEMPLATE, parse_configuration
 from src.arisu_nodes.minimax_h3.agent_docker import DockerAgents
-from src.arisu_nodes.minimax_h3.core import finalized_markdown, motion_tail, preparation_graph, workbench_options, workbench_samples
+from src.arisu_nodes.minimax_h3.core import (
+    finalized_markdown,
+    motion_samples,
+    motion_tail,
+    preparation_graph,
+    workbench_options,
+    workbench_samples,
+)
 
 
 def test_generation_contract_prunes_side_effects_and_parses_only_final_markdown():
@@ -61,7 +70,9 @@ def test_generation_contract_prunes_side_effects_and_parses_only_final_markdown(
     for frames, steps in ((5, 2), (22, 7), (39, 12), (56, 17)):
         assert motion_tail(22, frames) == (22 - steps, 22)
         retained = workbench_samples(frames)
-        assert len(retained) == min(frames, 12) and retained[0] == 0 and retained[-1] == frames - 1
+        assert len(retained) == min(frames, 8) and retained[0] == 0 and retained[-1] == frames - 1
+        motion = motion_samples(frames)
+        assert len(motion) == {5: 2, 22: 4, 39: 6, 56: 8}[frames] and motion[0] == 0 and motion[-1] == frames - 1
     for total, length in ((2, 22), (23, 22), (22, 1)):
         with pytest.raises(ValueError):
             motion_tail(total, length)
@@ -122,7 +133,7 @@ def test_agent_update_preserves_working_image_and_settings_reject_unavailable_mo
     with pytest.raises(ValueError):
         agents.manage("codex", "update")
     assert not tagged and not agents.guard.locked() and agents.operation["state"] == "failed"
-    monkeypatch.setattr(agents, "invoke", lambda *args, **kwargs: {"policy_ready": True, "policy_revision": 5})
+    monkeypatch.setattr(agents, "invoke", lambda *args, **kwargs: {"policy_ready": True, "policy_revision": 6})
     agents.manage("codex", "update")
     assert tagged == [agents.image("codex")] and agents.operation["state"] == "complete"
     monkeypatch.setattr(
@@ -221,17 +232,34 @@ def test_mcp_manifest_images_and_unlisted_or_escaping_assets(
     skill.mkdir()
     (skill / "SKILL.md").write_text("Use the selected H3 grammar.")
     (skill / "script.py").write_text("raise RuntimeError('must never execute')")
-    original = b"test fixture bytes"
-    (root / "image.png").write_bytes(original)
+    Image.new("RGB", (16, 16), "red").save(root / "image.webp", lossless=True)
+    original = (root / "image.webp").read_bytes()
     (root / "unlisted.png").write_bytes(original)
-    manifest = {"version": 3, "requirements": "selected shot", "assets": [{"id": "image", "file": "image.png", "mime": "image/png"}]}
+    manifest = {
+        "version": 3,
+        "requirements": "selected shot",
+        "assets": [
+            {
+                "id": "image",
+                "file": "image.webp",
+                "mime": "image/webp",
+                "attachment_index": 1,
+                "width": 16,
+                "height": 16,
+                "note": "coat",
+                "role": "reference",
+                "resource_id": "ref",
+            }
+        ],
+    }
+    manifest["references"] = [{"id": "ref", "kind": "image", "note": "coat", "inspect": {"asset_ids": ["image"]}}]
     (root / "context.json").write_text(json.dumps(manifest))
     context = module.respond({"method": "tools/call", "params": {"name": "get_context", "arguments": {}}}, root, skill)
     data = json.loads(context["content"][0]["text"])
-    assert data["requirements"] == "selected shot" and data["assets"][0]["path"] == "/inputs/image.png"
+    assert data["requirements"] == "selected shot" and data["assets"][0]["path"] == "/inputs/image.webp"
     assert all(block["type"] == "text" for block in context["content"])
     assert module.call("read_skill", {"path": "SKILL.md"}, root, skill)["content"][0]["text"] == "Use the selected H3 grammar."
-    assert gate.authorize("image", {"path": "/inputs/image.png"}, root, skill)
+    assert not gate.authorize("image", {"path": "/inputs/image.webp"}, root, skill)
     assert gate.authorize("get_context", {}, root, skill)
     assert gate.authorize("read_skill", {"path": "SKILL.md"}, root, skill)
     for name, arguments in (
@@ -249,29 +277,36 @@ def test_mcp_manifest_images_and_unlisted_or_escaping_assets(
         "/home/agent/.codex/auth.json",
         "/inputs/unlisted.png",
         "/inputs/../secret",
-        "/inputs/./image.png",
-        "/inputs/sub/../image.png",
-        "/inputs/image.png:stream",
+        "/inputs/./image.webp",
+        "/inputs/sub/../image.webp",
+        "/inputs/image.webp:stream",
         "/inputs/..\\secret",
-        "C:/inputs/image.png",
+        "C:/inputs/image.webp",
         "/inputs/%2e%2e/secret",
     ):
         assert not gate.authorize("image", {"path": path}, root, skill), path
     for name in ("apply_patch", "bash", "web_search", "spawn_agent", "unknown"):
         assert not gate.authorize(name, {}, root, skill), name
-    assert not gate.authorize("image", {"path": "/inputs/image.png", "command": "touch /tmp/x"}, root, skill)
+    assert not gate.authorize("image", {"path": "/inputs/image.webp", "command": "touch /tmp/x"}, root, skill)
     outside = tmp_path / "secret"
     outside.write_bytes(b"outside sentinel")
-    (root / "image.png").unlink()
-    (root / "image.png").symlink_to(outside)
-    assert not gate.authorize("image", {"path": "/inputs/image.png"}, root, skill)
+    (root / "image.webp").unlink()
+    (root / "image.webp").symlink_to(outside)
+    assert not gate.authorize("image", {"path": "/inputs/image.webp"}, root, skill)
     assert module.respond({"method": "tools/call", "params": {"name": "get_context", "arguments": {}}}, root, skill)["isError"]
     (skill / "nested").symlink_to(tmp_path, target_is_directory=True)
     assert not gate.authorize("read_skill", {"path": "nested/secret"}, root, skill)
     assert outside.read_bytes() == b"outside sentinel"
 
-    (root / "image.png").unlink()
-    (root / "image.png").write_bytes(original)
+    (root / "image.webp").unlink()
+    (root / "image.webp").write_bytes(original)
+
+    for change in ({"attachment_index": 2}, {"resource_id": "wrong"}, {"note": "wrong"}, {"file": "unlisted.webp"}):
+        invalid = json.loads(json.dumps(manifest))
+        invalid["assets"][0].update(change)
+        (root / "context.json").write_text(json.dumps(invalid))
+        assert module.respond({"method": "tools/call", "params": {"name": "get_context", "arguments": {}}}, root, skill)["isError"]
+    (root / "context.json").write_text(json.dumps(manifest))
 
     # Provider adapters normalize actual CLI envelopes, including Grok's resolved-name hook.
     codex_spec = importlib.util.spec_from_file_location("codex_hook", assets / "agents/codex/hook.py")
@@ -280,7 +315,7 @@ def test_mcp_manifest_images_and_unlisted_or_escaping_assets(
     grok_spec = importlib.util.spec_from_file_location("grok_hook", assets / "agents/grok/hook.py")
     grok = importlib.util.module_from_spec(grok_spec)
     grok_spec.loader.exec_module(grok)
-    assert gate.authorize(*grok.normalize({"toolName": "read_file", "toolInput": {"target_file": "/inputs/image.png"}}), root, skill)
+    assert not gate.authorize(*grok.normalize({"toolName": "read_file", "toolInput": {"target_file": "/inputs/image.webp"}}), root, skill)
     for name in ("use_tool", "workbench__read_skill"):
         normalized = grok.normalize(
             {"toolName": name, "toolInput": {"tool_name": "workbench__read_skill", "tool_input": {"path": "SKILL.md"}}}
@@ -289,7 +324,7 @@ def test_mcp_manifest_images_and_unlisted_or_escaping_assets(
     for message in (
         {"toolName": "workbench__get_context", "toolInput": {"tool_name": "workbench__read_skill", "tool_input": {"path": "SKILL.md"}}},
         {"toolName": "use_tool", "toolInput": {"tool_name": "other__read_skill", "tool_input": {"path": "SKILL.md"}}},
-        {"toolName": "read_file", "toolInput": {"path": "/inputs/image.png"}, "toolInputTruncated": True},
+        {"toolName": "read_file", "toolInput": {"path": "/inputs/image.webp"}, "toolInputTruncated": True},
     ):
         assert not gate.authorize(*grok.normalize(message), root, skill), message
     assert not gate.authorize(*codex.normalize({"tool_name": "apply_patch", "tool_input": {"command": "arbitrary code"}}), root, skill)
@@ -311,12 +346,33 @@ def test_mcp_manifest_images_and_unlisted_or_escaping_assets(
     assert json.loads((auth / "auth.json").read_text()) == {"token": "refreshed"}
     assert (auth / "config.toml").read_text() == "untrusted configuration" and not (auth / "session.log").exists()
 
+    # Native provider input encodings preserve the exact attachment and its note identity.
+    codex_provider = importlib.import_module("agents.codex.adapter")
+    grok_provider = importlib.import_module("agents.grok.adapter")
+
+    def local_path(value: str) -> Path:
+        return tmp_path / Path(value).name
+
+    (tmp_path / "models_cache.json").write_text(json.dumps({"models": [{"slug": "test"}]}))
+    (tmp_path / "instructions.txt").write_text("MCP and attachments only")
+    with monkeypatch.context() as patches:
+        patches.setattr(codex_provider, "Path", local_path)
+        patches.setattr(grok_provider, "Path", local_path)
+        patches.setattr(grok_provider, "INPUTS", root)
+        command = codex_provider.command("test", "", "identity index", data["assets"])
+        assert command[command.index("--image") + 1] == "/inputs/image.webp"
+        grok_command = grok_provider.command("test", "", "identity index", data["assets"])
+        blocks = json.loads(Path(grok_command[grok_command.index("--prompt-file") + 1]).read_text())
+        assert json.loads(blocks[1]["text"])["note"] == "coat"
+        assert blocks[2]["mimeType"] == "image/webp" and base64.b64decode(blocks[2]["data"]) == original
+        assert grok_command[grok_command.index("--tools") + 1] == "search_tool,use_tool"
+
     # Real subprocess pipes exercise final extraction, interrupted streams and forbidden events.
     runner_spec = importlib.util.spec_from_file_location("workbench_stream_runner", assets / "runner.py")
     runner = importlib.util.module_from_spec(runner_spec)
     runner_spec.loader.exec_module(runner)
     provider = importlib.import_module("agents.codex.adapter")
-    monkeypatch.setattr(provider, "inspect", lambda: {"policy_ready": True, "policy_revision": 5})
+    monkeypatch.setattr(provider, "inspect", lambda: {"policy_ready": True, "policy_revision": 6})
     monkeypatch.setattr(runner, "adapter_for", lambda agent: provider)
     monkeypatch.setattr(runner, "context", lambda: {"assets": []})
     monkeypatch.setattr(
@@ -330,6 +386,7 @@ def test_mcp_manifest_images_and_unlisted_or_escaping_assets(
         ([assistant, complete, assistant], False),
         ([{"type": "item.started", "item": {"type": "command_execution", "command": "touch /tmp/forbidden"}}], False),
         ([{"type": "control_request"}], False),
+        ([{"type": "item.completed", "item": {"type": "image_view", "path": "/inputs/image.webp"}}], False),
         ([{"type": "item.completed", "item": {"type": "agent_message", "text": "ARISU_POLICY_REFUSAL"}}, complete], False),
     ):
         wire = "".join(json.dumps(event) + "\n" for event in events)

@@ -49,6 +49,7 @@ from .core import (
     frames_for_duration,
     keyframe_canvases,
     latent_size,
+    motion_samples,
     motion_tail,
     order_picture_items,
     parse_resources,
@@ -60,7 +61,6 @@ from .core import (
     soundtrack_key,
     temporal_shape,
     validate_bundle,
-    workbench_samples,
 )
 from .media import build_bundle, read_audio, read_image, read_video, source_fingerprint, validate_source
 from .workbench import motion_key
@@ -1182,7 +1182,7 @@ class ArisuMiniMaxH3PromptWorkbench(io.ComfyNode):
                         decoded = decoded[0]
                     if decoded.ndim != 4 or decoded.shape[0] != job.options["context_length"] or decoded.shape[-1] != 3:
                         raise PreparationError("video VAE returned an unexpected motion shape")
-                    indices = workbench_samples(decoded.shape[0])
+                    indices = motion_samples(decoded.shape[0])
                     images = (decoded[indices].detach().float().cpu().clamp(0, 1).numpy() * 255).round().astype("uint8")
                     owner.cache_motion(job, key, [Image.fromarray(image) for image in images])
             owner.enforce_budget()

@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import base64
 import json
 from pathlib import Path
 from typing import Any, Dict, List
 
-from contract import POLICY_REVISION
+from contract import INPUTS, POLICY_REVISION, contained_file
 from gate import authorize
 from process import rpc, run
 
@@ -18,7 +19,9 @@ BASIC = ("low", "medium", "high")
 def inspect() -> Dict[str, Any]:
     version = run(["grok", "--version"])
     help_text = run(["grok", "--help"])
-    if version.returncode or not all(flag in help_text.stdout for flag in ("--tools", "--disable-web-search", "--system-prompt-override")):
+    if version.returncode or not all(
+        flag in help_text.stdout for flag in ("--tools", "--disable-web-search", "--system-prompt-override", "--prompt-file")
+    ):
         raise ValueError("Grok policy controls are unavailable")
     result = run(["grok", "--no-auto-update", "inspect", "--json"])
     if result.returncode:
@@ -70,12 +73,27 @@ def inspect() -> Dict[str, Any]:
     }
 
 
-def command(model: str, effort: str, prompt: str) -> List[str]:
+def command(model: str, effort: str, prompt: str, assets: List[Dict[str, Any]]) -> List[str]:
+    prompt_file = Path("/tmp/workbench-prompt.json")
+    # File input avoids ARG_MAX; keep Base64 expansion inside the existing tmpfs.
+    if (
+        sum((contained_file(INPUTS, asset["file"]).stat().st_size + 2) // 3 * 4 for asset in assets) + len(prompt.encode())
+        > 90 * 1024 * 1024
+    ):
+        raise ValueError("Grok attachments exceed the bounded prompt budget")
+    with prompt_file.open("x", encoding="utf-8") as output:
+        output.write("[" + json.dumps({"type": "text", "text": prompt}))
+        for asset in assets:
+            identity = {key: value for key, value in asset.items() if key != "file"}
+            output.write("," + json.dumps({"type": "text", "text": json.dumps(identity, ensure_ascii=False)}))
+            encoded = base64.b64encode(contained_file(INPUTS, asset["file"]).read_bytes()).decode("ascii")
+            output.write("," + json.dumps({"type": "image", "mimeType": "image/webp", "data": encoded}))
+        output.write("]")
     arguments = [
         "grok",
         "--no-auto-update",
-        "-p",
-        prompt,
+        "--prompt-file",
+        str(prompt_file),
         "--model",
         model,
         "--output-format",
@@ -86,7 +104,7 @@ def command(model: str, effort: str, prompt: str) -> List[str]:
         "--no-plan",
         "--disable-web-search",
         "--tools",
-        "read_file",
+        "search_tool,use_tool",
         "--system-prompt-override",
         Path("/opt/workbench/instructions.txt").read_text(),
     ]
@@ -98,7 +116,7 @@ def command(model: str, effort: str, prompt: str) -> List[str]:
 def event(value: Dict[str, Any]) -> str:
     kind = value.get("type")
     if kind == "system" and value.get("subtype") == "init":
-        permitted = {"read_file", "search_tool", "use_tool", "workbench__get_context", "workbench__read_skill"}
+        permitted = {"search_tool", "use_tool", "workbench__get_context", "workbench__read_skill"}
         if set(value.get("tools", [])) - permitted:
             raise ValueError("Grok advertised prohibited tools: " + str(sorted(set(value.get("tools", [])) - permitted)))
         if value.get("permissionMode") != "dontAsk":

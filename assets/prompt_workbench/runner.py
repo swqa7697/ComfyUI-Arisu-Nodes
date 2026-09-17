@@ -9,6 +9,7 @@ import selectors
 import signal
 import subprocess
 import sys
+import tempfile
 from typing import Any, Dict, List
 
 from contract import POLICY_REVISION, context, final_response
@@ -17,7 +18,7 @@ from gate import AUDIT
 from runtime import Runtime, stop_on_signal
 
 BASIC = ("low", "medium", "high")
-PROMPT = "Read the selected skill and all video generation context through Workbench MCP, inspect its mounted images, and return the MiniMax H3 prompt."
+PROMPT = "Read the selected skill and all video generation context through Workbench MCP, use the attached images and their matching notes, and return the MiniMax H3 prompt."
 
 
 def adapter_for(agent: str) -> Any:
@@ -50,11 +51,21 @@ def generate(agent: str, options: Dict[str, Any]):
     if details.get("policy_revision") != POLICY_REVISION or not details.get("policy_ready"):
         raise ValueError("agent policy is incompatible; update its image")
     manifest = context()
+    prompt = PROMPT + "\nAttachment identity index (image order is one-based):\n" + json.dumps(manifest["assets"], ensure_ascii=False)
     final = ""
     completed = False
-    process = subprocess.Popen(
-        adapter.command(model, effort, PROMPT), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True
-    )
+    # Codex reads text from stdin to avoid the per-argument limit on large note sets.
+    with tempfile.TemporaryFile(mode="w+t", encoding="utf-8") as prompt_input:
+        prompt_input.write(prompt)
+        prompt_input.seek(0)
+        process = subprocess.Popen(
+            adapter.command(model, effort, prompt, manifest["assets"]),
+            stdin=prompt_input,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            start_new_session=True,
+        )
     selector = selectors.DefaultSelector()
     selector.register(process.stdout, selectors.EVENT_READ, "stdout")
     selector.register(process.stderr, selectors.EVENT_READ, "stderr")
@@ -94,9 +105,6 @@ def generate(agent: str, options: Dict[str, Any]):
             r["tool"] == "read_skill" and r["arguments"] == {"path": "SKILL.md"} for r in records
         ):
             raise ValueError("agent did not read the required context and skill through the managed gate")
-        seen = {r["arguments"]["path"] for r in records if r["tool"] == "image"}
-        if any(asset.get("path") and asset["path"] not in seen for asset in manifest["assets"]):
-            raise ValueError("agent did not inspect every listed image through the managed gate")
         print("ARISU_AUDIT " + json.dumps(records), flush=True)
         print("ARISU_RESULT " + json.dumps({"final": final}), flush=True)
     finally:

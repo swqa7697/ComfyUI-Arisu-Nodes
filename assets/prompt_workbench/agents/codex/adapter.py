@@ -41,7 +41,7 @@ def inspect() -> Dict[str, Any]:
     ):
         if features.get(name) is not False:
             raise ValueError("Codex feature policy mismatch: " + name)
-    if features.get("hooks") is not True or features.get("view_image") is not True:
+    if features.get("hooks") is not True or features.get("view_image") is not False:
         raise ValueError("Codex read gate is unavailable")
     if set(configured.get("mcp_servers", {})) != {"workbench"}:
         raise ValueError("Codex MCP policy mismatch")
@@ -67,7 +67,7 @@ def inspect() -> Dict[str, Any]:
     }
 
 
-def command(model: str, effort: str, prompt: str) -> List[str]:
+def command(model: str, effort: str, prompt: str, assets: List[Dict[str, Any]]) -> List[str]:
     cache = Path("/home/agent/.codex/models_cache.json")
     data = json.loads(cache.read_text())
     models = data.get("models", [])
@@ -86,7 +86,9 @@ def command(model: str, effort: str, prompt: str) -> List[str]:
     arguments += ["-c", "model_catalog_json=" + json.dumps(str(catalog_path))]
     if effort:
         arguments += ["-c", "model_reasoning_effort=" + json.dumps(effort)]
-    return [*arguments, prompt]
+    for asset in assets:
+        arguments += ["--image", asset["path"]]
+    return [*arguments, "--", "-"]
 
 
 def event(value: Dict[str, Any]) -> str:
@@ -107,11 +109,6 @@ def event(value: Dict[str, Any]) -> str:
             raise ValueError("Codex attempted a prohibited MCP call")
         if item.get("error") or (item.get("result") or {}).get("isError"):
             raise ValueError("Workbench reader failed")
-        return ""
-    if item_type in ("image_view", "view_image"):
-        path = item.get("path")
-        if not authorize("image", {"path": path}):
-            raise ValueError("Codex attempted an unauthorized image read")
         return ""
     raise ValueError("Codex attempted a prohibited tool: " + str(item_type))
 

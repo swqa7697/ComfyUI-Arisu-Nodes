@@ -30,8 +30,8 @@ automatically when both are connected; click **Motion context** to expand or
 collapse its controls.
 
 - Load index **0** returns no previous context: the first clip needs no VAE decode.
-- Windows **5, 22, 39, 56** are video frames at 24 fps. Up to 12 ordered stills
-  describe the decoded tail to the agent.
+- Windows **5, 22, 39, 56** are video frames at 24 fps. Respectively **2, 4, 6, 8** ordered stills
+  describe the decoded tail to the agent, including both endpoints.
 - Audio context length is descriptive only. **0** follows video length; no
   audio latent is decoded by this node.
 - Short or incompatible saved latents require corrected inputs; arbitrary
@@ -58,7 +58,8 @@ Bundled skills are **with-ref** (default; Ref2VA / Hybrid) and **no-ref** (T2VA 
 L2VA). They share one MCP: `get_context` returns duration,
 aspect, requirements, trigger words, keyframes, grouped references, and motion stills;
 `read_skill` serves selected `.md`/`.txt` skill documents. Raster assets include absolute mounted
-paths and are viewed with the native CLI image reader; MCP never transfers image bytes. Video references are ordered stills; audio is listed with notes
+paths and unique IDs matching their initial-prompt attachments; image/file readers are disabled.
+MCP never transfers image bytes. Video references are ordered stills; audio is listed with notes
 only. Administrators can add `<skill-name>/SKILL.md` folders under `user/__arisu_nodes/skills`.
 Files and skills are mounted read-only for generation; the agent has no Docker socket, GPU, or
 mount of the ComfyUI installation.
@@ -90,8 +91,16 @@ unrelated reads. Results come from provider streams, never a generated file.
 
 A brief asking the agent to code, browse, change files or bypass policy fails as a whole. A video
 about a programmer is still allowed. Prompt-injection detection is probabilistic; denied tools,
-invalid output and incomplete context/image reads fail generation without changing finalized text.
+invalid output, mismatched attachments, and incomplete context/skill reads fail generation without changing finalized text.
 
 Scroll over the panel to zoom the graph; hold the middle mouse button to pan. Overflowing editors keep normal vertical scrolling; Ctrl+wheel zooms the graph there.
 
 Agent activity displays provider-exposed thoughts as readable text. Expand tool and other detail sections to inspect their full output.
+
+Prepared images preserve transparency, apply selected crops, and use lossless WebP.
+Only images exceeding a 4000-pixel longer edge are resized, using Lanczos. Video references
+provide up to eight distinct evenly spaced frames across the entire selected clip, including
+the first and last displayed frames. No video transcoding or audio decoding occurs.
+Each attachment carries a matching asset ID, role, sequence position, and current notes.
+Lossless files exceeding the image limit or Grok’s bounded prompt payload fail preparation;
+quality is never silently reduced.

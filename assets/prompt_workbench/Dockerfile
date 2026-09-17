@@ -1,3 +1,5 @@
+# check=skip=InvalidDefaultArgInFrom
+
 # Required: --build-arg AGENT=codex or --build-arg AGENT=grok.
 ARG AGENT
 
@@ -9,7 +11,7 @@ COPY agents/${AGENT}/install.sh /opt/install_agent.sh
 RUN sh /opt/install_agent.sh
 
 FROM python:3.13-slim-trixie AS runtime-common
-LABEL org.arisu.workbench="1" org.arisu.workbench.policy="5"
+LABEL org.arisu.workbench="1" org.arisu.workbench.policy="6"
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 HOME=/home/agent
 COPY --from=installer /opt/agent/ /opt/agent/
 ENV PATH="/opt/agent/bin:/usr/local/bin:/usr/bin:/bin"

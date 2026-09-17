@@ -91,7 +91,7 @@ List every `references[]` row the local model will receive, including pure video
 ## Workflow
 
 1. **Parse assets and roles**
-   - Call `get_context`. Read mounted keyframe images, reference images, and video stills.
+   - Call `get_context`. Inspect attached keyframe images, reference images, and video stills using their asset IDs and matching notes.
    - Route Ref2VA vs Hybrid.
    - Apply the Motion Context gate. If Off, ignore those fields.
    - Map Hybrid first/last as true keyframes (outside the reference list). If Motion Context is On, treat `keyframes.first` as absent.

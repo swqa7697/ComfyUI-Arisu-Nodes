@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import io
 import json
 import logging
 import re
@@ -14,6 +15,8 @@ import time
 from pathlib import Path
 from typing import Dict, List
 
+from PIL import Image
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.arisu_nodes.minimax_h3.agent_docker import ASSETS, LABEL, POLICY_REVISION, PROVIDER_LABEL, DockerAgents
@@ -23,7 +26,7 @@ PNG = "iVBORw0KGgoAAAANSUhEUgAAAGAAAABgCAIAAABt+uBvAAAA80lEQVR4nO3cQQ3DQAwAwaYqj
 PROBE = r"""
 import json, os, pathlib, shutil, subprocess, sys
 sys.path.insert(0, '/opt/workbench')
-from contract import context, image_path
+from contract import context, contained_file
 from mcp_server import call
 from runtime import Runtime
 agent = sys.argv[1]
@@ -45,7 +48,7 @@ assert other not in os.environ['PATH']
 with Runtime(agent):
     assert os.getuid() == 1000
     assert not pathlib.Path('/var/run/docker.sock').exists()
-    for path in ('/inputs/pixel.png', '/skill/SKILL.md', '/work/forbidden', '/etc/forbidden', '/opt/workbench/instructions.txt',
+    for path in ('/inputs/pixel.webp', '/skill/SKILL.md', '/work/forbidden', '/etc/forbidden', '/opt/workbench/instructions.txt',
                  str(provider / 'config.toml'), str(policy)):
         try:
             with open(path, 'ab') as output: output.write(b'forbidden')
@@ -67,10 +70,10 @@ with Runtime(agent):
     assert {t['name'] for t in messages[1]['result']['tools']} == {'get_context','read_skill'}
     assert messages[4]['result']['isError']
     assert all(block['type'] == 'text' for message in messages[2:] for block in message['result']['content'])
-    assert json.loads(messages[2]['result']['content'][0]['text'])['assets'][0]['path'] == '/inputs/pixel.png'
-    assert image_path('/inputs/pixel.png').read_bytes() == pathlib.Path('/inputs/pixel.png').read_bytes()
+    assert json.loads(messages[2]['result']['content'][0]['text'])['assets'][0]['path'] == '/inputs/pixel.webp'
+    assert contained_file(pathlib.Path('/inputs'), 'pixel.webp').read_bytes() == pathlib.Path('/inputs/pixel.webp').read_bytes()
     names = ('mcp__workbench__get_context','mcp__workbench__read_skill','view_image','apply_patch','Bash') if agent == 'codex' else ('workbench__get_context','workbench__read_skill','read_file','edit_file','bash')
-    cases = [(names[0],{},True),(names[1],{'path':'SKILL.md'},True),(names[2],{'path':'/inputs/pixel.png'},True),
+    cases = [(names[0],{},True),(names[1],{'path':'SKILL.md'},True),(names[2],{'path':'/inputs/pixel.webp'},False),
              (names[2],{'path':'/auth/auth.json'},False),(names[2],{'path':'/inputs/../auth/auth.json'},False),
              (names[1],{'path':'../auth/auth.json'},False),(names[3],{'path':'/tmp/code.py','content':'forbidden'},False),
              (names[4],{'command':'touch /tmp/forbidden'},False),('web_search',{'query':'news'},False),('unknown',{},False)]
@@ -82,7 +85,7 @@ with Runtime(agent):
         response = json.loads(result.stdout)
         allowed = response.get('decision',response.get('hookSpecificOutput',{}).get('permissionDecision')) == 'allow'
         assert allowed == expected, (tool, arguments, response)
-    print('PASS: provider isolation, immutable mounts, metadata-only MCP, authorized reads and actual hook allow/deny decisions')
+    print('PASS: provider isolation, immutable mounts, metadata-only MCP, attachments and actual hook allow/deny decisions')
 """
 
 
@@ -109,8 +112,9 @@ class SmokeAgents(DockerAgents):
 
 def fixture(directory: Path, requirements: str, images: bool = False) -> Path:
     directory.mkdir()
-    (directory / "pixel.png").write_bytes(base64.b64decode(PNG))
-    asset = {"id": "pixel", "file": "pixel.png", "mime": "image/png", "role": "reference", "path": "/inputs/pixel.png"}
+    with Image.open(io.BytesIO(base64.b64decode(PNG))) as image:
+        image.save(directory / "pixel.webp", lossless=True)
+    asset = {"id": "pixel", "file": "pixel.webp", "mime": "image/webp", "role": "reference", "path": "/inputs/pixel.webp"}
     manifest = {
         "version": 3,
         "duration_seconds": 6,
@@ -124,10 +128,21 @@ def fixture(directory: Path, requirements: str, images: bool = False) -> Path:
         "motion": {"present": False, "stills": [], "notes": ""},
     }
     if images:
-        for identifier, role in (("first", "first_keyframe"), ("last", "last_keyframe"), ("video", "reference"), ("motion", "motion")):
-            (directory / (identifier + ".png")).write_bytes(base64.b64decode(PNG))
+        for identifier, role in (
+            ("first", "first_keyframe"),
+            ("last", "last_keyframe"),
+            ("video", "reference_video_frame"),
+            ("motion", "motion"),
+        ):
+            (directory / (identifier + ".webp")).write_bytes((directory / "pixel.webp").read_bytes())
             manifest["assets"].append(
-                {"id": identifier, "file": identifier + ".png", "mime": "image/png", "role": role, "path": "/inputs/" + identifier + ".png"}
+                {
+                    "id": identifier,
+                    "file": identifier + ".webp",
+                    "mime": "image/webp",
+                    "role": role,
+                    "path": "/inputs/" + identifier + ".webp",
+                }
             )
         manifest["keyframes"]["last"] = {"asset_id": "last", "name": "end", "resource_id": None}
         manifest["keyframes"]["first"] = {"asset_id": "first", "name": "start", "resource_id": None}
@@ -158,6 +173,12 @@ def fixture(directory: Path, requirements: str, images: bool = False) -> Path:
             "sample_duration_seconds": 6,
             "delivered_duration_seconds": 6 - 5 / 24,
         }
+    for index, asset in enumerate(manifest["assets"], 1):
+        resource_id = "reference" if asset["id"] == "pixel" else asset["id"]
+        note = next((r["note"] for r in manifest["references"] if r["id"] == resource_id), "")
+        if asset["role"] == "motion":
+            note = manifest["motion"]["notes"]
+        asset.update(attachment_index=index, width=96, height=96, resource_id=resource_id, note=note)
     (directory / "context.json").write_text(json.dumps(manifest))
     return directory
 
@@ -236,7 +257,8 @@ def main():
                         timeout=90,
                     )
                 )
-                assert (inputs / "pixel.png").read_bytes() == base64.b64decode(PNG)
+                with Image.open(inputs / "pixel.webp") as prepared, Image.open(io.BytesIO(base64.b64decode(PNG))) as original:
+                    assert prepared.tobytes() == original.tobytes()
                 if not args.live:
                     continue
                 if not details.get("authenticated") or not details.get("models"):

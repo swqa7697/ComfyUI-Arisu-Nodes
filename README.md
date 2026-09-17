@@ -77,8 +77,11 @@ Workbench reports an incompatible policy.
   `user/__arisu_nodes/skills/<skill-name>/` under ComfyUI's user directory. The pack creates the `skills`
   directory on startup; administrators manage its contents. Select `custom:<skill-name>` in Prompt Workbench.
 
-Prompt generation permits only selected skill text, MCP context metadata, and native reads of
-listed mounted images. Web search, shell execution, edits, delegation, and interactive questions
+Prompt generation uses selected skill text, MCP context metadata, and images attached directly
+to the agent’s initial prompt. Prepared images use lossless WebP, with crops applied and the
+longer edge capped at 4000 pixels without upscaling. Videos supply up to eight evenly spaced
+stills across the selected clip; audio is notes only. Asset IDs and attachment order match
+each image to its role and current notes. Image/file-reading tools are disabled. Web search, shell execution, edits, delegation, and interactive questions
 are disabled. Results arrive through output streams and require Apply; no prompt file is written.
 Mixed video requests asking the agent to code, browse, or change files are rejected. Semantic
 injection detection remains probabilistic; tool and filesystem restrictions are separate controls.

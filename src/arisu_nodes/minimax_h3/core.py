@@ -594,12 +594,19 @@ def motion_tail(total_steps: int, length: int) -> Tuple[int, int]:
     return start, total_steps
 
 
-def workbench_samples(count: int, limit: int = 12) -> List[int]:
+def workbench_samples(count: int, limit: int = 8) -> List[int]:
     """Keep evenly spaced ordered frames, including both endpoints."""
     if count < 1 or limit < 1:
         raise ValueError("empty frame sequence")
     kept = min(count, limit)
     return [round(i * (count - 1) / (kept - 1)) for i in range(kept)] if kept > 1 else [0]
+
+
+def motion_samples(length: int) -> List[int]:
+    """Select two, four, six or eight frames from the supported decoded windows."""
+    if length not in (5, 22, 39, 56):
+        raise ValueError("unsupported context length")
+    return workbench_samples(length, 2 + 2 * ((length - 5) // 17))
 
 
 def finalized_markdown(text: str) -> str:

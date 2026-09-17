@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 from typing import Any, Callable, Dict, Tuple
 
-from contract import INPUTS, MAX_TEXT, SKILL, image_path
+from contract import INPUTS, MAX_TEXT, SKILL
 from mcp_server import call
 
 AUDIT = Path("/home/agent/tool-audit.jsonl")
@@ -29,10 +29,6 @@ def authorize(name: str, arguments: Dict[str, Any], root: Path = INPUTS, skill: 
                 and type(arguments.get("limit", 5)) is int
                 and 1 <= arguments.get("limit", 5) <= 1000
             )
-        elif name == "image":
-            if set(arguments) != {"path"}:
-                return False
-            image_path(arguments["path"], root)
         else:
             return False
         return True
@@ -64,7 +60,7 @@ def main(normalize: Callable[[Dict[str, Any]], Tuple[str, Dict[str, Any]]], prov
             output.write(json.dumps(record) + "\n")
     except (ValueError, TypeError, KeyError, OSError):
         allowed = False
-    reason = "Workbench permits only context, skill text and listed image reads."
+    reason = "Workbench permits only context and selected skill text."
     if provider == "codex":
         result = {
             "hookSpecificOutput": {

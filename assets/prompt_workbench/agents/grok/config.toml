@@ -49,8 +49,9 @@ rules = false
 skills = false
 
 [permission]
-allow = ["MCPTool(workbench__get_context)", "MCPTool(workbench__read_skill)", "Read(/inputs/**)"]
-deny = ["Bash", "Edit", "WebFetch", "WebSearch", "Read(/auth/**)", "Read(/home/**)", "Read(/etc/**)", "Read(/proc/**)", "Read(/sys/**)", "Read(/tmp/**)", "Read(/opt/**)", "Read(/root/**)", "Read(/run/**)", "Read(/work/**)"]
+allow = ["MCPTool(workbench__get_context)", "MCPTool(workbench__read_skill)"]
+# Keep a path glob: bare Read or Read(*) also blocks MCP discovery.
+deny = ["Read(**)", "Bash", "Edit", "WebFetch", "WebSearch"]
 
 [mcp_servers.workbench]
 command = "/usr/local/bin/python"

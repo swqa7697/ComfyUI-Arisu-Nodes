@@ -22,7 +22,7 @@ ASSETS = Path(__file__).resolve().parents[3] / "assets" / "prompt_workbench"
 BASE_IMAGE = "python:3.13-slim-trixie"
 LABEL = "org.arisu.workbench.instance"
 PROVIDER_LABEL = "org.arisu.workbench.provider"
-POLICY_REVISION = 5
+POLICY_REVISION = 6
 MAX_OUTPUT = 2 * 1024 * 1024
 
 

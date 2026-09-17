@@ -98,7 +98,7 @@ class FixtureServer:
             "installed": True,
             "authenticated": True,
             "policy_ready": True,
-            "policy_revision": 5,
+            "policy_revision": 6,
             "ready": self.available,
             "version": "fixture",
             "models": [{"id": "fixture", "name": "Fixture model", "efforts": ["medium"]}],

@@ -198,6 +198,15 @@ def poster(roots: Mapping[str, str], item: Resource, at: float, max_size: int) -
         raise UnsupportedMedia("unsupported or incomplete media") from error
 
 
+def validate_workbench_source(roots: Mapping[str, str], item: Resource):
+    """Check notes-only audio containment/revision without invoking a decoder."""
+    if item.kind == "audio":
+        with source_file(roots, item):
+            pass
+    else:
+        validate_source(roots, item)
+
+
 def validate_source(roots: Mapping[str, str], item: Resource, ratio: Optional[str] = None) -> Resource:
     """Validate a source and freeze its current revision and effective crop."""
     info = metadata(roots, item)

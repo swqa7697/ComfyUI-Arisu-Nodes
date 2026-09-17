@@ -7,7 +7,7 @@ import re
 from pathlib import Path
 from typing import Any, Dict
 
-POLICY_REVISION = 5
+POLICY_REVISION = 6
 REFUSAL = "ARISU_POLICY_REFUSAL"
 INPUTS = Path("/inputs")
 SKILL = Path("/skill")
@@ -40,30 +40,64 @@ def context(root: Path = INPUTS) -> Dict[str, Any]:
     data = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(data, dict) or data.get("version") != 3 or not isinstance(data.get("assets"), list):
         raise ValueError("unsupported context manifest")
-    seen = set()
-    for asset in data["assets"]:
-        if not isinstance(asset, dict) or not isinstance(asset.get("id"), str) or asset["id"] in seen:
+    seen = {}
+    for index, asset in enumerate(data["assets"], 1):
+        if not isinstance(asset, dict) or not isinstance(asset.get("id"), str) or not re.fullmatch(r"[A-Za-z0-9_-]+", asset["id"]):
             raise ValueError("invalid context asset")
-        seen.add(asset["id"])
-        if asset.get("mime") in ("image/png", "image/jpeg", "image/webp"):
-            file = contained_file(root, asset["file"])
-            if file.stat().st_size > 16 * 1024 * 1024 or file.suffix.lower() not in (".png", ".jpg", ".jpeg", ".webp"):
-                raise ValueError("invalid raster image")
-            asset["path"] = "/inputs/" + asset["file"]
-        else:
-            asset.pop("path", None)
+        if asset["id"] in seen or asset.get("file") != asset["id"] + ".webp" or asset.get("mime") != "image/webp":
+            raise ValueError("duplicate or invalid attachment")
+        if type(asset.get("attachment_index")) is not int or asset["attachment_index"] != index or not isinstance(asset.get("note"), str):
+            raise ValueError("invalid attachment identity")
+        if any(type(asset.get(key)) is not int or not 1 <= asset[key] <= 4000 for key in ("width", "height")):
+            raise ValueError("invalid attachment dimensions")
+        file = contained_file(root, asset["file"])
+        if not 12 <= file.stat().st_size <= 16 * 1024 * 1024:
+            raise ValueError("invalid raster image size")
+        with file.open("rb") as handle:
+            header = handle.read(12)
+        if header[:4] != b"RIFF" or header[8:12] != b"WEBP":
+            raise ValueError("invalid WebP attachment")
+        asset["path"] = "/inputs/" + asset["file"]
+        seen[asset["id"]] = asset
+    linked = set()
+
+    def link(identifier: str, role: str, resource: Any = None, note: Any = None):
+        if identifier not in seen or identifier in linked or seen[identifier].get("role") != role:
+            raise ValueError("invalid attachment association")
+        asset = seen[identifier]
+        if resource is not None and asset.get("resource_id") != resource:
+            raise ValueError("attachment resource mismatch")
+        if note is not None and asset["note"] != note:
+            raise ValueError("attachment note mismatch")
+        linked.add(identifier)
+
+    for position, entry in data.get("keyframes", {}).items():
+        if position not in ("first", "last"):
+            raise ValueError("invalid keyframe role")
+        if entry is not None:
+            link(entry["asset_id"], position + "_keyframe", entry.get("resource_id"))
+    for entry in data.get("references", []):
+        inspection = entry["inspect"]
+        if entry["kind"] == "image":
+            if len(inspection["asset_ids"]) != 1:
+                raise ValueError("image attachment missing")
+            for identifier in inspection["asset_ids"]:
+                link(identifier, "reference", entry["id"], entry["note"])
+        elif entry["kind"] == "video":
+            if not 1 <= len(inspection["frames"]) <= 8:
+                raise ValueError("invalid video attachment count")
+            for frame in inspection["frames"]:
+                link(frame["asset_id"], "reference_video_frame", entry["id"], entry["note"])
+        elif entry["kind"] != "audio" or inspection != {"type": "none"}:
+            raise ValueError("invalid reference type")
+    motion = data.get("motion", {})
+    if bool(motion.get("stills")) != bool(motion.get("present")):
+        raise ValueError("motion presence mismatch")
+    for frame in motion.get("stills", []):
+        link(frame["asset_id"], "motion", "motion", motion["notes"])
+    if linked != set(seen):
+        raise ValueError("unassociated attachment")
     return data
-
-
-def image_path(value: str, root: Path = INPUTS) -> Path:
-    """Authorize an exact manifest-listed mounted image, never a generic read."""
-    if not isinstance(value, str) or not value.startswith("/inputs/"):
-        raise ValueError("image is outside the job")
-    relative = value[len("/inputs/") :]
-    path = contained_file(root, relative)
-    if not any(asset.get("path") == value for asset in context(root)["assets"]):
-        raise ValueError("image is not listed")
-    return path
 
 
 def skill_text(relative: str, root: Path = SKILL) -> str:
