@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.3] - 2026-09-17
+
+### Fixed
+
+- Resolve same-graph Set/Get routes for settings ownership and Workbench reference notes, refresh source changes, and reject stale or broken routed bundles.
+- Fix Prompt Workbench generation with Get nodes and root-to-subgraph connections by resolving their upstream sources through a shared execution map.
+
 ## [1.2.2] - 2026-09-17
 
 ### Changed

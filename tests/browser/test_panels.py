@@ -123,6 +123,96 @@ def inspect_native_nodes(page: Page, name: str):
             expect(page.locator(".arisu-settings[open]")).to_have_count(0)
 
 
+def inspect_set_get(page: Page):
+    """Compare real frontend serialization using isolated KJNodes-compatible virtual nodes."""
+    page.evaluate(
+        """async () => {
+        const app = window.comfyAPI.app.app;
+        const { captureWorkbenchPrompt, effectiveBundles } = await import('/extensions/arisu/js/minimax_h3/settings_broadcast.js');
+        class Setter extends LGraphNode { constructor() { super(); this.isVirtualNode = true; this.addInput('value', '*'); this.addOutput('value', '*'); this.addWidget('text', 'key', 'route', () => {}); } }
+        class Getter extends LGraphNode { constructor() { super(); this.isVirtualNode = true; this.addOutput('value', '*'); this.addWidget('text', 'key', 'route', () => {}); } }
+        Getter.prototype.getInputLink = function(slot) {
+            const setter = this.graph._nodes.find(n => n.type === 'SetNode' && n.widgets[0].value === this.widgets[0].value);
+            const id = setter?.inputs[slot]?.link;
+            return this.graph.links.get?.(id) ?? this.graph.links[id];
+        };
+        class Source extends LGraphNode { constructor() { super(); this.comfyClass = 'FixtureSource'; this.addOutput('unused', '*'); this.addOutput('value', '*'); } }
+        class Sink extends LGraphNode { constructor() { super(); this.comfyClass = 'FixtureSink'; this.addInput('value', '*'); } }
+        for (const [name, ctor] of Object.entries({SetNode: Setter, GetNode: Getter, FixtureSource: Source, FixtureSink: Sink}))
+            LiteGraph.registerNodeType(name, ctor);
+        const create = type => { const node = LiteGraph.createNode(type); app.graph.add(node); return node; };
+        const equal = (actual, expected) => {
+            if (JSON.stringify(actual) !== JSON.stringify(expected)) throw Error(JSON.stringify({actual, expected}));
+        };
+        const definitions = await (await fetch('/object_info')).json();
+        for (const type of Object.keys(definitions)) {
+            app.graph.clear();
+            const node = create(type);
+            // Advertising is off: exercise explicit routing on every exposed input.
+            for (const widget of node.widgets ?? []) if (widget.name.startsWith('advertise_')) widget.value = false;
+            for (const name of (node.inputs ?? []).map(input => input.name)) {
+                const index = node.inputs.findIndex(input => input.name === name);
+                if (index < 0) continue; // Bundle ownership deliberately removes individual resource sockets.
+                const source = create('FixtureSource'), setter = create('SetNode'), getter = create('GetNode');
+                setter.widgets[0].value = getter.widgets[0].value = String(source.id);
+                source.outputs[1].type = getter.outputs[0].type = setter.inputs[0].type = node.inputs[index].type;
+                source.connect(1, setter, 0);
+                getter.connect(0, node, index);
+                if (node.inputs[index]?.link == null) throw Error(type + ': failed to connect ' + name);
+                const prompt = await app.graphToPrompt();
+                equal(prompt.output[node.id].inputs[name], [String(source.id), 1]);
+                if (prompt.output[setter.id] || prompt.output[getter.id]) throw Error('Virtual node serialized');
+                node.disconnectInput(node.inputs.findIndex(input => input.name === name));
+                app.graph.remove(getter); app.graph.remove(setter); app.graph.remove(source);
+            }
+            for (let slot = 0; slot < (node.outputs ?? []).length; slot++) {
+                const setter = create('SetNode'), getter = create('GetNode'), sink = create('FixtureSink');
+                setter.inputs[0].type = setter.outputs[0].type = getter.outputs[0].type = sink.inputs[0].type = node.outputs[slot].type;
+                node.connect(slot, setter, 0); getter.connect(0, sink, 0);
+                setter.widgets[0].value = getter.widgets[0].value = String(setter.id);
+                const prompt = await app.graphToPrompt();
+                equal(prompt.output[sink.id].inputs.value, [String(node.id), slot]);
+                setter.connect(0, sink, 0);
+                equal((await app.graphToPrompt()).output[sink.id].inputs.value, [String(node.id), slot]);
+                app.graph.remove(sink); app.graph.remove(getter); app.graph.remove(setter);
+            }
+        }
+        app.graph.clear();
+        const studio = create('ArisuMiniMaxH3ResourceStudio'), workbench = create('ArisuMiniMaxH3PromptWorkbench');
+        const setter = create('SetNode'), getter = create('GetNode');
+        setter.inputs[0].type = getter.outputs[0].type = studio.outputs[0].type;
+        studio.connect(0, setter, 0);
+        getter.connect(0, workbench, workbench.inputs.findIndex(input => input.name === 'resources'));
+        setter.widgets[0].value = getter.widgets[0].value = 'resources';
+        if (effectiveBundles(workbench).resources !== studio) throw Error('Missing Studio metadata');
+        equal(captureWorkbenchPrompt(workbench).output[workbench.id].inputs.resources, [String(studio.id), 0]);
+        const settings = create('ArisuMiniMaxH3VideoSettings'), advanced = create('ArisuMiniMaxH3HybridToVideoAdvanced');
+        const settingsSet = create('SetNode'), settingsGet = create('GetNode');
+        settingsSet.widgets[0].value = settingsGet.widgets[0].value = 'settings';
+        settingsSet.inputs[0].type = settingsGet.outputs[0].type = settings.outputs[0].type;
+        settings.connect(0, settingsSet, 0);
+        settingsGet.connect(0, advanced, advanced.inputs.findIndex(input => input.name === 'video_settings'));
+        await app.graphToPrompt();
+        if (!advanced.widgets.find(w => w.name === 'width').disabled || advanced.widgets.find(w => w.name === 'target_width').disabled)
+            throw Error('Incorrect routed settings ownership');
+        const upscale = create('ArisuMiniMaxH3VideoSettingsUpscale');
+        upscale.connect(0, settingsSet, 0);
+        await new Promise(resolve => setTimeout(resolve, 0));
+        if (!advanced.widgets.find(w => w.name === 'target_width').disabled) throw Error('Setter change did not refresh ownership');
+        settings.connect(0, settingsSet, 0);
+        await new Promise(resolve => setTimeout(resolve, 0));
+        if (advanced.widgets.find(w => w.name === 'target_width').disabled) throw Error('Restored basic settings still own target size');
+        settingsGet.widgets[0].value = 'missing'; settingsGet.widgets[0].callback();
+        await new Promise(resolve => setTimeout(resolve, 0));
+        if (effectiveBundles(advanced).settings) throw Error('Stale source after getter selection change');
+        settingsGet.widgets[0].value = 'settings'; settingsGet.widgets[0].callback();
+        await new Promise(resolve => setTimeout(resolve, 0));
+        if (advanced.widgets.find(w => w.name === 'target_width').disabled) throw Error('Getter change did not refresh ownership');
+        app.graph.clear();
+    }"""
+    )
+
+
 def test_resource_studio():
     # One journey, repeated at two usable desktop viewports without multiplying test cases.
     with sync_playwright() as playwright:
@@ -228,6 +318,7 @@ def test_prompt_workbench():
                 name = f"workbench-{width}"
                 with FixtureServer() as server, browser_page(browser, server, name, width, height) as page:
                     expect(page.get_by_role("button", name="Manage Agents", exact=True)).to_have_count(0)
+                    inspect_set_get(page)
                     node_id = add_node(page, WORKBENCH)
                     expect(page.get_by_role("button", name="Generate Prompt", exact=True)).to_be_enabled()
                     contained(page, ".arisu-workbench")

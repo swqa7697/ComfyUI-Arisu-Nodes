@@ -109,7 +109,7 @@ function settingsSource(node) {
   const advertiser = advertiserFor(node, 'settings');
   if (advertiser || node.type === STUDIO) return advertiser ?? undefined;
   const input = inputOf(node, BUNDLE.settings);
-  return input?.link == null ? undefined : linkOrigin(node, input);
+  return input?.link == null ? undefined : inputSource(node, input.name);
 }
 // The widgets the settings source owns: the keys its bundle carries that the node has; an unseen source owns them all.
 function handedKeys(node) {
@@ -236,7 +236,33 @@ function refreshNode(node) {
   node.arisuRefreshSources?.();
   node.setDirtyCanvas(true, true);
 }
+const watchedRoutes = new WeakSet();
+const watchedGraphs = new WeakSet();
+function watchRoutes(graph = rootGraph(), seen = new Set()) {
+  if (!graph || seen.has(graph)) return;
+  seen.add(graph);
+  if (!watchedGraphs.has(graph)) {
+    watchedGraphs.add(graph);
+    // Frontend-only KJNodes do not receive the backend nodeCreated hook.
+    chain(graph, 'onNodeAdded', () => {
+      watchRoutes(graph);
+      queueMicrotask(() => refresh());
+    });
+  }
+  for (const node of graph.nodes ?? graph._nodes ?? []) {
+    if (node.subgraph) watchRoutes(node.subgraph, seen);
+    if (watchedRoutes.has(node) || !['SetNode', 'GetNode', 'Reroute'].includes(node.type)) continue;
+    watchedRoutes.add(node);
+    // Run after KJNodes finishes updating the other nodes in the named route.
+    const changed = () => queueMicrotask(() => refresh());
+    for (const name of ['onConnectionsChange', 'onConfigure', 'onAdded', 'onRemoved']) chain(node, name, changed);
+    const control = node.widgets?.[0];
+    if (control) chain(control, 'callback', changed);
+    watchMode(node);
+  }
+}
 function refresh(force) {
+  watchRoutes();
   if (refreshing || (app.configuringGraph && force !== true)) return;
   refreshing = true;
   try {
@@ -274,13 +300,20 @@ async function reconcile() {
 function ownership() {
   return JSON.stringify(
     allNodes()
-      .filter((node) => category(node) || node.type in HYBRID_WIDGETS)
+      .filter((node) => category(node) || node.type in HYBRID_WIDGETS || ['SetNode', 'GetNode', 'Reroute'].includes(node.type))
       .map((node) => [
         node.id,
         node.mode,
         on(node),
         node.inputs?.map((input) => [input.name, input.link]),
         node.type === STUDIO ? widget(node, 'aspect_ratio')?.value : undefined,
+        ['SetNode', 'GetNode'].includes(node.type) ? node.widgets?.[0]?.value : undefined,
+        node.type in HYBRID_WIDGETS
+          ? ['video_settings', 'resources', 'context_latent', 'vae'].map((name) => {
+              const origin = inputSource(node, name);
+              return origin ? [origin.graph?.id, origin.id] : null;
+            })
+          : undefined,
       ]),
   );
 }
@@ -300,10 +333,18 @@ function checkCycles(output) {
 }
 function executionNodes() {
   const result = [];
+  const executionMap = new Map();
   for (const node of rootGraph()?.nodes ?? rootGraph()?._nodes ?? []) {
     if (node.getInnerNodes) {
-      for (const dto of node.getInnerNodes(new Map())) result.push({ node: dto.node ?? dto, id: String(dto.id), dto });
+      for (const dto of node.getInnerNodes(executionMap)) result.push({ node: dto.node ?? dto, id: String(dto.id), dto });
     } else result.push({ node, id: String(node.id), dto: null });
+  }
+  // Subgraph DTOs resolve root and sibling sources through this same map. The
+  // frontend-supplied constructor preserves its native link resolution semantics.
+  const DTO = result.find((entry) => typeof entry.dto?.resolveOutput === 'function')?.dto.constructor;
+  for (const entry of result) {
+    if (!entry.dto && DTO) entry.dto = new DTO(entry.node, [], executionMap);
+    if (entry.dto) executionMap.set(entry.id, entry.dto);
   }
   return result;
 }
@@ -316,23 +357,31 @@ function bindAdvertised(entry, output, advertiser, name, label) {
   entry.inputs[name] = [id, slot];
 }
 // An explicit wire must reach a live source in the prompt; the serializer pruning it is an error, not a fallback.
-function checkExplicit(node, entry, dto, output, name, label) {
+function checkExplicit(node, entry, output, name, label) {
   const explicit = inputOf(node, name);
   if (explicit?.link == null) return false;
-  const explicitId = dto ? entry.inputs[name]?.[0] : linkSource(node, explicit);
-  const origin = linkOrigin(node, explicit);
-  if ((origin && !active(origin)) || !explicitId || !output[explicitId] || !entry.inputs[name])
+  const explicitId = entry.inputs[name]?.[0];
+  const immediate = linkOrigin(node, explicit);
+  const origin = inputSource(node, name);
+  if (
+    (immediate && !active(immediate)) ||
+    (['SetNode', 'GetNode', 'Reroute'].includes(immediate?.type) && !origin) ||
+    (origin?.graph === rootGraph() && String(origin.id) !== String(explicitId)) ||
+    !explicitId ||
+    !output[explicitId] ||
+    !entry.inputs[name]
+  )
     throw new Error(`The explicitly connected ${label} source is muted, bypassed, or absent.`);
   return true;
 }
 // A hybrid's bundle socket in the prompt: the advertiser's output, else its own wire. Reports whether it is fed.
-function bindBundle(node, entry, dto, output, name, advertiser, label) {
-  if (!advertiser) return checkExplicit(node, entry, dto, output, name, label);
+function bindBundle(node, entry, output, name, advertiser, label) {
+  if (!advertiser) return checkExplicit(node, entry, output, name, label);
   bindAdvertised(entry, output, advertiser, name, label);
   return true;
 }
 function inject(output) {
-  for (const { node, id: executionId, dto } of executionNodes()) {
+  for (const { node, id: executionId } of executionNodes()) {
     if (!active(node)) continue;
     const entry = output[executionId];
     if (!entry) continue;
@@ -343,10 +392,10 @@ function inject(output) {
       continue;
     }
     if (!(node.type in HYBRID_WIDGETS)) continue;
-    if (bindBundle(node, entry, dto, output, BUNDLE.resources, advertiserFor(node, 'resources'), 'resource'))
+    if (bindBundle(node, entry, output, BUNDLE.resources, advertiserFor(node, 'resources'), 'resource'))
       for (const name of Object.keys(entry.inputs)) if (group(name)) delete entry.inputs[name];
     // the individual size and length values stay in the prompt: required inputs the bundle overrides on the backend
-    bindBundle(node, entry, dto, output, BUNDLE.settings, settings, 'settings');
+    bindBundle(node, entry, output, BUNDLE.settings, settings, 'settings');
   }
   checkCycles(output);
 }
@@ -356,6 +405,7 @@ app.registerExtension({
   name: 'Arisu.MiniMaxH3.SettingsBroadcast',
   init: installSelectionGuards,
   setup() {
+    watchRoutes();
     const graphToPrompt = app.graphToPrompt;
     if (graphToPrompt)
       app.graphToPrompt = async function (...args) {
@@ -475,13 +525,34 @@ app.registerExtension({
   },
 });
 
-/** Effective bundle owners for the Workbench's descriptive UI; server validation remains authoritative. */
 /** Resolve the same execution instance used by the advertising-aware serializer. */
 export function executionTarget(node) {
   const matches = executionNodes().filter((entry) => entry.node === node);
   if (matches.length > 1)
     throw new Error('This Workbench is shared by multiple subgraph instances; use a separate Workbench for each context.');
   return matches[0];
+}
+
+// Graphs without subgraphs provide no DTO constructor; follow native virtual links.
+function resolveLegacyOutput(node, slot, seen = new Set()) {
+  if (!node || !active(node)) throw new Error('The connected source is muted, bypassed, or absent.');
+  if (seen.has(node)) throw new Error('A virtual input contains a dependency cycle.');
+  seen.add(node);
+  if (!node.isVirtualNode && node.type !== 'Reroute') return { origin_id: node.id, origin_slot: slot, node };
+  const source = node.resolveVirtualOutput?.(slot);
+  if (source) return resolveLegacyOutput(source.node, source.slot, seen);
+  const input = node.inputs?.[node.type === 'Reroute' ? 0 : slot];
+  const link =
+    node.getInputLink?.(slot) ??
+    (node.type === 'Reroute' ? (node.graph?.links?.get?.(input?.link) ?? node.graph?.links?.[input?.link]) : null);
+  if (link) {
+    const origin =
+      link.resolve?.(node.graph)?.outputNode ??
+      (node.graph?.nodes ?? node.graph?._nodes ?? []).find((item) => String(item.id) === String(link.origin_id));
+    return resolveLegacyOutput(origin, link.origin_slot, seen);
+  }
+  if (node.type === 'PrimitiveNode' && node.widgets?.length === 1) return { widgetInfo: { value: node.widgets[0].value } };
+  throw new Error('A virtual input could not be resolved.');
 }
 
 /** Capture the preparation graph without awaiting widget serializers or rereading live ownership. */
@@ -496,14 +567,16 @@ export function captureWorkbenchPrompt(node) {
     for (const [index, input] of (source.inputs ?? []).entries()) {
       if (input.link == null) continue;
       const links = source.graph?.links;
-      const resolved = dto?.resolveInput ? dto.resolveInput(index) : (links?.get?.(input.link) ?? links?.[input.link]);
+      const link = links?.get?.(input.link) ?? links?.[input.link];
+      const resolved = dto?.resolveInput
+        ? dto.resolveInput(index)
+        : resolveLegacyOutput(
+            (source.graph?.nodes ?? source.graph?._nodes ?? []).find((item) => String(item.id) === String(link?.origin_id)),
+            link?.origin_slot,
+          );
       if (!resolved) continue;
       if (resolved.widgetInfo) inputs[input.name] = structuredClone(resolved.widgetInfo.value);
-      else {
-        const origin = entries.find((entry) => entry.id === String(resolved.origin_id))?.node;
-        if (origin?.isVirtualNode) inputs[input.name] = structuredClone(origin.widgets?.[0]?.value);
-        else inputs[input.name] = [String(resolved.origin_id), Number(resolved.origin_slot)];
-      }
+      else inputs[input.name] = [String(resolved.origin_id), Number(resolved.origin_slot)];
     }
     output[id] = { class_type: source.comfyClass ?? source.type, inputs };
   }
@@ -529,55 +602,61 @@ export function captureWorkbenchPrompt(node) {
 }
 
 /** Follow explicit bundle ports across reroutes and subgraph boundaries for UI metadata. */
-export function effectiveBundles(node) {
-  function explicit(name) {
-    const input = inputOf(node, name);
-    if (input?.link == null) return null;
-    const parents = [];
-    let graph = rootGraph();
-    try {
-      for (const id of executionTarget(node)?.dto?.subgraphNodePath ?? []) {
-        const parent = (graph?.nodes ?? graph?._nodes ?? []).find((item) => String(item.id) === String(id));
-        if (!parent?.subgraph) return null;
-        parents.push(parent);
-        graph = parent.subgraph;
-      }
-    } catch {
-      return null;
+export function inputSource(node, name) {
+  const input = inputOf(node, name);
+  if (input?.link == null) return null;
+  const parents = [];
+  let graph = rootGraph();
+  try {
+    for (const id of executionTarget(node)?.dto?.subgraphNodePath ?? []) {
+      const parent = (graph?.nodes ?? graph?._nodes ?? []).find((item) => String(item.id) === String(id));
+      if (!parent?.subgraph) return null;
+      parents.push(parent);
+      graph = parent.subgraph;
     }
-    const seen = new Set();
-    function output(origin, slot, scopes) {
-      if (!origin || !active(origin) || seen.has(origin)) return null;
-      seen.add(origin);
-      if (origin.resolveSubgraphOutputLink && origin.subgraph) {
-        const resolved = origin.resolveSubgraphOutputLink(slot);
-        return resolved ? output(resolved.outputNode, resolved.link.origin_slot, [...scopes, origin]) : null;
-      }
-      if (origin.type === 'Reroute') return follow(origin, origin.inputs?.[0], scopes);
-      return origin;
-    }
-    function follow(consumer, socket, scopes) {
-      if (socket?.link == null) return null;
-      const links = consumer.graph?.links;
-      const link = links?.get?.(socket.link) ?? links?.[socket.link];
-      if (!link) return null;
-      if (link.originIsIoNode && scopes.length) {
-        const parent = scopes.at(-1);
-        return follow(parent, parent.inputs?.[link.origin_slot], scopes.slice(0, -1));
-      }
-      return output(linkOrigin(consumer, socket), link.origin_slot, scopes);
-    }
-    try {
-      return follow(node, input, parents);
-    } catch {
-      // The serializer reports broken links; a stale source never receives notes.
-      return null;
-    }
+  } catch {
+    return null;
   }
+  const seen = new Set();
+  function output(origin, slot, scopes) {
+    if (!origin || !active(origin) || seen.has(origin)) return null;
+    seen.add(origin);
+    if (origin.resolveSubgraphOutputLink && origin.subgraph) {
+      const resolved = origin.resolveSubgraphOutputLink(slot);
+      return resolved ? output(resolved.outputNode, resolved.link.origin_slot, [...scopes, origin]) : null;
+    }
+    if (origin.type === 'Reroute') return follow(origin, origin.inputs?.[0], scopes);
+    if (origin.isVirtualNode) {
+      const resolved = resolveLegacyOutput(origin, slot);
+      return resolved.node ? output(resolved.node, resolved.origin_slot, scopes) : null;
+    }
+    return origin;
+  }
+  function follow(consumer, socket, scopes) {
+    if (socket?.link == null) return null;
+    const links = consumer.graph?.links;
+    const link = links?.get?.(socket.link) ?? links?.[socket.link];
+    if (!link) return null;
+    if (link.originIsIoNode && scopes.length) {
+      const parent = scopes.at(-1);
+      return follow(parent, parent.inputs?.[link.origin_slot], scopes.slice(0, -1));
+    }
+    return output(linkOrigin(consumer, socket), link.origin_slot, scopes);
+  }
+  try {
+    return follow(node, input, parents);
+  } catch {
+    // The serializer reports broken links; a stale source never receives notes.
+    return null;
+  }
+}
+
+/** Effective sources for descriptive UI; server validation remains authoritative. */
+export function effectiveBundles(node) {
   return {
-    settings: advertiserFor(node, 'settings') ?? explicit('video_settings'),
-    resources: advertiserFor(node, 'resources') ?? explicit('resources'),
-    motion: explicit('context_latent'),
-    vae: explicit('vae'),
+    settings: advertiserFor(node, 'settings') ?? inputSource(node, 'video_settings'),
+    resources: advertiserFor(node, 'resources') ?? inputSource(node, 'resources'),
+    motion: inputSource(node, 'context_latent'),
+    vae: inputSource(node, 'vae'),
   };
 }

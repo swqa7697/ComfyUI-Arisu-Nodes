@@ -2,11 +2,10 @@
 // widgets it hands over, and the links injected into the queued prompt.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-
+import { effectiveBundles } from '../../../web/js/minimax_h3/settings_broadcast.js';
 import { api, resetApi } from '../support/api.mjs';
 import { app, extensionNamed, resetApp, toastSeverities } from '../support/app.mjs';
-import { makeGraph, makeNode } from '../support/litegraph.mjs';
-import '../../../web/js/minimax_h3/settings_broadcast.js';
+import { makeGraph, makeNode, makeSetGet } from '../support/litegraph.mjs';
 
 const SETTINGS = 'ArisuMiniMaxH3VideoSettings';
 const SETTINGS_UPSCALE = 'ArisuMiniMaxH3VideoSettingsUpscale';
@@ -233,6 +232,62 @@ test('advertising ownership survives switching, restoration, wires and removal',
 });
 
 test('socket vetoes and serialization preserve advertised and explicit sources', async () => {
+  {
+    const graph = makeGraph();
+    resetApp(graph);
+    const basic = addSettings(graph, 101);
+    const upscale = addSettings(graph, 102, SETTINGS_UPSCALE);
+    const consumer = addHybrid(graph, 103, HYBRID_ADVANCED);
+    const { setter, getter } = makeSetGet(graph, 110, basic);
+    let callbacks = 0;
+    getter.widgets[0].callback = () => callbacks++;
+    graph.onNodeAdded(setter);
+    graph.onNodeAdded(getter);
+    wireSettings(graph, consumer, getter);
+    assert.deepEqual(disabledWidgets(consumer), SIZE_KEYS);
+    assert.equal(effectiveBundles(consumer).settings, basic);
+    // The consumer's link stays fixed while the setter changes its source.
+    graph.links[110] = { origin_id: upscale.id, origin_slot: 0 };
+    setter.onConnectionsChange();
+    await Promise.resolve();
+    assert.deepEqual(disabledWidgets(consumer), [...SIZE_KEYS, ...TARGET_KEYS]);
+    getter.widgets[0].value = 'missing';
+    getter.widgets[0].callback();
+    await Promise.resolve();
+    assert.equal(callbacks, 1);
+    assert.equal(effectiveBundles(consumer).settings, null);
+    getter.widgets[0].value = 'source';
+    getter.onConfigure();
+    await Promise.resolve();
+    assert.equal(effectiveBundles(consumer).settings, upscale);
+    graph.links[110] = { origin_id: basic.id, origin_slot: 0 };
+    setter.onConnectionsChange();
+    await Promise.resolve();
+    assert.deepEqual(disabledWidgets(consumer), SIZE_KEYS);
+    const output = { [basic.id]: { inputs: {} }, [consumer.id]: { inputs: { video_settings: [String(basic.id), 0] } } };
+    await api.queuePrompt(0, { output });
+    assert.deepEqual(output[consumer.id].inputs.video_settings, [String(basic.id), 0]);
+    basic.mode = 2;
+    assert.equal(effectiveBundles(consumer).settings, null);
+    await assert.rejects(api.queuePrompt(0, { output }), /explicitly connected/);
+    basic.mode = 0;
+    app.promptForTest = { output };
+    const captured = await app.graphToPrompt();
+    graph.links[110] = { origin_id: upscale.id, origin_slot: 0 };
+    setter.onConnectionsChange();
+    await Promise.resolve();
+    await assert.rejects(api.queuePrompt(0, captured), /ownership changed/);
+    graph.links[110] = { origin_id: basic.id, origin_slot: 0 };
+    graph.nodes.splice(graph.nodes.indexOf(setter), 1);
+    setter.onRemoved();
+    await Promise.resolve();
+    assert.equal(effectiveBundles(consumer).settings, null);
+    graph.nodes.push(setter);
+    setter.onAdded();
+    await Promise.resolve();
+    assert.equal(effectiveBundles(consumer).settings, basic);
+  }
+
   {
     const graph = makeGraph();
     resetApp(graph);

@@ -7,7 +7,7 @@ import { installSelectionGuards, observeWorkflowLoads } from '../common/selectio
 import { hideWidget, setWidget } from '../common/widgets.js';
 import { ACTIVITY_STYLE, openAgentActivity } from './agent_activity.js';
 import { agentStatus, openAgentSettings, workbenchRequest } from './agent_settings.js';
-import { captureWorkbenchPrompt, effectiveBundles, executionTarget } from './settings_broadcast.js';
+import { captureWorkbenchPrompt, effectiveBundles, executionTarget, inputSource } from './settings_broadcast.js';
 
 const TYPE = 'ArisuMiniMaxH3PromptWorkbench';
 const nodes = new WeakMap();
@@ -104,16 +104,12 @@ function upstreamSignature(node) {
   function visit(current) {
     if (!current || seen.has(current)) return null;
     seen.add(current);
-    const graph = current.graph;
     return [
       current.id,
       current.type,
       current.mode,
       current.widgets?.filter((item) => !FIELDS.includes(item.name)).map((item) => [item.name, item.value]),
-      current.inputs?.map((input) => {
-        const link = graph?.links?.get?.(input.link) ?? graph?.links?.[input.link];
-        return visit(graph?.getNodeById?.(link?.origin_id) ?? graph?.nodes?.find((item) => item.id === link?.origin_id));
-      }),
+      current.inputs?.map((input) => visit(inputSource(current, input.name))),
     ];
   }
   return visit(node);
