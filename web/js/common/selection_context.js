@@ -6,6 +6,12 @@ const knownWorkflows = new WeakSet();
 let context;
 let queue = Promise.resolve();
 const wrapped = new WeakSet();
+const loadObservers = new Set();
+
+// Runtime owners observe graph replacement without changing selection authorization.
+export function observeWorkflowLoads(observer) {
+  loadObservers.add(observer);
+}
 
 export function registerSelectionOwner(type, owner) {
   owners.set(type, owner);
@@ -51,18 +57,28 @@ export function installSelectionGuards() {
       const run = async () => {
         const current = app.extensionManager?.workflow?.activeWorkflow;
         if (current && typeof current === 'object') knownWorkflows.add(current);
-        const workflow = method === 'loadGraphData' ? args[3] : undefined;
+        const requested = method === 'loadGraphData' ? args[3] : undefined;
+        // ChangeTracker passes the underlying workflow while the store exposes its reactive proxy.
+        // Match only frontend-owned object references, never a serialized ID or filename.
+        const workflow =
+          app.extensionManager?.workflow?.openWorkflows?.find(
+            (candidate) => requested && (candidate === requested || candidate.changeTracker?.workflow === requested),
+          ) ?? requested;
         const preserve = !!workflow && typeof workflow === 'object' && (workflow.isPersisted === true || knownWorkflows.has(workflow));
         invalidateGraph(app.rootGraph);
         context = { preserve };
+        for (const observer of loadObservers) observer.before(current, preserve ? workflow : null);
+        let succeeded = false;
         try {
           if (!preserve && args[0]) args[0] = sanitize(args[0]);
           const result = await original.apply(this, args);
           const active = app.extensionManager?.workflow?.activeWorkflow;
           if (active && typeof active === 'object') knownWorkflows.add(active);
+          succeeded = true;
           return result;
         } finally {
           context = undefined;
+          for (const observer of loadObservers) observer.after(app.extensionManager?.workflow?.activeWorkflow, succeeded);
         }
       };
       const result = queue.then(run);

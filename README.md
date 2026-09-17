@@ -77,6 +77,13 @@ Workbench reports an incompatible policy.
   `user/__arisu_nodes/skills/<skill-name>/` under ComfyUI's user directory. The pack creates the `skills`
   directory on startup; administrators manage its contents. Select `custom:<skill-name>` in Prompt Workbench.
 
+Prompt Workbench keeps contexts, finalized text, and Docker generation independent. **Generate**
+captures the contexts; later workflow edits and Undo/Redo keep the job and its result. **Apply**
+copies the reviewed result into the current finalized prompt as one undoable edit. Open workflow
+tabs retain their own transient results; workflow copies do not include them. Activity shows
+thoughts directly and keeps loaded skills and metadata in collapsed tool details. Update both
+provider images through **Update CLI** to enable structured logs in existing installations.
+
 Prompt generation uses selected skill text, MCP context metadata, and images attached directly
 to the agent’s initial prompt. Prepared images use lossless WebP, with crops applied and the
 longer edge capped at 4000 pixels without upscaling, with a 32 MiB limit per prepared image.

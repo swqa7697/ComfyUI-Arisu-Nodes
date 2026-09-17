@@ -12,7 +12,7 @@ export const app = {
   nodeOutputs: {},
   configuringGraph: false,
   extensionManager: {
-    workflow: { activeWorkflow: null },
+    workflow: { activeWorkflow: null, openWorkflows: [] },
     toast: {
       add(message) {
         toasts.push(message);
@@ -47,6 +47,7 @@ export function resetApp(graph) {
   app.nodeOutputs = {};
   app.configuringGraph = false;
   app.extensionManager.workflow.activeWorkflow = null;
+  app.extensionManager.workflow.openWorkflows = [];
   toasts.length = 0;
   for (const id of Object.keys(settings)) delete settings[id];
 }

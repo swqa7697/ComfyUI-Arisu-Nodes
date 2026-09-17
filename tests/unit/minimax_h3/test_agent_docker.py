@@ -11,7 +11,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Any, List
+from typing import Any, Dict, List
 
 import pytest
 from PIL import Image
@@ -196,7 +196,16 @@ def test_agent_update_preserves_working_image_and_settings_reject_unavailable_mo
     spec = importlib.util.spec_from_file_location("workbench_runner", runner_path)
     runner = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(runner)
-    assert runner.activity({"item": {"type": "reasoning", "text": first}}) == "[analysis] " + first
+
+    def records(event: Dict[str, Any], provider: str = "codex") -> List[Dict[str, Any]]:
+        wire = runner.activity(event, provider)
+        assert len(wire.splitlines()) == 1
+        return json.loads(wire.removeprefix("ARISU_ACTIVITY "))["entries"]
+
+    thought = records({"item": {"id": "thought-1", "type": "reasoning", "text": first}})[0]
+    assert thought["text"] == first and thought["kind"] == "analysis"
+    updated = records({"type": "item.completed", "item": {"id": "thought-1", "type": "reasoning", "text": "Revised thought"}})[0]
+    assert updated["id"] == thought["id"] and updated["text"] == "Revised thought"
     tool = runner.activity(
         {
             "type": "item.completed",
@@ -211,6 +220,75 @@ def test_agent_update_preserves_working_image_and_settings_reject_unavailable_mo
     )
     assert "read_image" in tool and "reference-1" in tool and first in tool and "private-image-bytes" not in tool
     assert "offline" in runner.activity({"type": "error", "message": "offline"})
+    loaded = '# Skill\n[analysis] This is file content, not a thought\n{"references": []}'
+    for provider, event in (
+        (
+            "codex",
+            {
+                "item": {
+                    "id": "call-1",
+                    "type": "mcp_tool_call",
+                    "server": "workbench",
+                    "tool": "read_skill",
+                    "result": {"content": [{"type": "text", "text": loaded}, {"type": "image", "data": "private-bytes"}]},
+                }
+            },
+        ),
+        (
+            "grok",
+            {
+                "type": "user",
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "call-1",
+                            "content": [{"type": "text", "text": loaded}, {"type": "image", "data": "private-bytes"}],
+                        }
+                    ]
+                },
+            },
+        ),
+    ):
+        record = records(event, provider)[0]
+        assert record["kind"] == "tool" and loaded in record["details"] and "private-bytes" not in record["details"]
+        assert "[analysis]" not in record["text"]
+    grok = records(
+        {
+            "type": "assistant",
+            "message": {
+                "id": "message-1",
+                "content": [{"type": "thinking", "thinking": first}, {"type": "text", "text": "Visible answer"}],
+            },
+        },
+        "grok",
+    )
+    assert [entry["kind"] for entry in grok] == ["analysis", "agent"] and grok[0]["text"] == first
+    result = records({"type": "result", "result": "Repeated answer", "usage": {"tokens": 100}}, "grok")
+    assert len(result) == 1 and result[0]["kind"] == "progress" and "Repeated answer" not in str(result)
+    agents.begin_logs("codex", "generate", "framed")
+    agents.log(runner.activity({"item": {"id": "secret", "type": "reasoning", "text": 'api_key="secret"\nBearer token\nSafe text'}}))
+    redacted = json.loads(agents.read_logs()["lines"][0].removeprefix("ARISU_ACTIVITY "))["entries"][0]["text"]
+    assert "secret" not in redacted and "token" not in redacted and "Safe text" in redacted
+    agents.log("ARISU_ACTIVITY {broken")
+    assert "Invalid activity record" in agents.read_logs()["lines"][-1]
+    # The subprocess transport consumes protocol records without exposing audits or duplicate results.
+    wire = (
+        "ARISU_AUDIT private-audit\n"
+        + runner.activity({"item": {"id": "thought", "type": "reasoning", "text": "Visible thought"}})
+        + '\nARISU_RESULT {"final":"final"}\n'
+    )
+    received = []
+    agents.begin_logs("codex", "generate", "transport")
+    with monkeypatch.context() as local:
+        local.setattr(
+            subprocess,
+            "Popen",
+            lambda *args, **kwargs: popen([sys.executable, "-c", "import sys; sys.stdout.write(" + repr(wire) + ")"], **kwargs),
+        )
+        DockerAgents.stream(agents, [], time.monotonic() + 5, agents.stopping, receive=received.append)
+    assert len(received) == 3 and len(agents.read_logs()["lines"]) == 1
+    assert "Visible thought" in agents.read_logs()["lines"][0] and "private-audit" not in str(agents.read_logs())
     agents.guard.acquire()
     try:
         with pytest.raises(ValueError, match="busy"):

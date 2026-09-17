@@ -20,11 +20,15 @@ test('Workbench keeps finalized text independent of setup, source notes and revi
   resetApp(makeGraph());
   resetApi();
   resetDom();
+  const originalFetch = api.fetchApi;
   const graph = app.graph;
+  const workflow = { isPersisted: true };
+  app.extensionManager.workflow.activeWorkflow = workflow;
+  app.extensionManager.workflow.openWorkflows = [workflow];
   let changes = 0;
   graph.beforeChange = () => changes++;
   graph.afterChange = () => {};
-  const node = makeNode({
+  let node = makeNode({
     id: 1,
     type: TYPE,
     graph,
@@ -109,10 +113,40 @@ test('Workbench keeps finalized text independent of setup, source notes and revi
     graph.nodes.splice(graph.nodes.indexOf(node), 1);
     node.graph = inner;
     inner.nodes.push(node);
-    const scope = makeNode({ id: 20, type: 'Subgraph', graph, inputs: [{ name: 'resources', link: 10 }] });
+    const settings = makeNode({
+      id: 3,
+      type: 'ArisuMiniMaxH3VideoSettings',
+      graph,
+      widgets: [
+        { name: 'length', value: 49 },
+        { name: 'width', value: 832 },
+        { name: 'height', value: 480 },
+      ],
+      outputs: ['video_settings'],
+    });
+    graph.links[13] = { origin_id: 3, origin_slot: 0 };
+    const scope = makeNode({
+      id: 20,
+      type: 'Subgraph',
+      graph,
+      inputs: [
+        { name: 'resources', link: 10 },
+        { name: 'video_settings', link: 13 },
+      ],
+    });
     scope.subgraph = inner;
-    scope.getInnerNodes = () => [{ node, id: '20:1', subgraphNodePath: [20] }];
-    inner.links = { 50: { originIsIoNode: true, origin_slot: 0 } };
+    scope.getInnerNodes = () => [
+      {
+        node,
+        id: '20:1',
+        subgraphNodePath: [20],
+        resolveInput: (index) =>
+          ({ resources: { origin_id: 2, origin_slot: 0 }, video_settings: { origin_id: 3, origin_slot: 0 } })[node.inputs[index].name] ??
+          null,
+      },
+    ];
+    inner.links = { 50: { originIsIoNode: true, origin_slot: 0 }, 51: { originIsIoNode: true, origin_slot: 1 } };
+    node.inputs.find((item) => item.name === 'video_settings').link = 51;
     node.inputs.find((item) => item.name === 'resources').link = 50;
     definition.prototype.onConnectionsChange.call(node);
     await settle();
@@ -128,7 +162,7 @@ test('Workbench keeps finalized text independent of setup, source notes and revi
     await agentStatus(true);
     node.arisuRefreshSources();
     await settle();
-    app.graphToPrompt = async () => ({ output: { '20:1': { class_type: TYPE, inputs: { finalized_prompt: 'manual' } } } });
+
     api.responses.push(jsonResponse(202, { id: 'job1' }), jsonResponse(200, { state: 'complete', draft: 'first draft' }));
     find(panel(node), 'Generate Prompt').onclick();
     await settle();
@@ -189,6 +223,26 @@ test('Workbench keeps finalized text independent of setup, source notes and revi
     await settle();
     await settle();
     assert(!find(panel(node), 'Generation Results').disabled);
+    const captured = JSON.parse(api.calls.findLast((call) => call.route === '/arisu/workbench/generate').init.body);
+    const releases = () => api.calls.filter((call) => call.route === '/arisu/workbench/release').length;
+    const beforeEdits = releases();
+    find(panel(node), 'Requirements').value = 'Changed for the next run';
+    find(panel(node), 'Requirements').oninput();
+    widget(studio, 'resources_json').value = JSON.stringify({ ...data, references: [] });
+    widget(settings, 'length').value = 97;
+    node.arisuRefreshSources();
+    definition.prototype.onConnectionsChange.call(node);
+    await settle();
+    assert.equal(releases(), beforeEdits);
+    assert(find(panel(node), 'Generate Prompt').disabled);
+    assert.equal(captured.options.requirements, '');
+    assert.equal(JSON.parse(captured.prompt['2'].inputs.resources_json).references.length, 3);
+    assert.equal(captured.node_id, '20:1');
+    assert.equal(captured.prompt['3'].inputs.length, 49);
+
+    const framed = (...entries) => `ARISU_ACTIVITY ${JSON.stringify({ version: 1, entries })}`;
+    const loaded = '# Skill\n[analysis] File content stays inside the tool\n{"metadata":true}';
+    const toolRecord = { id: 'codex:tool1', kind: 'tool', text: 'workbench.read_skill', details: loaded };
     api.responses.push(
       jsonResponse(200, {
         session: 'job3',
@@ -204,6 +258,9 @@ test('Workbench keeps finalized text independent of setup, source notes and revi
           JSON.stringify({ event: { delta: { type: 'thinking_delta', thinking: 'Preserve the silhouette' } } }),
           '[agent] <img src=x onerror=alert(1)>',
           '{malformed json',
+          framed({ id: 'codex:thought1', kind: 'analysis', text: 'Original thought', details: '' }, toolRecord),
+          'ARISU_AUDIT secret audit data',
+          'ARISU_ACTIVITY {malformed',
         ],
         state: 'running',
       }),
@@ -221,8 +278,33 @@ test('Workbench keeps finalized text independent of setup, source notes and revi
     const details = descendants(activity).find((item) => item.tagName === 'DETAILS');
     assert(details && !details.open);
     assert(find(details, '  "references": []'));
+    const skillDetails = descendants(activity).find((item) => item.tagName === 'DETAILS' && find(item, 'workbench.read_skill'));
+    assert(skillDetails && !skillDetails.open && find(skillDetails, loaded));
+    assert(!find(activity, '[analysis] File content stays inside the tool'));
+    assert(!find(activity, 'ARISU_AUDIT secret audit data'));
+    skillDetails.open = true;
+    // A repeated provider item updates in place without closing the expanded details.
+    api.responses.push(
+      jsonResponse(200, {
+        session: 'job3',
+        cursor: 2,
+        lines: [
+          framed(
+            { id: 'codex:thought1', kind: 'analysis', text: 'Updated thought', details: '' },
+            { ...toolRecord, details: `${loaded}\nCompleted` },
+          ),
+        ],
+      }),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 800));
+    assert(!find(activity, '[analysis] Original thought'));
+    assert(find(activity, '[analysis] Updated thought'));
+    assert(skillDetails.open && find(skillDetails, `${loaded}\nCompleted`));
+    assert.equal(
+      descendants(activity).filter((item) => item.tagName === 'SUMMARY' && item.textContent === 'workbench.read_skill').length,
+      1,
+    );
 
-    api.responses.push(jsonResponse(200, { released: true }), jsonResponse(200, { released: true }));
     widget(node, 'finalized_prompt').value = 'restored';
     widget(node, 'prepare_job').value = 'imported';
     definition.prototype.onConfigure.call(node);
@@ -230,12 +312,109 @@ test('Workbench keeps finalized text independent of setup, source notes and revi
     await settle();
     assert.equal(widget(node, 'prepare_job').value, '');
     assert.equal(widget(node, 'finalized_prompt').value, 'restored');
-    assert(!find(body, 'Output Prompt'));
-    assert(!find(body, 'Generation Activity'));
+    assert.equal(find(body, 'Output Prompt').value, 'late draft');
+    assert(find(body, 'Generation Activity'));
+    find(body, 'Close').onclick();
     assert(!find(panel(node), 'Generation Results').disabled);
+    find(panel(node), 'Apply Output').onclick();
+    assert.equal(widget(node, 'finalized_prompt').value, 'late draft');
+    const finalAgain = find(panel(node), 'Finalized Prompt');
+    finalAgain.value = 'manual after Apply';
+    finalAgain.oninput();
+    assert(!find(panel(node), 'Apply Output').disabled);
+
+    api.fetchApi = async function (route, init) {
+      if (route === '/arisu/workbench/status') {
+        api.calls.push({ route, init });
+        return jsonResponse(200, { docker: true, agents: { codex: { ready: true } } });
+      }
+      return originalFetch.call(this, route, init);
+    };
+    // The actual frontend reloads nodes during Undo/Redo and when switching tabs.
+    const saved = () => ({
+      widgets: node.widgets.filter((item) => !item.element).map(({ name, value }) => ({ name, value })),
+      inputs: node.inputs.map((item) => ({ ...item })),
+    });
+    const original = saved();
+    app.loadGraphData = async (data, _clean, _view, owner) => {
+      definition.prototype.onRemoved.call(node);
+      inner.nodes.splice(inner.nodes.indexOf(node), 1);
+      app.extensionManager.workflow.activeWorkflow = owner ?? { isPersisted: false };
+      if (!data) return;
+      node = makeNode({ id: 1, type: TYPE, graph: inner, ...data });
+      definition.prototype.onNodeCreated.call(node);
+      definition.prototype.onConfigure.call(node);
+    };
+    extensionNamed('Arisu.MiniMaxH3.PromptWorkbench').init();
+    await app.loadGraphData(original, false, false, workflow);
+    assert(find(panel(node), 'Apply Output'));
+    assert.equal(releases(), beforeEdits);
+
+    let finishRequest;
+    api.responses.push(
+      () =>
+        new Promise((resolve) => {
+          finishRequest = resolve;
+        }),
+    );
+    find(panel(node), 'Generate Prompt').onclick();
+    const background = { isPersisted: true };
+    app.extensionManager.workflow.openWorkflows.push(background);
+    await app.loadGraphData(original, false, false, background);
+    await settle();
+    assert(!find(panel(node), 'Apply Output'));
+    assert(!find(panel(node), 'Generate Prompt').disabled);
+    api.responses.push(jsonResponse(200, { state: 'complete', draft: 'Finished in the other tab' }));
+    finishRequest(jsonResponse(202, { id: 'background-job' }));
+    await settle();
+    await settle();
+    await app.loadGraphData(original, false, false, workflow);
+    assert(find(panel(node), 'Apply Output'));
+    assert.equal(releases(), beforeEdits);
+    find(panel(node), 'Apply Output').onclick();
+    assert.equal(widget(node, 'finalized_prompt').value, 'Finished in the other tab');
+
+    // Cancellation before the POST returns releases that late ID and never starts polling it.
+    api.responses.push(
+      () =>
+        new Promise((resolve) => {
+          finishRequest = resolve;
+        }),
+    );
+    find(panel(node), 'Generate Prompt').onclick();
+    find(panel(node), 'Cancel').onclick();
+    api.responses.push(jsonResponse(200, { released: true }));
+    finishRequest(jsonResponse(202, { id: 'cancelled-before-id' }));
+    await settle();
+    assert(!api.calls.some((call) => call.route.endsWith('/jobs/cancelled-before-id')));
+    assert.equal(releases(), beforeEdits + 1);
+
+    // Same IDs in an imported workflow cannot inherit a previous session.
+    await app.loadGraphData(original, true, true, null);
+    assert(!find(panel(node), 'Apply Output'));
+    app.extensionManager.workflow.openWorkflows = [app.extensionManager.workflow.activeWorkflow];
+    api.responses.push(jsonResponse(200, { released: true }));
+    await new Promise((resolve) => setTimeout(resolve, 1550));
+    assert.equal(releases(), beforeEdits + 2);
+    api.responses.push(
+      jsonResponse(202, { id: 'removed-job' }),
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    find(panel(node), 'Generate Prompt').onclick();
+    await settle();
+    api.responses.push(jsonResponse(200, { released: true }));
+    definition.prototype.onRemoved.call(node);
+    finish(jsonResponse(200, { state: 'complete', draft: 'Must not appear after deletion' }));
+    await settle();
+    assert.equal(releases(), beforeEdits + 3);
+    assert(!find(body, 'Must not appear after deletion'));
   } finally {
     api.responses.push(jsonResponse(200, { released: true }));
     definition.prototype.onRemoved.call(node);
     await settle();
+    api.fetchApi = originalFetch;
   }
 });

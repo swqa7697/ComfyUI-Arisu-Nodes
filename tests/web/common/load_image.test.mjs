@@ -553,6 +553,16 @@ test('workflow provenance preserves reopening and undo, while imports, paste and
   assert.equal(tab.widgets[0].value, 'private.png');
   assert.deepEqual(toastSeverities(), []);
 
+  // Undo uses the raw workflow behind the store's reactive proxy, including unsaved tabs.
+  const underlying = { isPersisted: false };
+  const proxy = { isPersisted: false, changeTracker: { workflow: underlying } };
+  app.extensionManager.workflow.activeWorkflow = proxy;
+  app.extensionManager.workflow.openWorkflows = [proxy];
+  const [undone] = await app.loadGraphData(source, false, false, underlying);
+  assert.equal(undone.widgets[0].value, 'private.png');
+  // An unrelated open tab without a tracker must not turn an absent load context into permission.
+  app.extensionManager.workflow.openWorkflows.push({ isPersisted: true });
+
   // Imported filenames/IDs (even an existing name), unknown objects and new duplicates grant no restoration context.
   for (const identity of ['mine.json', 'image.png', null, { isPersisted: false, path: 'mine.json' }]) {
     const nodes = await app.loadGraphData(source, true, true, identity);

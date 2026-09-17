@@ -125,11 +125,27 @@ class DockerAgents:
 
     def log(self, text: str):
         """Keep complete readable output; redact credentials and remove terminal controls."""
-        text = re.sub(r"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)", "", str(text))
-        text = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", text)
-        text = re.sub(r"(?i)(bearer\s+|(?:access_token|refresh_token|api_key)[\"' :=]+)\S+", r"\1[redacted]", text)
-        text = re.sub(r"\b(?:sk-|xai-)[A-Za-z0-9_-]{16,}", "[redacted]", text)
-        text = "".join(c for c in text if c in "\n\t" or ord(c) >= 32)
+
+        def redact(value: Any) -> Any:
+            if isinstance(value, dict):
+                return {key: redact(item) for key, item in value.items()}
+            if isinstance(value, list):
+                return [redact(item) for item in value]
+            if not isinstance(value, str):
+                return value
+            value = re.sub(r"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)", "", value)
+            value = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", value)
+            value = re.sub(r"(?i)(bearer\s+|(?:access_token|refresh_token|api_key)[\"' :=]+)\S+", r"\1[redacted]", value)
+            value = re.sub(r"\b(?:sk-|xai-)[A-Za-z0-9_-]{16,}", "[redacted]", value)
+            return "".join(c for c in value if c in "\n\t" or ord(c) >= 32)
+
+        if text.startswith("ARISU_ACTIVITY "):
+            try:
+                text = "ARISU_ACTIVITY " + json.dumps(redact(json.loads(text.removeprefix("ARISU_ACTIVITY "))), ensure_ascii=False)
+            except ValueError:
+                text = "[details] Invalid activity record"
+        else:
+            text = redact(str(text))
         with self.log_lock:
             size = len(text.encode("utf-8")) + 1
             if self.log_bytes + size > 16 * 1024 * 1024:
@@ -271,7 +287,7 @@ class DockerAgents:
                         raise ValueError("operation log exceeds limit")
                     if receive:
                         receive(line)
-                    if not line.startswith("ARISU_RESULT "):
+                    if not line.startswith(("ARISU_RESULT ", "ARISU_AUDIT ")):
                         self.log(line.rstrip())
             except (ValueError, OSError, KeyError, TypeError) as error:
                 errors.append(error)

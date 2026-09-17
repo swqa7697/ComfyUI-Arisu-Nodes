@@ -18,7 +18,16 @@ Explicit bundle wires can cross subgraph boundaries. Use a separate Workbench fo
 when a subgraph is instantiated more than once.
 
 Generation prepares only the selected dependency graph. It never queues a
-downstream sampler or save node. Changing sources cancels stale generation.
+downstream sampler or save node. Generate captures the current contexts once. Editing video
+settings, Resource Studio, Workbench fields, connections, or Finalized prompt does not cancel
+the job or clear its results. Those edits affect the next Generate. Contexts, finalized output,
+and the Docker job are independent; only Generate and Apply transfer information between them.
+Apply replaces the current finalized text even when the contexts have changed; Undo restores
+that text. A result matching Finalized prompt is shown as Applied.
+
+Generation and results survive Undo/Redo and switching between open workflow tabs. Cancel,
+deleting the Workbench node, closing/replacing its workflow, or leaving the page releases the
+job. Imported and duplicated workflows start with no generation state.
 One generation runs at a time, with a ten-minute deadline. Builds have a thirty-minute deadline.
 Cancellation affects this job; it does not interrupt unrelated ComfyUI work.
 
@@ -68,7 +77,9 @@ Switch **Codex / Grok Build** tabs in agent settings to leave more space for col
 and login logs. Device-login URLs open directly in your browser.
 
 **Generation results** is always available. Its **Activity** tab shows provider-exposed
-analysis and reference/tool calls; scroll up to pause following new output, or choose
+analysis directly, with context metadata, tool arguments, and loaded skill files in collapsed
+details. Expand a tool row to inspect its text. Repeated provider updates refresh the same row,
+preserving expanded details. Scroll up to pause following new output, or choose
 **Resume auto-scroll**. The **Output prompt** tab lets you edit the latest result and
 **Apply to Workbench**. You can also use **Apply output** directly on the node.
 Generation sends a success or failure notification without opening a dialog.
@@ -79,7 +90,9 @@ explicitly applied finalized text, travel with workflow copies.
 Only the current operation is retained until the next operation or server shutdown.
 There is no separate Docker log container. Output is paged without message clipping;
 exceeding the 16 MiB operation output budget stops the operation with an error.
-Use **Update CLI** when an existing image reports an incompatible Workbench policy.
+Use **Update CLI** for both installed providers to enable structured activity records in existing
+images, and whenever an image reports an incompatible Workbench policy. Older images retain
+plain-text log support; their multiline tool output has less reliable grouping.
 
 Selected media and motion stills are cached beneath ComfyUI temp, bounded to 2 GiB and expired
 after 30 idle minutes. Closing/removing the workflow releases its interests.

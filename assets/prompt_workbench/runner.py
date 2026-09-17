@@ -91,7 +91,7 @@ def generate(agent: str, options: Dict[str, Any]):
                 event = json.loads(line)
                 if not isinstance(event, dict):
                     raise TypeError("invalid agent event")
-                print(activity(event), flush=True)
+                print(activity(event, agent), flush=True)
                 value = adapter.event(event)
                 completed = adapter.is_complete(event)
                 if value:

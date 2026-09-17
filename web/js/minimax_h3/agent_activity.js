@@ -135,7 +135,48 @@ export function createActivity(label = 'Agent Logs') {
   let epoch = 0;
   let group = null;
   let analysis = false;
+  const records = new Map();
+  function appendRecord(record) {
+    const noisy = ['tool', 'details'].includes(record.kind);
+    const key = record.id && `${record.kind}:${record.id}`;
+    let view = key ? records.get(key) : null;
+    if (!view) {
+      const content = el('div', { className: noisy ? 'log-content' : '' });
+      const summary = noisy ? el('summary') : null;
+      const element = noisy ? el('details', { className: 'log-details' }, [summary, content]) : content;
+      view = { content, summary };
+      if (key) records.set(key, view);
+      output.append(element);
+    }
+    if (view.summary) view.summary.textContent = record.text.slice(0, 120) || 'Details';
+    const top = view.content.scrollTop;
+    view.content.replaceChildren(logLine(noisy ? record.details || record.text : `[${record.kind}] ${record.text}`));
+    view.content.scrollTop = top;
+  }
   function appendLine(line) {
+    if (String(line).startsWith('ARISU_AUDIT ')) return;
+    if (String(line).startsWith('ARISU_ACTIVITY ')) {
+      group = null;
+      analysis = false;
+      try {
+        const value = JSON.parse(line.slice('ARISU_ACTIVITY '.length));
+        if (value.version !== 1 || !Array.isArray(value.entries)) throw new Error('Invalid activity');
+        for (const record of value.entries) {
+          if (
+            !record ||
+            !['analysis', 'agent', 'tool', 'details', 'progress', 'error'].includes(record.kind) ||
+            typeof record.id !== 'string' ||
+            typeof record.text !== 'string' ||
+            typeof record.details !== 'string'
+          )
+            throw new Error('Invalid activity');
+        }
+        for (const record of value.entries) appendRecord(record);
+      } catch {
+        appendRecord({ kind: 'details', text: 'Unreadable activity record', details: '' });
+      }
+      return;
+    }
     const text = activityText(String(line));
     for (const part of text.split(/\n(?=\[[a-z])/i)) {
       const heading = /^\[([^\]]+)\]\s*/.exec(part);
@@ -177,6 +218,7 @@ export function createActivity(label = 'Agent Logs') {
     session = '';
     cursor = 0;
     output.replaceChildren();
+    records.clear();
     group = null;
     analysis = false;
     followState(true);
@@ -205,12 +247,14 @@ export function createActivity(label = 'Agent Logs') {
         }
         if ((data.session ?? '') !== session) {
           output.replaceChildren();
+          records.clear();
           group = null;
           analysis = false;
           followState(true);
           session = data.session ?? '';
           cursor = 0;
         }
+        const top = output.scrollTop;
         for (const line of data.lines ?? []) appendLine(line);
         cursor = data.cursor ?? cursor;
         const live = running ?? data.state === 'running';
@@ -222,6 +266,7 @@ export function createActivity(label = 'Agent Logs') {
             .join(' · ') ||
           'Idle';
         if (following) output.scrollTop = output.scrollHeight;
+        else output.scrollTop = top;
         return data.more === true;
       } catch (error) {
         if (epoch === current) status.textContent = error.message;
