@@ -1,0 +1,29 @@
+allowed_approval_policies = ["never"]
+allowed_sandbox_modes = ["read-only", "danger-full-access"]
+allowed_web_search_modes = ["disabled"]
+allow_managed_hooks_only = true
+
+[features]
+shell_tool = false
+multi_agent = false
+apps = false
+plugins = false
+remote_plugin = false
+memories = false
+browser_use = false
+computer_use = false
+hooks = true
+view_image = true
+code_mode = false
+code_mode_host = false
+image_generation = false
+
+[mcp_servers.workbench.identity]
+command = "/usr/local/bin/python"
+
+[hooks]
+managed_dir = "/opt/workbench/agents/codex"
+
+[[hooks.PreToolUse]]
+matcher = ".*"
+hooks = [{type = "command", command = "/usr/local/bin/python /opt/workbench/agents/codex/hook.py", timeout = 5}]

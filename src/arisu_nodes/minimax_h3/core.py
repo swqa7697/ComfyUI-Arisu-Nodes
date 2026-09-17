@@ -604,7 +604,9 @@ def workbench_samples(count: int, limit: int = 12) -> List[int]:
 
 def finalized_markdown(text: str) -> str:
     """Extract only a single fenced final response, never progress or thoughts."""
-    match = re.fullmatch(r"\s*```markdown[ \t]*\r?\n([\s\S]*?)\r?\n```\s*", text)
+    match = re.fullmatch(r"\s*```(?:markdown|text)?[ \t]*\r?\n([\s\S]*?)\r?\n```\s*", text)
+    if "ARISU_POLICY_REFUSAL" in text:
+        raise ValueError("request refused by the prompt-only policy")
     if not match or not match[1].strip() or "```" in match[1]:
         raise ValueError("agent must return one nonempty fenced markdown block")
     if len(match[1]) > 65536:

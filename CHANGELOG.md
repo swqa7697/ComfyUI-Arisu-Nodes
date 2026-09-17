@@ -9,7 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Revert Prompt Workbench agent permission hardening while preserving the v1.2.1 frontend and shared configuration changes.
+- Read Prompt Workbench images directly from authorized mounts while transferring only metadata and selected skill text through MCP.
+
+### Security
+
+- Restrict Prompt Workbench agents to prompt generation with immutable tool policies, isolated CLI state, read-only mounts, stream-only output, and rejection of mixed prohibited requests.
 
 ## [1.2.1] - 2026-09-15
 

@@ -42,7 +42,7 @@ State neither clock math nor node names in the emitted prompt. Only the timestam
 
 The previous tail is a description aid for Shot 1, not a new first-frame / `<Picture N>` / `<Audio N>` / Hybrid `first_frame`.
 
-`motion.stills` are ordered VAE stills of the pinned tail (up to 12), including both endpoints. `read_image` each `asset_id`. `motion.notes` covers unfinished motion direction, whether the camera is still moving, and what sound or line was in progress.
+`motion.stills` are ordered VAE stills of the pinned tail (up to 12), including both endpoints. Read the mounted image for each `asset_id`. `motion.notes` covers unfinished motion direction, whether the camera is still moving, and what sound or line was in progress.
 
 Use stills and notes together. If notes are empty, infer from stills only.
 

@@ -45,7 +45,7 @@ Duration and aspect come from MCP; if null, use 6 seconds and 16:9.
 ## Workflow
 
 1. **Parse mode and constraints**
-   - Call `get_context`. `read_image` keyframes, then any useful reference images or video stills.
+   - Call `get_context`. Read mounted keyframe images, then any useful reference images or video stills.
    - Apply the Motion Context gate. If Off, ignore motion fields.
    - On a continuation clip the previous tail is a Shot 1 description aid, not a new first-frame picture.
 

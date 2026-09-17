@@ -97,7 +97,8 @@ class FixtureServer:
         info = {
             "installed": True,
             "authenticated": True,
-            "auto": True,
+            "policy_ready": True,
+            "policy_revision": 5,
             "ready": self.available,
             "version": "fixture",
             "models": [{"id": "fixture", "name": "Fixture model", "efforts": ["medium"]}],
@@ -183,7 +184,7 @@ class FixtureServer:
                         {"references": [{"id": i, "notes": "Synthetic reference details " * 20} for i in range(20)]}, indent=2
                     ).splitlines(),
                     json.dumps({"message": {"content": [{"type": "thinking", "thinking": "Preserve the folded silhouette."}]}}),
-                    '[tool · item.completed] workbench.read_image\n{"asset_id": "reference-1"}',
+                    '[tool · item.completed] view_image\n{"asset_id": "reference-1"}',
                     "[agent] The reference shows a paper boat with warm reflected light.",
                 ]
                 if job
@@ -194,7 +195,7 @@ class FixtureServer:
                 lines += ["Sign in at https://example.test/device", "Device code: ABCD-EFGH", "Waiting for browser authorization…"]
             if job:
                 lines += [
-                    '[tool · item.completed] workbench.read_image\n{"asset_id": "reference-1"}',
+                    '[tool · item.completed] view_image\n{"asset_id": "reference-1"}',
                     "[analysis] The reference shows a small paper boat on a calm pond. Preserve its folded silhouette and the warm light.",
                     "[tool · item.completed] workbench.get_context\nSelected video: 22 frames · Audio: excluded",
                     "[analysis] Match the gentle forward drift in the motion context. Keep the camera low and avoid a sudden change in direction.",

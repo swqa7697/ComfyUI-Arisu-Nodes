@@ -112,7 +112,7 @@ def _inspect(item: Any, assets: List[Dict[str, Any]]) -> Dict[str, Any]:
 
 
 def job_context(job: Generation, assets: List[Dict[str, Any]], resources: ResourceBundle) -> Dict[str, Any]:
-    """Build the version-2 Workbench MCP manifest from staged media."""
+    """Build the version-3 Workbench MCP manifest from staged media."""
     settings = job.settings
     duration = settings.length / 24 if settings else None
     present = bool(job.motion)
@@ -135,7 +135,7 @@ def job_context(job: Generation, assets: List[Dict[str, Any]], resources: Resour
             entry["include_audio"] = item.include_audio
         references.append(entry)
     return {
-        "version": 2,
+        "version": 3,
         "duration_seconds": duration,
         "frame_count": settings.length if settings else None,
         "aspect_ratio": settings.aspect_ratio if settings else None,
@@ -151,7 +151,10 @@ def job_context(job: Generation, assets: List[Dict[str, Any]], resources: Resour
             "stills": [{"asset_id": asset["id"], "timestamp": asset.get("timestamp")} for asset in job.motion],
         },
         "keyframes": {"first": _keyframe(assets, "first_keyframe"), "last": _keyframe(assets, "last_keyframe")},
-        "assets": assets,
+        "assets": [
+            {**asset, **({"path": "/inputs/" + asset["file"]} if asset.get("mime") in ("image/png", "image/jpeg", "image/webp") else {})}
+            for asset in assets
+        ],
         "references": references,
     }
 

@@ -200,7 +200,7 @@ def test_workbench_stages_crops_refuses_escapes_and_cancellation_retains_guard(t
 
     def generated(agent: str, directory: Path, skill: Path, *args: Any) -> str:
         context = json.loads((directory / "context.json").read_text())
-        assert context["version"] == 2 and context["keyframes"] == {"first": None, "last": None}
+        assert context["version"] == 3 and context["keyframes"] == {"first": None, "last": None}
         assert context["motion"]["present"] is False and context["motion"]["stills"] == []
         assert context["references"][0]["note"] == "red coat"
         assert context["references"][0]["inspect"]["type"] == "image"

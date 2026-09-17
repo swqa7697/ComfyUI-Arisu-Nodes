@@ -57,7 +57,8 @@ Generation requires network access to the provider and may consume account usage
 Bundled skills are **with-ref** (default; Ref2VA / Hybrid) and **no-ref** (T2VA / I2VA / FL2VA /
 L2VA). They share one MCP: `get_context` returns duration,
 aspect, requirements, trigger words, keyframes, grouped references, and motion stills;
-`read_image` serves those stills. Video references are ordered stills; audio is listed with notes
+`read_skill` serves selected `.md`/`.txt` skill documents. Raster assets include absolute mounted
+paths and are viewed with the native CLI image reader; MCP never transfers image bytes. Video references are ordered stills; audio is listed with notes
 only. Administrators can add `<skill-name>/SKILL.md` folders under `user/__arisu_nodes/skills`.
 Files and skills are mounted read-only for generation; the agent has no Docker socket, GPU, or
 mount of the ComfyUI installation.
@@ -77,12 +78,19 @@ explicitly applied finalized text, travel with workflow copies.
 Only the current operation is retained until the next operation or server shutdown.
 There is no separate Docker log container. Output is paged without message clipping;
 exceeding the 16 MiB operation output budget stops the operation with an error.
-Use **Update CLI** for existing images to install the expanded event renderer.
+Use **Update CLI** when an existing image reports an incompatible Workbench policy.
 
 Selected media and motion stills are cached beneath ComfyUI temp, bounded to 2 GiB and expired
 after 30 idle minutes. Closing/removing the workflow releases its interests.
 
-The MCP offers `get_context` and `read_image` for the job manifest and listed images only.
+Generation disables native CLI sandboxes inside Docker and never asks for approval or decisions.
+Docker protects the root filesystem and input/skill mounts; writable locations are limited to CLI
+runtime state and authentication. Immutable policies disable web, shell, edits, delegation and
+unrelated reads. Results come from provider streams, never a generated file.
+
+A brief asking the agent to code, browse, change files or bypass policy fails as a whole. A video
+about a programmer is still allowed. Prompt-injection detection is probabilistic; denied tools,
+invalid output and incomplete context/image reads fail generation without changing finalized text.
 
 Scroll over the panel to zoom the graph; hold the middle mouse button to pan. Overflowing editors keep normal vertical scrolling; Ctrl+wheel zooms the graph there.
 

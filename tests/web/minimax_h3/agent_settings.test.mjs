@@ -13,7 +13,7 @@ test('settings manage shared accounts, supported effort choices, logs and confir
   const info = {
     installed: true,
     authenticated: true,
-    auto: true,
+    policy_ready: true,
     ready: true,
     version: 'test',
     models: [{ id: 'm1', name: 'Model one', efforts: ['low', 'medium', 'high'] }],

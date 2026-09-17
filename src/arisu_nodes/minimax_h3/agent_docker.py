@@ -22,6 +22,7 @@ ASSETS = Path(__file__).resolve().parents[3] / "assets" / "prompt_workbench"
 BASE_IMAGE = "python:3.13-slim-trixie"
 LABEL = "org.arisu.workbench.instance"
 PROVIDER_LABEL = "org.arisu.workbench.provider"
+POLICY_REVISION = 5
 MAX_OUTPUT = 2 * 1024 * 1024
 
 
@@ -85,6 +86,14 @@ class DockerAgents:
             labels = data[0].get("Labels") if kind == "volume" else data[0].get("Config", {}).get("Labels")
             return (labels or {}).get(LABEL) == self.namespace
         except (OSError, ValueError, subprocess.SubprocessError):
+            return False
+
+    def policy_image(self, agent: str) -> bool:
+        """Reject obsolete images before running their entrypoints."""
+        try:
+            data = json.loads(self.command(["image", "inspect", self.image(agent)]))
+            return len(data) == 1 and data[0].get("Config", {}).get("Labels", {}).get("org.arisu.workbench.policy") == str(POLICY_REVISION)
+        except (OSError, ValueError, TypeError, AttributeError, subprocess.SubprocessError):
             return False
 
     def begin_logs(self, agent: str, action: str, job: str = ""):
@@ -156,9 +165,9 @@ class DockerAgents:
             "--tmpfs",
             "/tmp:rw,nosuid,nodev,size=128m,mode=1777",
             "--tmpfs",
-            "/work:rw,nosuid,nodev,size=256m,uid=1000,gid=1000",
+            "/home/agent:rw,nosuid,nodev,size=256m,uid=1000,gid=1000",
             "--mount",
-            "type=volume,src=" + self.volume(agent) + ",dst=/home/agent/." + agent,
+            "type=volume,src=" + self.volume(agent) + ",dst=/auth",
             "--log-opt",
             "max-size=5m",
             "--log-opt",
@@ -195,8 +204,16 @@ class DockerAgents:
                 info: Dict[str, Any] = {"installed": self.owned("image", self.image(agent)), "ready": False, "models": []}
                 if info["installed"] and self.owned("volume", self.volume(agent)):
                     try:
+                        if not self.policy_image(agent):
+                            info["error"] = "Update required: Workbench policy changed."
+                            result["agents"][agent] = info
+                            continue
                         info.update(self.invoke(agent, "inspect"))
-                        info["ready"] = bool(info.get("authenticated") and info.get("auto") and info.get("models"))
+                        info["ready"] = bool(
+                            info.get("authenticated")
+                            and (info.get("policy_ready") and info.get("policy_revision") == POLICY_REVISION)
+                            and info.get("models")
+                        )
                     except (ValueError, OSError, subprocess.SubprocessError):
                         info["error"] = "Agent discovery failed; inspect logs or update the image."
                 choice = self.preferences.get(agent, {})
@@ -279,6 +296,8 @@ class DockerAgents:
                 raise ValueError("agent operation failed; open logs for details")
         finally:
             if name and self.owned("container", name):
+                # Give the runner time to reap the CLI and persist credential rotation.
+                self.command(["stop", "--time", "5", name], timeout=10, check=False)
                 self.command(["rm", "-f", name], check=False)
             if process.poll() is None:
                 process.terminate()
@@ -379,6 +398,8 @@ class DockerAgents:
         self, agent: str, inputs: Path, skill: Path, selection: Dict[str, Any], cancelled: threading.Event, deadline: float
     ) -> str:
         """Run a single agent with only the prepared job and selected skill mounted."""
+        if not self.policy_image(agent):
+            raise ValueError("update the agent image before generation: Workbench policy changed")
         name = self.namespace + "-generate-" + uuid.uuid4().hex
         result: List[str] = []
 
@@ -394,12 +415,6 @@ class DockerAgents:
                 "type=bind,src=" + str(inputs) + ",dst=/inputs,readonly",
                 "--mount",
                 "type=bind,src=" + str(skill) + ",dst=/skill,readonly",
-                "--mount",
-                "type=bind,src="
-                + str(skill)
-                + ",dst=/home/agent/"
-                + (".agents" if agent == "codex" else ".grok")
-                + "/skills/selected,readonly",
                 self.image(agent),
                 agent,
                 "generate",

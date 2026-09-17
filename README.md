@@ -63,17 +63,37 @@ JSONC supports comments; omit trailing commas.
 Manage agent models and reasoning effort through
 **Settings → Arisu Nodes → Prompt Workbench → Agents**.
 These preferences are saved under `workbench` while preserving comments and other settings.
-Credentials are stored in Docker authentication volumes.
+Credentials are stored in Docker authentication volumes. Each invocation uses fresh CLI state;
+only credential refreshes are persisted. Update existing images with **Update CLI** when
+Workbench reports an incompatible policy.
 
 #### Optional setup
 
 - **MiniMax H3:** use the checkpoint, CLIP, video VAE, and audio VAE required by the stock H3 nodes.
 - **Agent generation:** install Docker with Linux container support and give the ComfyUI process access to its daemon.
   Open **Settings → Arisu Nodes → Prompt Workbench → Agents** to build an agent image, sign in,
-  and select a model and reasoning effort. Provider accounts and settings are shared by users of the ComfyUI instance.
+  and select a model and reasoning effort. Docker Desktop must use Linux containers on macOS/Windows. Provider accounts and settings are shared by users of the ComfyUI instance.
 - **Custom prompt skills:** place each skill folder, including its `SKILL.md` and supporting files, at
   `user/__arisu_nodes/skills/<skill-name>/` under ComfyUI's user directory. The pack creates the `skills`
   directory on startup; administrators manage its contents. Select `custom:<skill-name>` in Prompt Workbench.
+
+Prompt generation permits only selected skill text, MCP context metadata, and native reads of
+listed mounted images. Web search, shell execution, edits, delegation, and interactive questions
+are disabled. Results arrive through output streams and require Apply; no prompt file is written.
+Mixed video requests asking the agent to code, browse, or change files are rejected. Semantic
+injection detection remains probabilistic; tool and filesystem restrictions are separate controls.
+
+Optional developer checks run independently of ComfyUI and ordinary CI:
+
+```bash
+make test-workbench-docker
+make test-workbench-live ARGS="--auth-volume codex=<codex-volume> --auth-volume grok=<grok-volume>"
+```
+
+The live lane sends real, billable requests. Supply existing Workbench auth volumes explicitly;
+`--agent codex` or `--agent grok` selects one provider, and `--model provider=model-id` overrides
+its discovered default. Borrowed volumes can refresh credentials but are never logged out or
+deleted. Test images and fixtures are disposable; use a dedicated test account when available.
 
 ## Nodes
 

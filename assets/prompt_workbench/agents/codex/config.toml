@@ -1,0 +1,44 @@
+approval_policy = "never"
+sandbox_mode = "danger-full-access"
+web_search = "disabled"
+model_instructions_file = "/opt/workbench/instructions.txt"
+cli_auth_credentials_store = "file"
+project_doc_max_bytes = 0
+
+[features]
+shell_tool = false
+shell_snapshot = false
+multi_agent = false
+multi_agent_v2 = false
+apps = false
+plugins = false
+remote_plugin = false
+memories = false
+goals = false
+skill_mcp_dependency_install = false
+skill_search = false
+browser_use = false
+computer_use = false
+hooks = true
+view_image = true
+tool_suggest = false
+browser_use_external = false
+code_mode = false
+code_mode_host = false
+image_generation = false
+sleep_tool = false
+workspace_dependencies = false
+
+[tools.update_plan]
+enabled = false
+
+[mcp_servers.workbench]
+command = "/usr/local/bin/python"
+args = ["/opt/workbench/mcp_server.py"]
+required = true
+enabled_tools = ["get_context", "read_skill"]
+
+[mcp_servers.workbench.tools.get_context]
+approval_mode = "auto"
+[mcp_servers.workbench.tools.read_skill]
+approval_mode = "auto"

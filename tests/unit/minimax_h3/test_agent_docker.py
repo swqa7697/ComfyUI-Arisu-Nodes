@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import base64
+import importlib
 import importlib.util
 import json
 import shutil
@@ -65,11 +65,13 @@ def test_generation_contract_prunes_side_effects_and_parses_only_final_markdown(
     for total, length in ((2, 22), (23, 22), (22, 1)):
         with pytest.raises(ValueError):
             motion_tail(total, length)
-    assert finalized_markdown("```markdown\nA quiet dolly shot.\n```") == "A quiet dolly shot."
+    for label in ("markdown", "text", ""):
+        assert finalized_markdown("```" + label + "\nA quiet dolly shot.\n```") == "A quiet dolly shot."
     for text in (
         "thinking\n```markdown\nprompt\n```",
         "```markdown\n\n```",
-        "```text\nprompt\n```",
+        "```python\nprint(1)\n```",
+        "ARISU_POLICY_REFUSAL",
         "```markdown\nx\n```\n```markdown\ny\n```",
     ):
         with pytest.raises(ValueError):
@@ -94,6 +96,16 @@ def test_agent_update_preserves_working_image_and_settings_reject_unavailable_mo
     status = agents.status(refresh=True)
     assert status["docker"] and all(not provider["installed"] and not provider["ready"] for provider in status["agents"].values())
 
+    # An obsolete image must never run its old entrypoint for discovery.
+    with monkeypatch.context() as stale:
+        stale.setattr(agents, "owned", lambda *args: True)
+        stale.setattr(agents, "command", lambda args, **kwargs: "linux" if args[0] == "info" else '[{"Config":{"Labels":{}}}]')
+        stale.setattr(agents, "invoke", lambda *args, **kwargs: pytest.fail("obsolete image executed"))
+        old = agents.status(refresh=True)
+        assert not old["agents"]["codex"]["ready"]
+        with pytest.raises(ValueError, match="update"):
+            agents.generate("codex", tmp_path, tmp_path, {}, agents.stopping, time.monotonic() + 1)
+
     def command(args: List[str], **kwargs: Any) -> str:
         if args[0] == "tag":
             tagged.append(args[-1])
@@ -104,13 +116,13 @@ def test_agent_update_preserves_working_image_and_settings_reject_unavailable_mo
     monkeypatch.setattr(agents, "owned", lambda *args: True)
 
     def bad_candidate(*args: Any, **kwargs: Any):
-        raise ValueError("incompatible Auto mode")
+        raise ValueError("incompatible policy")
 
     monkeypatch.setattr(agents, "invoke", bad_candidate)
     with pytest.raises(ValueError):
         agents.manage("codex", "update")
     assert not tagged and not agents.guard.locked() and agents.operation["state"] == "failed"
-    monkeypatch.setattr(agents, "invoke", lambda *args, **kwargs: {"auto": True})
+    monkeypatch.setattr(agents, "invoke", lambda *args, **kwargs: {"policy_ready": True, "policy_revision": 5})
     agents.manage("codex", "update")
     assert tagged == [agents.image("codex")] and agents.operation["state"] == "complete"
     monkeypatch.setattr(
@@ -165,7 +177,7 @@ def test_agent_update_preserves_working_image_and_settings_reject_unavailable_mo
     assert not agents.stopping.is_set()
 
     # Provider text and reference details survive formatting, but image payloads do not enter logs.
-    runner_path = Path(__file__).resolve().parents[3] / "assets/prompt_workbench/runner.py"
+    runner_path = Path(__file__).resolve().parents[3] / "assets/prompt_workbench/events.py"
     spec = importlib.util.spec_from_file_location("workbench_runner", runner_path)
     runner = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(runner)
@@ -192,28 +204,142 @@ def test_agent_update_preserves_working_image_and_settings_reject_unavailable_mo
         agents.guard.release()
 
 
-def test_mcp_manifest_images_and_unlisted_or_escaping_assets(tmp_path: Path):
-    module_path = Path(__file__).resolve().parents[3] / "assets" / "prompt_workbench" / "mcp_server.py"
+def test_mcp_manifest_images_and_unlisted_or_escaping_assets(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+):
+    assets = Path(__file__).resolve().parents[3] / "assets" / "prompt_workbench"
+    monkeypatch.syspath_prepend(str(assets))
+    module_path = assets / "mcp_server.py"
     spec = importlib.util.spec_from_file_location("workbench_mcp", module_path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    root = tmp_path / "inputs"
+    gate_spec = importlib.util.spec_from_file_location("workbench_gate", assets / "gate.py")
+    gate = importlib.util.module_from_spec(gate_spec)
+    gate_spec.loader.exec_module(gate)
+    root, skill = tmp_path / "inputs", tmp_path / "skill"
     root.mkdir()
+    skill.mkdir()
+    (skill / "SKILL.md").write_text("Use the selected H3 grammar.")
+    (skill / "script.py").write_text("raise RuntimeError('must never execute')")
     original = b"test fixture bytes"
     (root / "image.png").write_bytes(original)
-    manifest = {"requirements": "selected shot", "assets": [{"id": "image", "file": "image.png", "mime": "image/png"}]}
+    (root / "unlisted.png").write_bytes(original)
+    manifest = {"version": 3, "requirements": "selected shot", "assets": [{"id": "image", "file": "image.png", "mime": "image/png"}]}
     (root / "context.json").write_text(json.dumps(manifest))
-    context = module.respond({"method": "tools/call", "params": {"name": "get_context", "arguments": {}}}, root)
-    assert json.loads(context["content"][0]["text"]) == manifest
-    image = module.call("read_image", {"asset_id": "image"}, root)
-    assert base64.b64decode(image["content"][0]["data"]) == original
-    for arguments in ({"asset_id": "../image.png"}, {"asset_id": "image", "path": "/etc/passwd"}, {}):
-        result = module.respond({"method": "tools/call", "params": {"name": "read_image", "arguments": arguments}}, root)
-        assert result["isError"]
+    context = module.respond({"method": "tools/call", "params": {"name": "get_context", "arguments": {}}}, root, skill)
+    data = json.loads(context["content"][0]["text"])
+    assert data["requirements"] == "selected shot" and data["assets"][0]["path"] == "/inputs/image.png"
+    assert all(block["type"] == "text" for block in context["content"])
+    assert module.call("read_skill", {"path": "SKILL.md"}, root, skill)["content"][0]["text"] == "Use the selected H3 grammar."
+    assert gate.authorize("image", {"path": "/inputs/image.png"}, root, skill)
+    assert gate.authorize("get_context", {}, root, skill)
+    assert gate.authorize("read_skill", {"path": "SKILL.md"}, root, skill)
+    for name, arguments in (
+        ("read_image", {"asset_id": "image"}),
+        ("read_skill", {"path": "script.py"}),
+        ("read_skill", {"path": "../secret"}),
+        ("read_skill", {"path": "/etc/passwd"}),
+        ("read_skill", {"path": "SKILL.md", "extra": True}),
+        ("get_context", {"root": "/etc"}),
+    ):
+        result = module.respond({"method": "tools/call", "params": {"name": name, "arguments": arguments}}, root, skill)
+        assert result["isError"], (name, arguments)
+    for path in (
+        "/auth/auth.json",
+        "/home/agent/.codex/auth.json",
+        "/inputs/unlisted.png",
+        "/inputs/../secret",
+        "/inputs/./image.png",
+        "/inputs/sub/../image.png",
+        "/inputs/image.png:stream",
+        "/inputs/..\\secret",
+        "C:/inputs/image.png",
+        "/inputs/%2e%2e/secret",
+    ):
+        assert not gate.authorize("image", {"path": path}, root, skill), path
+    for name in ("apply_patch", "bash", "web_search", "spawn_agent", "unknown"):
+        assert not gate.authorize(name, {}, root, skill), name
+    assert not gate.authorize("image", {"path": "/inputs/image.png", "command": "touch /tmp/x"}, root, skill)
     outside = tmp_path / "secret"
     outside.write_bytes(b"outside sentinel")
     (root / "image.png").unlink()
     (root / "image.png").symlink_to(outside)
-    with pytest.raises(ValueError):
-        module.call("read_image", {"asset_id": "image"}, root)
+    assert not gate.authorize("image", {"path": "/inputs/image.png"}, root, skill)
+    assert module.respond({"method": "tools/call", "params": {"name": "get_context", "arguments": {}}}, root, skill)["isError"]
+    (skill / "nested").symlink_to(tmp_path, target_is_directory=True)
+    assert not gate.authorize("read_skill", {"path": "nested/secret"}, root, skill)
     assert outside.read_bytes() == b"outside sentinel"
+
+    (root / "image.png").unlink()
+    (root / "image.png").write_bytes(original)
+
+    # Provider adapters normalize actual CLI envelopes, including Grok's resolved-name hook.
+    codex_spec = importlib.util.spec_from_file_location("codex_hook", assets / "agents/codex/hook.py")
+    codex = importlib.util.module_from_spec(codex_spec)
+    codex_spec.loader.exec_module(codex)
+    grok_spec = importlib.util.spec_from_file_location("grok_hook", assets / "agents/grok/hook.py")
+    grok = importlib.util.module_from_spec(grok_spec)
+    grok_spec.loader.exec_module(grok)
+    assert gate.authorize(*grok.normalize({"toolName": "read_file", "toolInput": {"target_file": "/inputs/image.png"}}), root, skill)
+    for name in ("use_tool", "workbench__read_skill"):
+        normalized = grok.normalize(
+            {"toolName": name, "toolInput": {"tool_name": "workbench__read_skill", "tool_input": {"path": "SKILL.md"}}}
+        )
+        assert gate.authorize(*normalized, root, skill)
+    for message in (
+        {"toolName": "workbench__get_context", "toolInput": {"tool_name": "workbench__read_skill", "tool_input": {"path": "SKILL.md"}}},
+        {"toolName": "use_tool", "toolInput": {"tool_name": "other__read_skill", "tool_input": {"path": "SKILL.md"}}},
+        {"toolName": "read_file", "toolInput": {"path": "/inputs/image.png"}, "toolInputTruncated": True},
+    ):
+        assert not gate.authorize(*grok.normalize(message), root, skill), message
+    assert not gate.authorize(*codex.normalize({"tool_name": "apply_patch", "tool_input": {"command": "arbitrary code"}}), root, skill)
+
+    # Only authentication survives a fresh CLI home; old policy and plugins stay inert.
+    runtime_spec = importlib.util.spec_from_file_location("workbench_runtime", assets / "runtime.py")
+    runtime_module = importlib.util.module_from_spec(runtime_spec)
+    runtime_spec.loader.exec_module(runtime_module)
+    auth = tmp_path / "auth"
+    auth.mkdir()
+    (auth / "auth.json").write_text('{"token":"old"}')
+    (auth / "config.toml").write_text("untrusted configuration")
+    (auth / "hooks.json").write_text("untrusted hook")
+    with runtime_module.Runtime("codex", auth, tmp_path / "fresh-home") as state:
+        assert json.loads((state.home / "auth.json").read_text()) == {"token": "old"}
+        assert not (state.home / "hooks.json").exists()
+        (state.home / "auth.json").write_text('{"token":"refreshed"}')
+        (state.home / "session.log").write_text("disposable state")
+    assert json.loads((auth / "auth.json").read_text()) == {"token": "refreshed"}
+    assert (auth / "config.toml").read_text() == "untrusted configuration" and not (auth / "session.log").exists()
+
+    # Real subprocess pipes exercise final extraction, interrupted streams and forbidden events.
+    runner_spec = importlib.util.spec_from_file_location("workbench_stream_runner", assets / "runner.py")
+    runner = importlib.util.module_from_spec(runner_spec)
+    runner_spec.loader.exec_module(runner)
+    provider = importlib.import_module("agents.codex.adapter")
+    monkeypatch.setattr(provider, "inspect", lambda: {"policy_ready": True, "policy_revision": 5})
+    monkeypatch.setattr(runner, "adapter_for", lambda agent: provider)
+    monkeypatch.setattr(runner, "context", lambda: {"assets": []})
+    monkeypatch.setattr(
+        runner, "audit", lambda: [{"tool": "get_context", "arguments": {}}, {"tool": "read_skill", "arguments": {"path": "SKILL.md"}}]
+    )
+    assistant = {"type": "item.completed", "item": {"type": "agent_message", "text": "```text\nA quiet dolly shot.\n```"}}
+    complete = {"type": "turn.completed"}
+    for events, accepted in (
+        ([assistant, complete], True),
+        ([assistant], False),
+        ([assistant, complete, assistant], False),
+        ([{"type": "item.started", "item": {"type": "command_execution", "command": "touch /tmp/forbidden"}}], False),
+        ([{"type": "control_request"}], False),
+        ([{"type": "item.completed", "item": {"type": "agent_message", "text": "ARISU_POLICY_REFUSAL"}}, complete], False),
+    ):
+        wire = "".join(json.dumps(event) + "\n" for event in events)
+        monkeypatch.setattr(
+            provider, "command", lambda *args, wire=wire: [sys.executable, "-c", "import sys; sys.stdout.write(" + repr(wire) + ")"]
+        )
+        if accepted:
+            runner.generate("codex", {"model": "test"})
+            assert "ARISU_RESULT " in capsys.readouterr().out
+        else:
+            with pytest.raises(ValueError):
+                runner.generate("codex", {"model": "test"})
+            assert "ARISU_RESULT " not in capsys.readouterr().out
