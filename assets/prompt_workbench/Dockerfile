@@ -5,8 +5,7 @@ ARG AGENT
 
 FROM python:3.13-slim-trixie AS installer
 ARG AGENT
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl bash \
-    && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl bash
 COPY agents/${AGENT}/install.sh /opt/install_agent.sh
 RUN sh /opt/install_agent.sh
 

@@ -105,8 +105,11 @@ make test-workbench-live ARGS="--auth-volume codex=<codex-volume> --auth-volume 
 ```
 
 The live lane sends real, billable requests. Supply existing Workbench auth volumes explicitly;
+defaults are Codex `gpt-5.6-sol` and Grok `grok-4.6`, both at low effort.
 `--agent codex` or `--agent grok` selects one provider, and `--model provider=model-id` overrides
-its discovered default. Borrowed volumes can refresh credentials but are never logged out or
+its default model. Use `--effort provider=medium` to override the default low effort;
+accepted values are `low`, `medium`, and `high`, subject to model support.
+Borrowed volumes can refresh credentials but are never logged out or
 deleted. Test images and fixtures are disposable; use a dedicated test account when available.
 
 ## Nodes

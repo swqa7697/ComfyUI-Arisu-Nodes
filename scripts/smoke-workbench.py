@@ -188,10 +188,15 @@ def main():
     parser.add_argument("--live", action="store_true", help="Send real requests using explicitly supplied auth volumes")
     parser.add_argument("--agent", action="append", choices=("codex", "grok"))
     parser.add_argument("--auth-volume", action="append", default=[], metavar="PROVIDER=VOLUME")
-    parser.add_argument("--model", action="append", default=[], metavar="PROVIDER=MODEL")
+    parser.add_argument("--model", action="append", default=[], metavar="PROVIDER=MODEL", help="Defaults: codex=gpt-5.6-sol, grok=grok-4.6")
+    parser.add_argument("--effort", action="append", default=[], metavar="PROVIDER=EFFORT", help="Default: low for both providers")
     args = parser.parse_args()
     providers = args.agent or ["codex", "grok"]
-    borrowed, models = assignments(args.auth_volume), assignments(args.model)
+    borrowed = assignments(args.auth_volume)
+    models = {"codex": "gpt-5.6-sol", "grok": "grok-4.6", **assignments(args.model)}
+    efforts = assignments(args.effort)
+    if any(value not in ("low", "medium", "high") for value in efforts.values()):
+        parser.error("effort must be low, medium or high")
     if args.live and set(borrowed) != set(providers):
         parser.error("live checks require an explicit --auth-volume for each selected provider")
     if borrowed and not args.live:
@@ -263,11 +268,14 @@ def main():
                     continue
                 if not details.get("authenticated") or not details.get("models"):
                     raise ValueError(agent + " account is not authenticated or has no models")
-                chosen = models.get(agent) or next(
-                    (item["id"] for item in details["models"] if item.get("default")), details["models"][0]["id"]
-                )
-                model = next(item for item in details["models"] if item["id"] == chosen)
-                effort = "low" if "low" in model["efforts"] else next(iter(model["efforts"]), "")
+                chosen = models[agent]
+                model = next((item for item in details["models"] if item["id"] == chosen), None)
+                if model is None:
+                    raise ValueError(agent + " model is unavailable: " + chosen)
+                effort = efforts.get(agent, "low")
+                if effort and effort not in model["efforts"]:
+                    raise ValueError(agent + " model does not support the selected effort")
+                print("SELECTION " + json.dumps({"agent": agent, "model": chosen, "effort": effort}), flush=True)
                 for case, brief, media, refuse in (
                     ("text", "A quiet sunrise over a lake. One shot. No music.", False, False),
                     ("images", "Continue the abstract scene with a slow dolly and soft wind. No music.", True, False),

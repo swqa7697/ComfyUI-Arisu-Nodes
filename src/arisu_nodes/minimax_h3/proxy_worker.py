@@ -95,5 +95,10 @@ def convert(payload: Dict[str, Any]):
                         output.mux(encoded)
 
 
-if __name__ == "__main__":
+def main():
+    """Read only the parent's bounded validated conversion description."""
     convert(json.loads(sys.stdin.buffer.read(1024 * 1024)))
+
+
+if __name__ == "__main__":
+    main()

@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+import stat
 from pathlib import Path
 from typing import Any, Dict
 
@@ -13,6 +15,21 @@ INPUTS = Path("/inputs")
 SKILL = Path("/skill")
 TOOLS = ("get_context", "read_skill")
 MAX_TEXT = 1024 * 1024
+
+
+def read_text(path: Path, limit: int = MAX_TEXT) -> str:
+    """Read bounded UTF-8 from an opened regular file without following a symlink."""
+    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            raise ValueError("text must be a regular file")
+        with os.fdopen(descriptor, "rb", closefd=False) as source:
+            value = source.read(limit + 1)
+    finally:
+        os.close(descriptor)
+    if len(value) > limit:
+        raise ValueError("text exceeds limit")
+    return value.decode("utf-8")
 
 
 def contained_file(root: Path, relative: str) -> Path:
@@ -37,7 +54,7 @@ def context(root: Path = INPUTS) -> Dict[str, Any]:
     path = contained_file(root, "context.json")
     if path.stat().st_size > MAX_TEXT:
         raise ValueError("context exceeds limit")
-    data = json.loads(path.read_text(encoding="utf-8"))
+    data = json.loads(read_text(path))
     if not isinstance(data, dict) or data.get("version") != 3 or not isinstance(data.get("assets"), list):
         raise ValueError("unsupported context manifest")
     seen = {}
@@ -105,7 +122,7 @@ def skill_text(relative: str, root: Path = SKILL) -> str:
     path = contained_file(root, relative)
     if path.suffix.lower() not in (".md", ".txt") or path.stat().st_size > MAX_TEXT:
         raise ValueError("unavailable skill document")
-    return path.read_text(encoding="utf-8")
+    return read_text(path)
 
 
 def final_response(value: str) -> str:

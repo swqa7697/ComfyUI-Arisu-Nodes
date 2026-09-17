@@ -12,7 +12,7 @@ import sys
 import tempfile
 from typing import Any, Dict, List
 
-from contract import POLICY_REVISION, context, final_response
+from contract import POLICY_REVISION, context, final_response, read_text
 from events import activity
 from gate import AUDIT
 from runtime import Runtime, stop_on_signal
@@ -29,11 +29,11 @@ def adapter_for(agent: str) -> Any:
 
 def audit() -> List[Dict[str, Any]]:
     """Read bounded hook decisions; any denial invalidates the entire generation."""
-    if not AUDIT.exists():
+    try:
+        text = read_text(AUDIT)
+    except FileNotFoundError:
         return []
-    if AUDIT.is_symlink() or AUDIT.stat().st_size > 1024 * 1024:
-        raise ValueError("invalid tool audit")
-    records = [json.loads(line) for line in AUDIT.read_text().splitlines()]
+    records = [json.loads(line) for line in text.splitlines()]
     if any(record.get("allowed") is not True for record in records):
         raise ValueError(
             "agent attempted an action outside the Workbench policy: " + json.dumps([r for r in records if not r.get("allowed")])

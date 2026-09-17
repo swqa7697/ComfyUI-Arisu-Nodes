@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 from typing import Any, Dict, List
 
-from contract import INPUTS, POLICY_REVISION, contained_file
+from contract import INPUTS, POLICY_REVISION, contained_file, read_text
 from gate import authorize
 from process import rpc, run
 
@@ -123,7 +123,7 @@ def command(model: str, effort: str, prompt: str, assets: List[Dict[str, Any]]) 
         "--tools",
         "search_tool,use_tool",
         "--system-prompt-override",
-        Path("/opt/workbench/instructions.txt").read_text(),
+        read_text(Path("/opt/workbench/instructions.txt")),
     ]
     if effort:
         arguments += ["--effort", effort]

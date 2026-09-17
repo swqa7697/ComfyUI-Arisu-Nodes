@@ -10,7 +10,6 @@ import os
 import re
 import shutil
 import subprocess
-import sys
 import threading
 import time
 import uuid
@@ -20,6 +19,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 from PIL import Image
 
+from ..worker import worker_command, worker_environment
 from .agent_docker import ASSETS, AgentBusy, DockerAgents
 from .core import ResourceBundle, VideoSettings, finalized_markdown, motion_samples, validate_bundle, workbench_options
 from .media import validate_workbench_source
@@ -391,19 +391,15 @@ class Workbench:
             media_key = hashlib.sha256(json.dumps([sources, PROCESSING], sort_keys=True).encode()).hexdigest()
             assets = self.restore_assets(job, media_key)
             if assets is None:
-                environment = {
-                    **os.environ,
-                    "PYTHONDONTWRITEBYTECODE": "1",
-                    "PYTHONPATH": os.pathsep.join([str(Path(__file__).resolve().parents[2]), *sys.path]),
-                }
                 process = subprocess.Popen(
-                    [sys.executable, "-m", "arisu_nodes.minimax_h3.workbench_media"],
+                    worker_command("workbench"),
                     cwd=ASSETS.parents[1],
                     stdin=subprocess.PIPE,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                     text=True,
-                    env=environment,
+                    encoding="utf-8",
+                    env=worker_environment(),
                 )
                 sent = False
                 while True:

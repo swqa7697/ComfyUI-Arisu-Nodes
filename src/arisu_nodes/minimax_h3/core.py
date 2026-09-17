@@ -12,13 +12,24 @@ from __future__ import annotations
 import copy
 import json
 import math
+import mimetypes
 import re
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple, TypeVar
 
-from ..common.core import relative_path
+from ..common.core import image_content_type, relative_path
 
 T = TypeVar("T")
+
+
+def media_kind(path: str) -> Optional[str]:
+    """Apply the image allowlist, then classify audio/video using standard MIME types."""
+    if image_content_type(path):
+        return "image"
+    mime, _ = mimetypes.guess_type(path, strict=False)
+    kind = mime.split("/", 1)[0] if mime else None
+    return kind if kind in ("video", "audio") else None
+
 
 CANVAS_MULTIPLE = 32
 BASE_SHORT_EDGE = 768

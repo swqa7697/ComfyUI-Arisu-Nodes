@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Isolate Resource Studio and Prompt Workbench media workers from host secrets and Python environment overrides.
+- Bound Prompt Workbench text reads and reject symlinks and non-regular files for context, skills, model catalogs, instructions, and tool audits.
 - Restrict Prompt Workbench agents to prompt generation with immutable tool policies, isolated CLI state, read-only mounts, stream-only output, and rejection of mixed prohibited requests.
 
 ## [1.2.1] - 2026-09-15

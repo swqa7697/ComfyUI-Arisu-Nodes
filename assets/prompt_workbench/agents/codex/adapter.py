@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from typing import Any, Dict, List
 
-from contract import POLICY_REVISION
+from contract import POLICY_REVISION, read_text
 from gate import authorize
 from process import rpc, run
 
@@ -69,7 +69,7 @@ def inspect() -> Dict[str, Any]:
 
 def command(model: str, effort: str, prompt: str, assets: List[Dict[str, Any]]) -> List[str]:
     cache = Path("/home/agent/.codex/models_cache.json")
-    data = json.loads(cache.read_text())
+    data = json.loads(read_text(cache, 16 * 1024 * 1024))
     models = data.get("models", [])
     if not any(item.get("slug") == model for item in models):
         raise ValueError("selected Codex model is absent from its authenticated catalog")

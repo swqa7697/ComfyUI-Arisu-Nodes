@@ -383,6 +383,31 @@ def test_mcp_manifest_images_and_unlisted_or_escaping_assets(
     (root / "image.webp").unlink()
     (root / "image.webp").write_bytes(original)
 
+    # Text limits apply to actual UTF-8 bytes, including exactly-full valid documents.
+    contract = importlib.import_module("contract")
+    document = skill / "SKILL.md"
+    text = "雪" * (1024 * 1024 // 3) + "x"
+    document.write_text(text, encoding="utf-8")
+    assert module.call("read_skill", {"path": "SKILL.md"}, root, skill)["content"][0]["text"] == text
+    for content in (text.encode("utf-8") + b"x", b"\xff"):
+        document.write_bytes(content)
+        assert module.respond({"method": "tools/call", "params": {"name": "read_skill", "arguments": {"path": "SKILL.md"}}}, root, skill)[
+            "isError"
+        ]
+    document.unlink()
+    document.symlink_to(outside)
+    with pytest.raises(OSError):
+        contract.read_text(document)
+    document.unlink()
+    document.mkdir()
+    with pytest.raises(ValueError, match="regular file"):
+        contract.read_text(document)
+    document.rmdir()
+    document.write_text("Use the selected H3 grammar.")
+    (root / "context.json").write_bytes(b" " * (1024 * 1024 + 1))
+    assert module.respond({"method": "tools/call", "params": {"name": "get_context", "arguments": {}}}, root, skill)["isError"]
+    (root / "context.json").write_text(json.dumps(manifest))
+
     for change in ({"attachment_index": 2}, {"resource_id": "wrong"}, {"note": "wrong"}, {"file": "unlisted.webp"}):
         invalid = json.loads(json.dumps(manifest))
         invalid["assets"][0].update(change)
@@ -459,6 +484,25 @@ def test_mcp_manifest_images_and_unlisted_or_escaping_assets(
         assert json.loads(blocks[1]["text"])["note"] == "coat"
         assert blocks[2]["mimeType"] == "image/webp" and base64.b64decode(blocks[2]["data"]) == original
         assert grok_command[grok_command.index("--tools") + 1] == "search_tool,use_tool"
+        # The authenticated catalog remains usable at its bound; larger or linked files fail closed.
+        catalog = tmp_path / "models_cache.json"
+        valid = json.dumps({"models": [{"slug": "test"}]}).encode()
+        catalog.write_bytes(valid + b" " * (16 * 1024 * 1024 - len(valid)))
+        assert "--image" in codex_provider.command("test", "", "identity index", data["assets"])
+        with catalog.open("ab") as output:
+            output.write(b" ")
+        with pytest.raises(ValueError, match="exceeds limit"):
+            codex_provider.command("test", "", "identity index", data["assets"])
+        catalog.unlink()
+        catalog.symlink_to(outside)
+        with pytest.raises(OSError):
+            codex_provider.command("test", "", "identity index", data["assets"])
+        catalog.unlink()
+        catalog.write_bytes(valid)
+        (tmp_path / "workbench-prompt.json").unlink()
+        (tmp_path / "instructions.txt").write_bytes(b" " * (1024 * 1024 + 1))
+        with pytest.raises(ValueError, match="exceeds limit"):
+            grok_provider.command("test", "", "identity index", data["assets"])
 
     # The budget covers actual UTF-8, escaped JSON, metadata, and Base64 chunk boundaries.
     with monkeypatch.context() as patches:
@@ -509,6 +553,33 @@ def test_mcp_manifest_images_and_unlisted_or_escaping_assets(
     runner_spec = importlib.util.spec_from_file_location("workbench_stream_runner", assets / "runner.py")
     runner = importlib.util.module_from_spec(runner_spec)
     runner_spec.loader.exec_module(runner)
+    audit_path = tmp_path / "audit.jsonl"
+    monkeypatch.setattr(runner, "AUDIT", audit_path)
+    assert runner.audit() == []
+    record = {"allowed": True, "tool": "get_context", "arguments": {}}
+    encoded = json.dumps(record).encode()
+    audit_path.write_bytes(encoded + b" " * (1024 * 1024 - len(encoded) - 1) + b"\n")
+    assert runner.audit() == [record]
+    with audit_path.open("ab") as output:
+        output.write(b" ")
+    with pytest.raises(ValueError, match="exceeds limit"):
+        runner.audit()
+    audit_path.write_text(json.dumps({**record, "allowed": False}) + "\n")
+    with pytest.raises(ValueError, match="outside the Workbench policy"):
+        runner.audit()
+    audit_path.unlink()
+    audit_path.symlink_to(outside)
+    with pytest.raises(OSError):
+        runner.audit()
+    audit_path.unlink()
+    audit_path.symlink_to(tmp_path / "missing-audit")
+    with pytest.raises(OSError):
+        runner.audit()
+    audit_path.unlink()
+    audit_path.mkdir()
+    with pytest.raises(ValueError, match="regular file"):
+        runner.audit()
+    audit_path.rmdir()
     provider = importlib.import_module("agents.codex.adapter")
     monkeypatch.setattr(provider, "inspect", lambda: {"policy_ready": True, "policy_revision": 6})
     monkeypatch.setattr(runner, "adapter_for", lambda agent: provider)

@@ -19,6 +19,7 @@ from src.arisu_nodes.minimax_h3.media import revision_for
 from src.arisu_nodes.minimax_h3.workbench import Generation, Workbench, job_context, skill_catalog
 from src.arisu_nodes.minimax_h3.workbench_media import stage
 from tests.support.media import make_audio, make_av, make_video
+from tests.support.workers import assert_worker_isolated, poison_parent
 
 pytestmark = pytest.mark.comfyui
 
@@ -268,6 +269,14 @@ def test_workbench_stages_crops_refuses_escapes_and_cancellation_retains_guard(t
     assert not job.directory.exists()
 
     # Complete the real orchestration with a CPU worker, then reuse its staged-media cache.
+    marker = poison_parent(tmp_path / "hostile", monkeypatch)
+    real_spawn = workbench.subprocess.Popen
+
+    def isolated(arguments: Any, **kwargs: Any) -> Any:
+        assert_worker_isolated(arguments, kwargs["env"], real_spawn)
+        return real_spawn(arguments, **kwargs)
+
+    monkeypatch.setattr(workbench.subprocess, "Popen", isolated)
     ready = {"docker": True, "agents": {"codex": {"ready": True, "selection": {"model": "test", "effort": "medium"}}}}
     monkeypatch.setattr(owner.agents, "status", lambda: ready)
 
@@ -304,6 +313,7 @@ def test_workbench_stages_crops_refuses_escapes_and_cancellation_retains_guard(t
 
             monkeypatch.setattr(workbench.subprocess, "Popen", unexpected_worker)
     assert len(owner.cache) == 1 and image_path.read_bytes() == original
+    assert not marker.exists()
     grouped_job = Generation(
         "grouped",
         "w",
