@@ -16,11 +16,10 @@
   <a href="https://github.com/swqa7697/ComfyUI-Arisu-Nodes/actions/workflows/comfyui-lane.yml"><img src="https://github.com/swqa7697/ComfyUI-Arisu-Nodes/actions/workflows/comfyui-lane.yml/badge.svg" alt="ComfyUI lane" /></a>
 </p>
 
-
 ## Installation
 
 Requires **ComfyUI >= 0.30.0**, **Python >= 3.10**, Pillow, and PyAV in ComfyUI's environment.
-Use the legacy node renderer (**Nodes 2.0 disabled**) for Resource Studio.
+Recommend to use with Nodes 2.0 option **disabled**.
 
 ### ComfyUI-Manager
 
@@ -60,16 +59,8 @@ ComfyUI's `input` and `output` directories are available by default.
 Choose only media directories you intend to share with clients of this server.
 JSONC supports comments; omit trailing commas.
 
-Manage agent models and reasoning effort through
-**Settings → Arisu Nodes → Prompt Workbench → Agents**.
-These preferences are saved under `workbench` while preserving comments and other settings.
-Credentials are stored in Docker authentication volumes. Each invocation uses fresh CLI state;
-only credential refreshes are persisted. Update existing images with **Update CLI** when
-Workbench reports an incompatible policy.
-
 #### Optional setup
 
-- **MiniMax H3:** use the checkpoint, CLIP, video VAE, and audio VAE required by the stock H3 nodes.
 - **Agent generation:** install Docker with Linux container support and give the ComfyUI process access to its daemon.
   Open **Settings → Arisu Nodes → Prompt Workbench → Agents** to build an agent image, sign in,
   and select a model and reasoning effort. Docker Desktop must use Linux containers on macOS/Windows. Provider accounts and settings are shared by users of the ComfyUI instance.
@@ -77,59 +68,33 @@ Workbench reports an incompatible policy.
   `user/__arisu_nodes/skills/<skill-name>/` under ComfyUI's user directory. The pack creates the `skills`
   directory on startup; administrators manage its contents. Select `custom:<skill-name>` in Prompt Workbench.
 
-Prompt Workbench keeps contexts, finalized text, and Docker generation independent. **Generate**
-captures the contexts; later workflow edits and Undo/Redo keep the job and its result. **Apply**
-copies the reviewed result into the current finalized prompt as one undoable edit. Open workflow
-tabs retain their own transient results; workflow copies do not include them. Activity shows
-thoughts directly and keeps loaded skills and metadata in collapsed tool details. Update both
-provider images through **Update CLI** to enable structured logs in existing installations.
+In Prompt Workbench, choose a skill, connect your contexts, and click **Generate prompt**.
+Open **Generation results**, review the **Output Prompt** tab, and click **Apply to Workbench**
+to replace the finalized prompt. Use Undo to restore the previous text. Workflow edits and
+switching between open tabs preserve the running job and its result.
 
-Prompt generation uses selected skill text, MCP context metadata, and images attached directly
-to the agent’s initial prompt. Prepared images use lossless WebP, with crops applied and the
-longer edge capped at 4000 pixels without upscaling, with a 32 MiB limit per prepared image.
-The shared media cache remains bounded to 2 GiB. Agent containers have 512 MiB of temporary
-space at `/tmp`; Grok's complete initial JSON prompt file is capped at 384 MiB, including
-Base64 images, text, and metadata (approximately 288 MiB of images before text and metadata).
-Videos supply up to eight evenly spaced stills across the selected clip; audio is notes only.
-Asset IDs and attachment order match
-each image to its role and current notes. Image/file-reading tools are disabled. Web search, shell execution, edits, delegation, and interactive questions
-are disabled. Results arrive through output streams and require Apply; generated output is never read from a file.
-Mixed video requests asking the agent to code, browse, or change files are rejected. Semantic
-injection detection remains probabilistic; tool and filesystem restrictions are separate controls.
-
-Optional developer checks run independently of ComfyUI and ordinary CI:
-
-```bash
-make test-workbench-docker
-make test-workbench-live ARGS="--auth-volume codex=<codex-volume> --auth-volume grok=<grok-volume>"
-```
-
-The live lane sends real, billable requests. Supply existing Workbench auth volumes explicitly;
-defaults are Codex `gpt-5.6-sol` and Grok `grok-4.6`, both at low effort.
-`--agent codex` or `--agent grok` selects one provider, and `--model provider=model-id` overrides
-its default model. Use `--effort provider=medium` to override the default low effort;
-accepted values are `low`, `medium`, and `high`, subject to model support.
-Borrowed volumes can refresh credentials but are never logged out or
-deleted. Test images and fixtures are disposable; use a dedicated test account when available.
+Generation uses your selected skill, context notes, and cropped images. Videos contribute
+up to eight stills from the selected clip; audio contributes notes only. Agents are restricted
+to prompt generation, with web search, commands, and file editing disabled.
 
 ## Nodes
 
 Click a node name for its full reference, also available through the node's right-click **Help** menu.
 
-| Node | Category | Summary |
-|---|---|---|
-| [Path Builder](web/docs/ArisuPathBuilder/en.md) | Common | Build a filename prefix from separate text fields. |
-| [Extract Last Images](web/docs/ArisuExtractLastImages/en.md) | Common | Keep the last N images from a batch. |
-| [Preview & Save Image](web/docs/ArisuPreviewSaveImage/en.md) | Common | Preview images and save them on demand. |
-| [Preview & Save Image (Upscale)](web/docs/ArisuPreviewSaveImageUpscale/en.md) | Common | Upscale previewed images when saving. |
-| [Load Image (Browse)](web/docs/ArisuLoadImage/en.md) | Common | Browse and crop images from configured directories. |
-| [Resize Image](web/docs/ArisuResizeImage/en.md) | Common | Resize images by cropping, padding, fitting, or stretching. |
-| [MiniMax H3 Prompt Workbench](web/docs/ArisuMiniMaxH3PromptWorkbench/en.md) | MiniMax H3 | Edit prompts; review agent activity and output in Generation results, or Apply output directly. |
-| [MiniMax H3 Resource Studio](web/docs/ArisuMiniMaxH3ResourceStudio/en.md) | MiniMax H3 | Arrange, crop, and trim keyframes and image, video, or audio references. |
-| [MiniMax H3 Hybrid to Video](web/docs/ArisuMiniMaxH3HybridToVideo/en.md) | MiniMax H3 | Combine keyframes and media references into H3 conditioning and an AV latent. |
-| [MiniMax H3 Hybrid to Video (Advanced)](web/docs/ArisuMiniMaxH3HybridToVideoAdvanced/en.md) | MiniMax H3 | Add upscaled conditioning for two-pass workflows. |
-| [MiniMax H3 Video Settings](web/docs/ArisuMiniMaxH3VideoSettings/en.md) | MiniMax H3 | Set canvas size, aspect ratio, and duration in one bundle. |
-| [MiniMax H3 Video Settings (Upscale)](web/docs/ArisuMiniMaxH3VideoSettingsUpscale/en.md) | MiniMax H3 | Include a target size for latent upscaling. |
+| Node                                                                                        | Category   | Summary                                                                       |
+| ------------------------------------------------------------------------------------------- | ---------- | ----------------------------------------------------------------------------- |
+| [Path Builder](web/docs/ArisuPathBuilder/en.md)                                             | Common     | Build a filename prefix from separate text fields.                            |
+| [Extract Last Images](web/docs/ArisuExtractLastImages/en.md)                                | Common     | Keep the last N images from a batch.                                          |
+| [Preview & Save Image](web/docs/ArisuPreviewSaveImage/en.md)                                | Common     | Preview images and save them on demand.                                       |
+| [Preview & Save Image (Upscale)](web/docs/ArisuPreviewSaveImageUpscale/en.md)               | Common     | Upscale previewed images when saving.                                         |
+| [Load Image (Browse)](web/docs/ArisuLoadImage/en.md)                                        | Common     | Browse and crop images from configured directories.                           |
+| [Resize Image](web/docs/ArisuResizeImage/en.md)                                             | Common     | Resize images by cropping, padding, fitting, or stretching.                   |
+| [MiniMax H3 Prompt Workbench](web/docs/ArisuMiniMaxH3PromptWorkbench/en.md)                 | MiniMax H3 | Write prompts or generate and review drafts with Codex or Grok.               |
+| [MiniMax H3 Resource Studio](web/docs/ArisuMiniMaxH3ResourceStudio/en.md)                   | MiniMax H3 | Arrange, crop, and trim keyframes and image, video, or audio references.      |
+| [MiniMax H3 Hybrid to Video](web/docs/ArisuMiniMaxH3HybridToVideo/en.md)                    | MiniMax H3 | Combine keyframes and media references into H3 conditioning and an AV latent. |
+| [MiniMax H3 Hybrid to Video (Advanced)](web/docs/ArisuMiniMaxH3HybridToVideoAdvanced/en.md) | MiniMax H3 | Add upscaled conditioning for two-pass workflows.                             |
+| [MiniMax H3 Video Settings](web/docs/ArisuMiniMaxH3VideoSettings/en.md)                     | MiniMax H3 | Set canvas size, aspect ratio, and duration in one bundle.                    |
+| [MiniMax H3 Video Settings (Upscale)](web/docs/ArisuMiniMaxH3VideoSettingsUpscale/en.md)    | MiniMax H3 | Include a target size for latent upscaling.                                   |
 
 See [example workflows](example_workflows) for ready-made graphs and the [changelog](CHANGELOG.md) for release notes.
 

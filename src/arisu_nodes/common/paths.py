@@ -20,11 +20,14 @@ from typing import Any, Dict, List, Mapping, Optional, Tuple
 logger = logging.getLogger(__name__)
 CONFIG_NAME = "config.arisu.jsonc"
 CONFIG_TEMPLATE = """{
-  // Add existing absolute image/media directories, for example "photos": "/data/photos".
-  // Only allow directories you intend clients of this server to access.
-  // Edit roots manually; Workbench preferences are managed through the Agents settings UI.
-  // Restart ComfyUI after editing this file. Trailing commas are not supported.
-  "roots": {}
+  // Add existing media directories using absolute paths, then restart ComfyUI.
+  // Example entry inside roots: "photos": "/data/photos"
+  // Only include directories you intend to share with clients of this server.
+  // Do not add a trailing comma after the last entry.
+  "roots": {},
+
+  // Managed by the Agents settings UI; manual editing is not recommended.
+  "workbench": {}
 }
 """
 _config_lock = threading.RLock()

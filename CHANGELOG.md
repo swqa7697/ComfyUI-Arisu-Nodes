@@ -9,12 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Collapse Prompt Workbench agent responses in the Activity tab; review generated prompts in the Output Prompt tab.
+- Show Codex and Grok thoughts in Prompt Workbench Activity, with agent responses, tool metadata, and loaded skills collapsed; review generated prompts in the Output Prompt tab.
 - Keep Prompt Workbench generation and reviewed results through context, resource, settings, connection, and output edits, Undo/Redo, and open-workflow tab switches; apply results independently of later context changes.
-- Show Codex and Grok thoughts separately from collapsed tool metadata and loaded skills, retaining activity boundaries and updating repeated provider items in place.
-
 - Raise Prompt Workbench's prepared-image limit to 32 MiB and container temporary space to 512 MiB; stream Grok's initial JSON prompt within a 384 MiB budget covering images, text, and metadata.
-- Read Prompt Workbench images directly from authorized mounts while transferring only metadata and selected skill text through MCP.
+- Attach prepared images directly to Prompt Workbench agent prompts, with applied crops, a 4000-pixel maximum edge, and up to eight stills per video clip; transfer only metadata and selected skill text through MCP.
 
 ### Security
 
