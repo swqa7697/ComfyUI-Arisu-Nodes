@@ -10,10 +10,10 @@ import signal
 import subprocess
 import sys
 import tempfile
-from typing import Any, Dict, List
+from typing import Any, Dict, Iterator, List, Tuple
 
 from contract import POLICY_REVISION, context, final_response, read_text
-from events import EventValidationError, activity, diagnostic
+from events import ActivityStream, EventValidationError, diagnostic
 from gate import AUDIT
 from runtime import Runtime, stop_on_signal
 
@@ -41,6 +41,40 @@ def audit() -> List[Dict[str, Any]]:
     return records
 
 
+def pipe_lines(process: subprocess.Popen) -> Iterator[Tuple[str, str]]:
+    """Drain ready pipe bytes without TextIO read-ahead or blocking on partial lines."""
+    selector = selectors.DefaultSelector()
+    buffers: Dict[str, bytes] = {"stdout": b"", "stderr": b""}
+    total = 0
+    try:
+        selector.register(process.stdout, selectors.EVENT_READ, "stdout")
+        selector.register(process.stderr, selectors.EVENT_READ, "stderr")
+        while selector.get_map():
+            for key, _mask in selector.select(timeout=0.2):
+                chunk = os.read(key.fd, 65536)
+                total += len(chunk)
+                if total > 16 * 1024 * 1024:
+                    raise ValueError("agent event exceeds limit")
+                data = buffers[key.data] + chunk
+                lines = data.split(b"\n")
+                buffers[key.data] = lines.pop()
+                if not chunk:
+                    selector.unregister(key.fileobj)
+                    if buffers[key.data]:
+                        lines.append(buffers[key.data])
+                    buffers[key.data] = b""
+                for line in lines:
+                    if len(line) > 1024 * 1024:
+                        raise ValueError("agent event exceeds limit")
+                    yield key.data, line.decode("utf-8")
+                if len(buffers[key.data]) > 1024 * 1024:
+                    raise ValueError("agent event exceeds limit")
+            # Keep policy audits running even when both pipes are idle.
+            yield "", ""
+    finally:
+        selector.close()
+
+
 def generate(agent: str, options: Dict[str, Any]):
     """Validate tools and final output while supervising the native CLI process."""
     model, effort = options.get("model"), options.get("effort", "")
@@ -66,43 +100,39 @@ def generate(agent: str, options: Dict[str, Any]):
             text=True,
             start_new_session=True,
         )
-    selector = selectors.DefaultSelector()
-    selector.register(process.stdout, selectors.EVENT_READ, "stdout")
-    selector.register(process.stderr, selectors.EVENT_READ, "stderr")
-    total = 0
+    display = ActivityStream()
+    lines = pipe_lines(process)
     try:
-        while selector.get_map():
-            for key, _mask in selector.select(timeout=0.2):
-                line = key.fileobj.readline(1024 * 1024 + 1)
-                if not line:
-                    selector.unregister(key.fileobj)
-                    continue
-                total += len(line)
-                if len(line) > 1024 * 1024 or total > 16 * 1024 * 1024:
-                    raise ValueError("agent event exceeds limit")
-                if key.data == "stderr":
-                    print("[cli] " + line.rstrip(), flush=True)
-                    adapter.check_stderr(line)
-                    if "hook" in line.lower() and any(word in line.lower() for word in ("fail", "error", "timeout", "timed out")):
-                        raise ValueError("agent policy hook failed")
-                    continue
-                event = None
-                try:
-                    event = json.loads(line)
-                    if completed:
-                        raise EventValidationError("Agent emitted events after completion")
-                    if not isinstance(event, dict):
-                        raise EventValidationError("Malformed agent event envelope")
-                    value = adapter.event(event)
-                except (ValueError, TypeError, AttributeError, KeyError) as error:
-                    reason = str(error) if isinstance(error, EventValidationError) else "Provider event rejected or malformed"
-                    print(diagnostic(event, agent, details.get("version"), reason), flush=True)
-                    raise ValueError(reason) from None
-                print(activity(event, agent), flush=True)
-                completed = adapter.is_complete(event)
-                if value:
-                    final = value
-            audit()
+        for source, line in lines:
+            if not source:
+                audit()
+                for rendered in display.flush(agent):
+                    print(rendered, flush=True)
+                continue
+            if source == "stderr":
+                print("[cli] " + line.rstrip(), flush=True)
+                adapter.check_stderr(line)
+                if "hook" in line.lower() and any(word in line.lower() for word in ("fail", "error", "timeout", "timed out")):
+                    raise ValueError("agent policy hook failed")
+                continue
+            event = None
+            try:
+                event = json.loads(line)
+                if completed:
+                    raise EventValidationError("Agent emitted events after completion")
+                if not isinstance(event, dict):
+                    raise EventValidationError("Malformed agent event envelope")
+                value = adapter.event(event)
+                rendered = display.render(event, agent)
+            except (ValueError, TypeError, AttributeError, KeyError) as error:
+                reason = str(error) if isinstance(error, EventValidationError) else "Provider event rejected or malformed"
+                print(diagnostic(event, agent, details.get("version"), reason), flush=True)
+                raise ValueError(reason) from None
+            if rendered is not None:
+                print(rendered, flush=True)
+            completed = adapter.is_complete(event)
+            if value:
+                final = value
         if process.wait() != 0 or not completed:
             raise ValueError("agent execution failed")
         final_response(final)
@@ -114,7 +144,7 @@ def generate(agent: str, options: Dict[str, Any]):
         print("ARISU_AUDIT " + json.dumps(records), flush=True)
         print("ARISU_RESULT " + json.dumps({"final": final}), flush=True)
     finally:
-        selector.close()
+        lines.close()
         if process.poll() is None:
             os.killpg(process.pid, signal.SIGTERM)
             try:

@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Stream Grok Prompt Workbench thoughts during generation and drain provider output promptly without waiting for a completed round.
 - Allow Grok Prompt Workbench generation while MCP startup is pending and report clearer, bounded provider validation errors.
 
 ## [1.2.3] - 2026-09-17

@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any, Dict, List
+import time
+from typing import Any, Dict, List, Optional, Set
 
 
 class EventValidationError(ValueError):
@@ -122,3 +123,99 @@ def activity(event: Dict[str, Any], provider: str = "") -> str:
     else:
         add("details", "Agent event: " + str(kind))
     return "ARISU_ACTIVITY " + json.dumps({"version": 1, "entries": entries}, ensure_ascii=False)
+
+
+class ActivityStream:
+    """Render bounded partial text snapshots with the completed message's stable IDs."""
+
+    def __init__(self):
+        self.message = ""
+        self.completed_message = ""
+        self.dirty: Set[int] = set()
+        self.blocks: Dict[int, Dict[str, Any]] = {}
+        self.updated: Dict[int, float] = {}
+
+    def render(self, event: Dict[str, Any], provider: str) -> Optional[str]:
+        if event.get("type") != "stream_event":
+            if event.get("type") == "result" and self.message:
+                raise EventValidationError("Grok completed with an unfinished partial message")
+            if event.get("type") == "assistant" and self.completed_message:
+                # Some backends learn the provider ID only at completion. Keep
+                # the ID already used by the partial display, not the per-line UUID.
+                event = {**event, "message": {**event["message"], "id": self.completed_message}}
+                self.completed_message = ""
+            return activity(event, provider)
+        partial = event["event"]
+        kind = partial["type"]
+        if kind == "message_start":
+            if self.message:
+                raise EventValidationError("Grok overlapping partial messages")
+            self.message = partial["message"]["id"]
+            self.completed_message = ""
+            self.dirty.clear()
+            self.blocks.clear()
+            self.updated.clear()
+            return None
+        if not self.message:
+            raise EventValidationError("Grok partial event without a message")
+        if kind == "message_stop":
+            if self.blocks:
+                raise EventValidationError("Grok partial message has unfinished blocks")
+            self.completed_message = self.message
+            self.message = ""
+            return None
+        if kind == "message_delta":
+            return None
+        index = partial["index"]
+        if kind == "content_block_start":
+            if index in self.blocks:
+                raise EventValidationError("Grok duplicate partial block")
+            self.blocks[index] = dict(partial["content_block"])
+        block = self.blocks.get(index)
+        if block is None:
+            raise EventValidationError("Grok partial event without a block")
+        field = {"thinking": "thinking", "text": "text"}.get(block["type"])
+        if kind == "content_block_delta":
+            delta = partial["delta"]
+            expected = {"thinking": ("thinking_delta", "signature_delta"), "text": ("text_delta",), "tool_use": ("input_json_delta",)}
+            if delta["type"] not in expected[block["type"]]:
+                raise EventValidationError("Grok partial delta does not match its block")
+            if field and field in delta:
+                block[field] += delta[field]
+                if len(block[field].encode("utf-8")) > 1024 * 1024:
+                    raise EventValidationError("Grok partial text exceeds limit")
+        if kind == "content_block_stop":
+            del self.blocks[index]
+        if not field or not block[field]:
+            return None
+        self.dirty.add(index)
+        return self.snapshot(index, block, provider, force=kind == "content_block_stop")
+
+    def flush(self, provider: str) -> List[str]:
+        """Flush coalesced text even when a provider pauses before the next event."""
+        records = [self.snapshot(index, self.blocks[index], provider) for index in list(self.dirty)]
+        return [record for record in records if record is not None]
+
+    def snapshot(self, index: int, block: Dict[str, Any], provider: str, force: bool = False) -> Optional[str]:
+        field = block["type"]
+        now = time.monotonic()
+        # Snapshots preserve credential redaction across delta boundaries. Limit
+        # repeated text/log overhead while staying below the UI's polling interval.
+        if not force and now - self.updated.get(index, float("-inf")) < 0.25:
+            return None
+        self.updated[index] = now
+        self.dirty.discard(index)
+        return "ARISU_ACTIVITY " + json.dumps(
+            {
+                "version": 1,
+                "entries": [
+                    {
+                        "id": provider + ":" + self.message + ":" + str(index),
+                        "kind": "analysis" if field == "thinking" else "agent",
+                        "text": block[field],
+                        "details": "",
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        )

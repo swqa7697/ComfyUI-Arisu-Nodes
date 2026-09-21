@@ -22,7 +22,8 @@ def inspect() -> Dict[str, Any]:
     version = run(["grok", "--version"])
     help_text = run(["grok", "--help"])
     if version.returncode or not all(
-        flag in help_text.stdout for flag in ("--tools", "--disable-web-search", "--system-prompt-override", "--prompt-file")
+        flag in help_text.stdout
+        for flag in ("--tools", "--disable-web-search", "--system-prompt-override", "--prompt-file", "--include-partial-messages")
     ):
         raise ValueError("Grok policy controls are unavailable")
     result = run(["grok", "--no-auto-update", "inspect", "--json"])
@@ -116,6 +117,7 @@ def command(model: str, effort: str, prompt: str, assets: List[Dict[str, Any]]) 
         model,
         "--output-format",
         "streaming-messages-json",
+        "--include-partial-messages",
         "--permission-mode",
         "dontAsk",
         "--no-subagents",
@@ -213,6 +215,49 @@ def _tool_results(content: List[Dict[str, Any]]):
             raise EventValidationError("Grok malformed tool result content")
 
 
+def _partial(value: Dict[str, Any]):
+    """Validate display deltas; completed messages still authorize every tool call."""
+    partial = value.get("event")
+    if not isinstance(partial, dict):
+        raise EventValidationError("Grok malformed partial event")
+    kind = partial.get("type")
+    if kind == "message_start":
+        message = partial.get("message")
+        if not isinstance(message, dict) or not isinstance(message.get("id"), str) or not message["id"] or message.get("content") != []:
+            raise EventValidationError("Grok malformed partial message")
+    elif kind in ("content_block_start", "content_block_delta", "content_block_stop"):
+        if type(partial.get("index")) is not int or partial["index"] < 0:
+            raise EventValidationError("Grok malformed partial index")
+        if kind == "content_block_start":
+            block = partial.get("content_block")
+            if not isinstance(block, dict):
+                raise EventValidationError("Grok malformed partial block")
+            if block.get("type") == "tool_use":
+                if block.get("name") not in ("search_tool", "use_tool", "workbench__get_context", "workbench__read_skill"):
+                    raise EventValidationError("Grok attempted a prohibited tool")
+                if not isinstance(block.get("id"), str) or block.get("input") != {}:
+                    raise EventValidationError("Grok malformed partial tool")
+            else:
+                _assistant([block])
+        elif kind == "content_block_delta":
+            delta = partial.get("delta")
+            if not isinstance(delta, dict):
+                raise EventValidationError("Grok malformed partial delta")
+            field = {
+                "text_delta": "text",
+                "thinking_delta": "thinking",
+                "signature_delta": "signature",
+                "input_json_delta": "partial_json",
+            }.get(delta.get("type"))
+            if field is None or not isinstance(delta.get(field), str):
+                raise EventValidationError("Grok unsupported partial delta")
+    elif kind == "message_delta":
+        if not isinstance(partial.get("delta"), dict):
+            raise EventValidationError("Grok malformed partial message delta")
+    elif kind != "message_stop":
+        raise EventValidationError("Grok unsupported partial event")
+
+
 def event(value: Dict[str, Any]) -> str:
     """Validate recognized events without treating extra metadata as actions."""
     kind = value.get("type")
@@ -220,6 +265,9 @@ def event(value: Dict[str, Any]) -> str:
         raise EventValidationError("Grok malformed event type")
     if kind == "system" and value.get("subtype") == "init":
         _startup(value)
+        return ""
+    if kind == "stream_event":
+        _partial(value)
         return ""
     if kind == "assistant":
         return _assistant(_content(value))

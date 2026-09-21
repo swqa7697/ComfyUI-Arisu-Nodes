@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import builtins
 import importlib
 import importlib.util
 import json
@@ -506,6 +507,7 @@ def test_mcp_manifest_images_and_unlisted_or_escaping_assets(
         assert json.loads(blocks[1]["text"])["note"] == "coat"
         assert blocks[2]["mimeType"] == "image/webp" and base64.b64decode(blocks[2]["data"]) == original
         assert grok_command[grok_command.index("--tools") + 1] == "search_tool,use_tool"
+        assert "--include-partial-messages" in grok_command
         # The authenticated catalog remains usable at its bound; larger or linked files fail closed.
         catalog = tmp_path / "models_cache.json"
         valid = json.dumps({"models": [{"slug": "test"}]}).encode()
@@ -679,6 +681,108 @@ def test_mcp_manifest_images_and_unlisted_or_escaping_assets(
                 runner.generate("grok", {"model": "test"})
             assert "ARISU_RESULT " not in capsys.readouterr().out
 
+    # A CLI burst must be visible before the provider is allowed to finish.
+    # An incomplete stderr line must not block stdout, and UTF-8 may span reads.
+    acknowledged = tmp_path / "thought-visible"
+    continued = tmp_path / "thought-continued"
+
+    def partial(kind: str, **fields: Any) -> Dict[str, Any]:
+        return {"type": "stream_event", "event": {"type": kind, **fields}}
+
+    start = partial("message_start", message={"id": "msg-live", "content": []})
+    block = partial("content_block_start", index=0, content_block={"type": "thinking", "thinking": ""})
+    delta = partial("content_block_delta", index=0, delta={"type": "thinking_delta", "thinking": "Live thought 雪"})
+    stop = partial("content_block_stop", index=0)
+    message_stop = partial("message_stop")
+    full = {
+        "type": "assistant",
+        "message": {"id": "provider-final-id", "content": [{"type": "thinking", "thinking": "Live thought 雪 continued"}]},
+    }
+    burst = "".join(json.dumps(item, ensure_ascii=False) + "\n" for item in (init, start, block, delta)).encode()
+    continuation = json.dumps(partial("content_block_delta", index=0, delta={"type": "thinking_delta", "thinking": " continued"})) + "\n"
+    tail = "".join(json.dumps(item) + "\n" for item in (stop, message_stop, full, result))
+    split = burst.index("雪".encode()) + 1
+    script = (
+        "import os, time\nfrom pathlib import Path\n"
+        + "os.write(2, b'partial diagnostic')\n"
+        + "os.write(1, "
+        + repr(burst[:split])
+        + ")\n"
+        + "time.sleep(0.05)\n"
+        + "os.write(1, "
+        + repr(burst[split:])
+        + ")\n"
+        + "deadline = time.monotonic() + 5\n"
+        + "while not Path("
+        + repr(str(acknowledged))
+        + ").exists():\n"
+        + "    if time.monotonic() > deadline: raise SystemExit(9)\n"
+        + "    time.sleep(0.01)\n"
+        + "os.write(1, "
+        + repr(continuation.encode())
+        + ")\n"
+        + "while not Path("
+        + repr(str(continued))
+        + ").exists():\n"
+        + "    if time.monotonic() > deadline: raise SystemExit(10)\n"
+        + "    time.sleep(0.01)\n"
+        + "os.write(2, b' done\\n')\n"
+        + "os.write(1, "
+        + repr(tail.encode())
+        + ")\n"
+    )
+
+    def visible_print(value: str, **kwargs: Any):
+        builtins.print(value, **kwargs)
+        if "Live thought 雪" in value:
+            acknowledged.touch()
+        if "Live thought 雪 continued" in value:
+            continued.touch()
+
+    with monkeypatch.context() as patches:
+        patches.setattr(runner, "print", visible_print, raising=False)
+        patches.setattr(runner, "audit", lambda: reads)
+        patches.setattr(grok_provider, "command", lambda *args: [sys.executable, "-c", script])
+        runner.generate("grok", {"model": "test"})
+    output = capsys.readouterr().out
+    assert acknowledged.exists() and continued.exists() and "ARISU_RESULT " in output
+    thoughts = [
+        json.loads(line.removeprefix("ARISU_ACTIVITY "))["entries"] for line in output.splitlines() if line.startswith("ARISU_ACTIVITY ")
+    ]
+    thoughts = [entry for entries in thoughts for entry in entries if entry["kind"] == "analysis"]
+    assert thoughts[0]["text"] == "Live thought 雪"
+    assert thoughts[-1]["text"] == "Live thought 雪 continued"
+    assert {entry["id"] for entry in thoughts} == {"grok:msg-live:0"}
+    assert "[cli] partial diagnostic done" in output
+
+    # Partial tool payloads never become display text or bypass full-call policy checks.
+    display = runner.ActivityStream()
+    tool_start = partial("content_block_start", index=1, content_block={"type": "tool_use", "id": "call", "name": "use_tool", "input": {}})
+    for item in (
+        start,
+        tool_start,
+        partial("content_block_delta", index=1, delta={"type": "input_json_delta", "partial_json": '{"private":"payload"}'}),
+        partial("content_block_stop", index=1),
+        message_stop,
+    ):
+        assert grok_provider.event(item) == ""
+        assert display.render(item, "grok") is None
+    with pytest.raises(runner.EventValidationError):
+        grok_provider.event(
+            {"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "use_tool", "input": {"private": "payload"}}]}}
+        )
+    for invalid in (
+        partial("new_event"),
+        partial("content_block_delta", index=-1, delta={}),
+        partial("content_block_delta", index=0, delta={"type": "thinking_delta", "thinking": []}),
+        partial("content_block_start", index=0, content_block={"type": "tool_use", "name": "bash"}),
+        partial("content_block_start", index=0, content_block={"type": "image", "data": "private-image"}),
+    ):
+        with pytest.raises(runner.EventValidationError):
+            grok_provider.event(invalid)
+    with pytest.raises(runner.EventValidationError):
+        runner.ActivityStream().render(delta, "grok")
+
     # Malformed envelopes fail deliberately, and failure reasons distinguish the cause.
     reasons = set()
     for invalid in (
@@ -717,7 +821,7 @@ def test_mcp_manifest_images_and_unlisted_or_escaping_assets(
         raise AssertionError("rejected event reached activity formatting")
 
     with monkeypatch.context() as patches:
-        patches.setattr(runner, "activity", forbidden_activity)
+        patches.setattr(runner.ActivityStream, "render", forbidden_activity)
         for selected, invalid in (
             (grok_provider, {**init, "tools": ["bash"], "prompt": "private-prompt"}),
             (provider, {"type": "item.started", "item": {"type": "command_execution", "command": "private-command"}}),

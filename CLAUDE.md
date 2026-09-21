@@ -174,7 +174,7 @@ If you reach for an inline import for any other reason (avoiding work, hiding a 
 
 ## Changelog and versioning
 
-`CHANGELOG.md` follows Keep a Changelog: user-visible changes only, one imperative bullet each under `[Unreleased]` in Added / Changed / Deprecated / Removed / Fixed / Security; skip refactors, formatting, and dependency bumps. `pyproject.toml`'s `version` is the only version file. Release flow, each step refusing when its preconditions fail (documented in `scripts/release_*.py`):
+`CHANGELOG.md` follows Keep a Changelog: user-visible changes only, one imperative bullet each under `[Unreleased]` in Added / Changed / Deprecated / Removed / Fixed / Security; skip refactors, formatting, and dependency bumps. When adding entries, keep adjacent bullets together without blank lines and do not introduce redundant blank lines between sections. `pyproject.toml`'s `version` is the only version file. Release flow, each step refusing when its preconditions fail (documented in `scripts/release_*.py`):
 1. `git switch -c release/X.Y.Z` from an up-to-date `main`.
 2. `make bump-patch|minor|major` rewrites the version, renames `[Unreleased]` to `[X.Y.Z] - YYYY-MM-DD` with a new empty `[Unreleased]` above it, and runs `uv lock`; no git writes.
 3. `make release-commit [YES=1]` commits `release arisu_nodes: X.Y.Z` and pushes the branch; only `pyproject.toml`, `CHANGELOG.md`, and `uv.lock` may have changed.
