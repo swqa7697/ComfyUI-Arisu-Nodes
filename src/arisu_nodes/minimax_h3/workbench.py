@@ -78,10 +78,17 @@ class Generation:
     roots: Dict[str, str] = field(default_factory=dict)
     queue_finished: Optional[Callable[[], bool]] = None
     created: float = field(default_factory=time.monotonic)
+    generation_started: Optional[float] = None
+    generation_finished: Optional[float] = None
 
     def public(self) -> Dict[str, Any]:
         """Return UI state, excluding physical paths and runtime capabilities."""
-        return {"id": self.id, "state": self.state, "error": self.error, "draft": self.draft}
+        state = self.state
+        elapsed = None
+        if self.generation_started is not None:
+            end = self.generation_finished if self.generation_finished is not None else time.monotonic()
+            elapsed = max(0, int((end - self.generation_started) * 1000))
+        return {"id": self.id, "state": state, "error": self.error, "draft": self.draft, "generation_elapsed_ms": elapsed}
 
 
 def _keyframe(assets: List[Dict[str, Any]], role: str) -> Optional[Dict[str, Any]]:
@@ -433,10 +440,14 @@ class Workbench:
             job.directory.chmod(0o755)
             for path in job.directory.rglob("*"):
                 path.chmod(0o755 if path.is_dir() else path.stat().st_mode | 0o444)
+            job.generation_started = time.monotonic()
             job.state = "generating"
-            job.draft = finalized_markdown(
-                self.agents.generate(job.options["agent"], job.directory, staged_skill, job.selection, job.cancelled, job.deadline)
-            )
+            try:
+                job.draft = finalized_markdown(
+                    self.agents.generate(job.options["agent"], job.directory, staged_skill, job.selection, job.cancelled, job.deadline)
+                )
+            finally:
+                job.generation_finished = time.monotonic()
             if job.cancelled.is_set():
                 raise ValueError("generation cancelled")
             job.state = "complete"

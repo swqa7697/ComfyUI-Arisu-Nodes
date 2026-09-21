@@ -307,9 +307,11 @@ class FixtureServer:
         if path == "/arisu/workbench/jobs/fixture-job":
             self.polls += 1
             if self.fail_generation:
-                return web.json_response({"state": "failed", "error": "Simulated provider unavailable"})
+                return web.json_response({"state": "failed", "error": "Simulated provider unavailable", "generation_elapsed_ms": 12500})
             return web.json_response(
-                {"state": "generating"} if self.hold_generation or self.polls < 3 else {"state": "complete", "draft": DRAFT}
+                {"state": "generating", "generation_elapsed_ms": 42000}
+                if self.hold_generation or self.polls < 3
+                else {"state": "complete", "draft": DRAFT, "generation_elapsed_ms": 78000}
             )
         if path in ("/arisu/workbench/release", "/arisu/workbench/cancel", "/arisu/workbench/action") and method == "POST":
             return web.json_response({"accepted": True})

@@ -7,6 +7,7 @@ import json
 import threading
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Dict
 
 import pytest
@@ -267,6 +268,7 @@ def test_workbench_stages_crops_refuses_escapes_and_cancellation_retains_guard(t
     worker.join(2)
     assert not worker.is_alive() and not owner.agents.guard.locked() and job.state == "cancelled"
     assert not job.directory.exists()
+    assert job.public()["generation_elapsed_ms"] is None
 
     # Complete the real orchestration with a CPU worker, then reuse its staged-media cache.
     marker = poison_parent(tmp_path / "hostile", monkeypatch)
@@ -280,7 +282,20 @@ def test_workbench_stages_crops_refuses_escapes_and_cancellation_retains_guard(t
     ready = {"docker": True, "agents": {"codex": {"ready": True, "selection": {"model": "test", "effort": "medium"}}}}
     monkeypatch.setattr(owner.agents, "status", lambda: ready)
 
+    clock = [1000.0]
+    monkeypatch.setattr(
+        workbench, "time", SimpleNamespace(monotonic=lambda: clock[0], time=workbench.time.time, sleep=workbench.time.sleep)
+    )
+
     def generated(agent: str, directory: Path, skill: Path, *args: Any) -> str:
+        assert prepared_job.public()["generation_elapsed_ms"] == 0
+        clock[0] += 42.25
+        assert prepared_job.public()["generation_elapsed_ms"] == 42250
+        clock[0] += 35.75
+        if index == 2:
+            raise ValueError("provider failed")
+        if index == 3:
+            prepared_job.cancelled.set()
         context = json.loads((directory / "context.json").read_text())
         assert context["version"] == 3 and context["keyframes"] == {"first": None, "last": None}
         assert context["motion"]["present"] is False and context["motion"]["stills"] == []
@@ -295,16 +310,22 @@ def test_workbench_stages_crops_refuses_escapes_and_cancellation_retains_guard(t
         return "```markdown\nA red coat in the rain.\n```"
 
     monkeypatch.setattr(owner.agents, "generate", generated)
-    for index in range(2):
+    for index in range(4):
         options = workbench_options(
             {"source_id": "studio", "reference_notes": {"studio:ref:input:reference.png": "red coat" if index == 0 else "blue coat"}}
         )
         prepared_job = owner.create("w", "active", options, {"w": {"inputs": {}}})
+        clock[0] += 90
+        assert prepared_job.public()["generation_elapsed_ms"] is None
         prepared_job.resources = ResourceBundle(images=(image,))
         prepared_job.roots = {"input": str(source)}
         prepared_job.prepared.set()
         owner.execute(prepared_job)
-        assert prepared_job.state == "complete" and prepared_job.draft == "A red coat in the rain."
+        assert prepared_job.state == ("failed" if index == 2 else "cancelled" if index == 3 else "complete")
+        if index < 2:
+            assert prepared_job.draft == "A red coat in the rain."
+        clock[0] += 120
+        assert prepared_job.public()["generation_elapsed_ms"] == 78000
         assert not prepared_job.directory.exists() and not owner.agents.guard.locked()
         if index == 0:
 

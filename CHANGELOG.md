@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Show elapsed agent generation time in Prompt Workbench and Generation Results, retaining the final duration.
+
 ### Fixed
 
 - Stream Grok Prompt Workbench thoughts during generation and drain provider output promptly without waiting for a completed round.

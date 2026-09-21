@@ -17,7 +17,7 @@ const find = (root, label) =>
   descendants(root).find((item) => item.ariaLabel === label) ?? descendants(root).find((item) => item.textContent === label);
 const settle = () => new Promise((resolve) => setImmediate(resolve));
 
-test('Workbench keeps finalized text independent of setup, source notes and reviewed or late drafts', async () => {
+test('Workbench keeps finalized text independent of setup, source notes and reviewed or late drafts', async (t) => {
   resetApp(makeGraph());
   resetApi();
   resetDom();
@@ -227,7 +227,10 @@ test('Workbench keeps finalized text independent of setup, source notes and revi
     node.arisuRefreshSources();
     await settle();
 
-    api.responses.push(jsonResponse(202, { id: 'job1' }), jsonResponse(200, { state: 'complete', draft: 'first draft' }));
+    api.responses.push(
+      jsonResponse(202, { id: 'job1' }),
+      jsonResponse(200, { state: 'complete', draft: 'first draft', generation_elapsed_ms: 78000 }),
+    );
     find(panel(node), 'Generate Prompt').onclick();
     await settle();
     await settle();
@@ -239,6 +242,7 @@ test('Workbench keeps finalized text independent of setup, source notes and revi
     );
     assert(!find(body, 'Output Prompt'));
     assert.equal(toasts.at(-1).severity, 'success');
+    assert(find(panel(node), ' · Agent time 1:18'));
     const beforeQuickApply = changes;
     find(panel(node), 'Apply Output').onclick();
     assert.equal(changes, beforeQuickApply + 1);
@@ -246,13 +250,17 @@ test('Workbench keeps finalized text independent of setup, source notes and revi
     widget(node, 'finalized_prompt').value = 'manual';
     assert.equal(widget(node, 'finalized_prompt').value, 'manual');
 
-    api.responses.push(jsonResponse(202, { id: 'job2' }), jsonResponse(200, { state: 'complete', draft: 'second draft' }));
+    api.responses.push(
+      jsonResponse(202, { id: 'job2' }),
+      jsonResponse(200, { state: 'complete', draft: 'second draft', generation_elapsed_ms: 3661999 }),
+    );
     find(panel(node), 'Generate Prompt').onclick();
     await settle();
     await settle();
     api.responses.push(jsonResponse(200, { session: 'job2', lines: [], cursor: 0 }));
     find(panel(node), 'Generation Results').onclick();
     await settle();
+    assert(find(body, 'Agent time 1:01:01'));
     const output = find(body, 'Output Prompt');
     output.value = '';
     output.oninput();
@@ -266,13 +274,17 @@ test('Workbench keeps finalized text independent of setup, source notes and revi
     assert.equal(widget(node, 'finalized_prompt').value, 'edited draft');
     assert.equal(changes, before + 1);
 
-    api.responses.push(jsonResponse(202, { id: 'failed' }), jsonResponse(200, { state: 'failed', error: 'Provider failed' }));
+    api.responses.push(
+      jsonResponse(202, { id: 'failed' }),
+      jsonResponse(200, { state: 'failed', error: 'Provider failed', generation_elapsed_ms: 12000 }),
+    );
     find(panel(node), 'Generate Prompt').onclick();
     await settle();
     await settle();
     assert.equal(toasts.at(-1).severity, 'error');
     assert(!find(panel(node), 'Apply Output'));
     assert(!find(body, 'Output Prompt'));
+    assert(find(panel(node), ' · Agent time 0:12'));
 
     let finish;
     api.responses.push(
@@ -382,11 +394,12 @@ test('Workbench keeps finalized text independent of setup, source notes and revi
     widget(node, 'finalized_prompt').value = 'restored';
     widget(node, 'prepare_job').value = 'imported';
     definition.prototype.onConfigure.call(node);
-    finish(jsonResponse(200, { state: 'complete', draft: 'late draft' }));
+    finish(jsonResponse(200, { state: 'complete', draft: 'late draft', generation_elapsed_ms: 42000 }));
     await settle();
     assert.equal(widget(node, 'prepare_job').value, '');
     assert.equal(widget(node, 'finalized_prompt').value, 'restored');
     assert.equal(find(body, 'Output Prompt').value, 'late draft');
+    assert(find(body, 'Agent time 0:42'));
     assert(find(body, 'Generation Activity'));
     find(body, 'Close').onclick();
     assert(!find(panel(node), 'Generation Results').disabled);
@@ -422,6 +435,7 @@ test('Workbench keeps finalized text independent of setup, source notes and revi
     extensionNamed('Arisu.MiniMaxH3.PromptWorkbench').init();
     await app.loadGraphData(original, false, false, workflow);
     assert(find(panel(node), 'Apply Output'));
+    assert(find(panel(node), ' · Agent time 0:42'));
     assert.equal(releases(), beforeEdits);
 
     let finishRequest;
@@ -438,7 +452,7 @@ test('Workbench keeps finalized text independent of setup, source notes and revi
     await settle();
     assert(!find(panel(node), 'Apply Output'));
     assert(!find(panel(node), 'Generate Prompt').disabled);
-    api.responses.push(jsonResponse(200, { state: 'complete', draft: 'Finished in the other tab' }));
+    api.responses.push(jsonResponse(200, { state: 'complete', draft: 'Finished in the other tab', generation_elapsed_ms: 9000 }));
     finishRequest(jsonResponse(202, { id: 'background-job' }));
     await settle();
     await settle();
@@ -448,7 +462,8 @@ test('Workbench keeps finalized text independent of setup, source notes and revi
     find(panel(node), 'Apply Output').onclick();
     assert.equal(widget(node, 'finalized_prompt').value, 'Finished in the other tab');
 
-    // Cancellation before the POST returns releases that late ID and never starts polling it.
+    assert(find(panel(node), ' · Agent time 0:09'));
+    // Cancellation before the POST returns releases the late ID and polls until confirmed.
     api.responses.push(
       () =>
         new Promise((resolve) => {
@@ -457,11 +472,50 @@ test('Workbench keeps finalized text independent of setup, source notes and revi
     );
     find(panel(node), 'Generate Prompt').onclick();
     find(panel(node), 'Cancel').onclick();
-    api.responses.push(jsonResponse(200, { released: true }));
+    assert(find(panel(node), 'Cancelling…'));
+    assert(!find(panel(node), ' · Agent time 0:09'));
+    api.responses.push(jsonResponse(200, { released: true }), jsonResponse(200, { state: 'cancelled', generation_elapsed_ms: null }));
     finishRequest(jsonResponse(202, { id: 'cancelled-before-id' }));
     await settle();
-    assert(!api.calls.some((call) => call.route.endsWith('/jobs/cancelled-before-id')));
+    assert(api.calls.some((call) => call.route.endsWith('/jobs/cancelled-before-id')));
+    assert(!find(panel(node), 'Generate Prompt').disabled);
     assert.equal(releases(), beforeEdits + 1);
+
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    api.responses.push(jsonResponse(202, { id: 'timed' }), jsonResponse(200, { state: 'preparing_media', generation_elapsed_ms: null }));
+    find(panel(node), 'Generate Prompt').onclick();
+    await settle();
+    assert.equal(descendants(panel(node)).find((item) => item.className === 'generation-time').textContent, '');
+    const direction = find(panel(node), 'Requirements');
+    for (const elapsed of [0, 42000, 43000]) {
+      api.responses.push(jsonResponse(200, { state: 'generating', generation_elapsed_ms: elapsed }));
+      t.mock.timers.tick(750);
+      await settle();
+      assert.equal(find(panel(node), 'Requirements'), direction);
+      assert(find(panel(node), ` · Agent time 0:${String(elapsed / 1000).padStart(2, '0')}`));
+    }
+    api.responses.push(jsonResponse(503, {}));
+    t.mock.timers.tick(750);
+    await settle();
+    assert(find(panel(node), ' · Agent time 0:43 (updates unavailable)'));
+    api.responses.push(jsonResponse(202, { id: 'cancel-timed' }), jsonResponse(200, { state: 'generating', generation_elapsed_ms: 1500 }));
+    find(panel(node), 'Generate Prompt').onclick();
+    await settle();
+    api.responses.push(jsonResponse(200, { released: true }));
+    find(panel(node), 'Cancel').onclick();
+    await settle();
+    assert(find(panel(node), 'Generate Prompt').disabled);
+    api.responses.push(jsonResponse(200, { state: 'generating', generation_elapsed_ms: 2200 }));
+    t.mock.timers.tick(750);
+    await settle();
+    assert(find(panel(node), 'Cancelling…'));
+    assert(find(panel(node), ' · Agent time 0:02'));
+    api.responses.push(jsonResponse(200, { state: 'cancelled', generation_elapsed_ms: 3300 }));
+    t.mock.timers.tick(750);
+    await settle();
+    assert(find(panel(node), ' · Agent time 0:03'));
+    assert(!find(panel(node), 'Generate Prompt').disabled);
+    t.mock.timers.reset();
 
     // Same IDs in an imported workflow cannot inherit a previous session.
     await app.loadGraphData(original, true, true, null);
@@ -469,7 +523,7 @@ test('Workbench keeps finalized text independent of setup, source notes and revi
     app.extensionManager.workflow.openWorkflows = [app.extensionManager.workflow.activeWorkflow];
     api.responses.push(jsonResponse(200, { released: true }));
     await new Promise((resolve) => setTimeout(resolve, 1550));
-    assert.equal(releases(), beforeEdits + 2);
+    assert.equal(releases(), beforeEdits + 3);
     api.responses.push(
       jsonResponse(202, { id: 'removed-job' }),
       () =>
@@ -483,7 +537,7 @@ test('Workbench keeps finalized text independent of setup, source notes and revi
     definition.prototype.onRemoved.call(node);
     finish(jsonResponse(200, { state: 'complete', draft: 'Must not appear after deletion' }));
     await settle();
-    assert.equal(releases(), beforeEdits + 3);
+    assert.equal(releases(), beforeEdits + 4);
     assert(!find(body, 'Must not appear after deletion'));
   } finally {
     api.responses.push(jsonResponse(200, { released: true }));

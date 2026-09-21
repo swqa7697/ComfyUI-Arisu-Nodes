@@ -372,6 +372,7 @@ def test_prompt_workbench():
                     server.hold_generation = True
                     page.get_by_role("button", name="Generate Prompt", exact=True).click()
                     expect(page.locator(".arisu-workbench .status")).to_have_text("Generating prompt…")
+                    expect(page.locator(".arisu-workbench .generation-time")).to_have_text(" · Agent time 0:42")
                     screenshot(page, name, "generating")
                     # Context and output edits, including real frontend Undo/Redo, retain the job.
                     captured = server.generation_requests[-1]
@@ -399,6 +400,10 @@ def test_prompt_workbench():
                     page.emulate_media(reduced_motion="reduce")
                     page.get_by_role("button", name="Generation Results", exact=True).click()
                     activity = page.get_by_role("dialog", name="Generation Results", exact=True)
+                    expect(activity.locator("header .generation-time")).to_have_text("Agent time 0:42")
+                    activity.get_by_role("tab", name="Output Prompt", exact=True).click()
+                    expect(activity.locator("header .generation-time")).to_be_visible()
+                    activity.get_by_role("tab", name="Activity", exact=True).click()
                     terminal = activity.get_by_label("Generation Activity", exact=True)
                     expect(terminal).to_contain_text("workbench.read_skill")
                     assert len(terminal.inner_text()) > 10000
@@ -454,6 +459,8 @@ def test_prompt_workbench():
                     server.hold_generation = False
                     expect(activity.locator(".activity-state")).to_have_text("Output ready to apply")
                     expect(page.get_by_role("button", name="Generation Results", exact=True)).to_be_enabled()
+                    expect(activity.locator("header .generation-time")).to_have_text("Agent time 1:18")
+                    expect(page.locator(".arisu-workbench .generation-time")).to_have_text(" · Agent time 1:18")
                     screenshot(page, name, "activity-complete")
                     activity.get_by_role("button", name="Close", exact=True).click()
                     expect(page.get_by_role("dialog", name="Generation Results", exact=True)).to_have_count(0)

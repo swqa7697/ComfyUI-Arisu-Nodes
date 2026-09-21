@@ -67,6 +67,7 @@ const STYLE = `
  background:var(--surface);padding:8px 12px;min-height:34px;cursor:pointer;transition:background-color 140ms ease,transform 100ms ease;}
 .arisu-workbench button:enabled:hover{border-color:var(--accent);}.arisu-workbench button:enabled:active{transform:translateY(1px);}
 .arisu-workbench button:disabled{opacity:.5;cursor:default;transform:none;}
+.arisu-workbench .status-row{font-size:11px;color:var(--label);min-height:16px;overflow-wrap:anywhere;}
 .arisu-workbench .status{font-size:11px;color:var(--label);min-height:16px;overflow-wrap:anywhere;}
 .arisu-workbench .hint{font-size:11px;color:var(--label);padding:4px 0;}
 .arisu-workbench .review{border-color:var(--accent);}.arisu-workbench .footer{margin-top:auto;padding:8px 4px 2px;border-top:1px solid var(--line);}
@@ -200,13 +201,43 @@ function updateRun(run) {
   run.activity?.refreshOutput();
 }
 
-function cancelGeneration(run) {
-  run.epoch++;
-  if (run.job) void workbenchRequest('/release', { id: run.job }).catch(() => {});
-  run.job = null;
-  run.running = false;
-  run.status = 'Generation cancelled';
+async function cancelGeneration(run) {
+  if (run.cancelling) return;
+  run.cancelling = true;
+  run.status = 'Cancelling…';
   updateRun(run);
+  if (!run.job) return;
+  const epoch = run.epoch;
+  try {
+    await workbenchRequest('/release', { id: run.job });
+  } catch (error) {
+    if (run.disposed || run.epoch !== epoch || !run.running) return;
+    run.cancelling = false;
+    run.status = error.message;
+    notify('error', error.message);
+    updateRun(run);
+  }
+}
+
+function generationTime(run) {
+  if (run.elapsedMs == null) return '';
+  const seconds = Math.floor(run.elapsedMs / 1000);
+  const minutes = Math.floor(seconds / 60);
+  const duration =
+    minutes < 60
+      ? `${minutes}:${String(seconds % 60).padStart(2, '0')}`
+      : `${Math.floor(minutes / 60)}:${String(minutes % 60).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
+  return `Agent time ${duration}${run.timingUnavailable ? ' (updates unavailable)' : ''}`;
+}
+
+function refreshProgress(run) {
+  const state = nodes.get(run.node);
+  if (state?.run === run) {
+    if (state.statusElement?.textContent !== run.status) state.statusElement.textContent = run.status;
+    const time = generationTime(run);
+    if (state.timeElement) state.timeElement.textContent = time ? ` · ${time}` : '';
+  }
+  run.activity?.refreshOutput();
 }
 
 function disposeSession(run) {
@@ -313,9 +344,13 @@ async function generate(node) {
   run.activityJob = null;
   run.activity?.close();
   run.running = true;
+  run.cancelling = false;
+  run.elapsedMs = null;
+  run.timingUnavailable = false;
   run.status = 'Preparing workflow…';
   const epoch = run.epoch;
   const current = () => !run.disposed && run.epoch === epoch;
+  let terminal = false;
   try {
     // Capture everything in one synchronous turn. Edits after this point belong to the next Generate.
     const snapshot = sourceSnapshot(node);
@@ -343,32 +378,41 @@ async function generate(node) {
     }
     run.job = response.id;
     run.activityJob = response.id;
+    if (run.cancelling) {
+      run.cancelling = false;
+      await cancelGeneration(run);
+    }
     while (current()) {
       const response = await api.fetchApi(`/arisu/workbench/jobs/${run.job}`);
       if (!response.ok) throw new Error('Generation job is unavailable.');
       const job = await response.json();
       if (!current()) return;
+      if (Number.isFinite(job.generation_elapsed_ms) && job.generation_elapsed_ms >= 0) run.elapsedMs = job.generation_elapsed_ms;
+      terminal = ['complete', 'failed', 'cancelled'].includes(job.state);
       run.status =
-        {
-          preparing: 'Loading motion context…',
-          preparing_media: 'Preparing selected references…',
-          generating: 'Generating prompt…',
-          complete: 'Output ready to apply',
-          cancelled: 'Generation cancelled',
-        }[job.state] ?? job.state;
+        run.cancelling && !terminal
+          ? 'Cancelling…'
+          : ({
+              preparing: 'Loading motion context…',
+              preparing_media: 'Preparing selected references…',
+              generating: 'Generating prompt…',
+              complete: 'Output ready to apply',
+              cancelled: 'Generation cancelled',
+            }[job.state] ?? job.state);
       if (job.state === 'complete') {
         run.draft = job.draft;
         run.hasOutput = true;
         notify('success', 'Prompt ready. Open Generation results to review it, or choose Apply output.');
         break;
       }
-      if (job.state === 'failed' || job.state === 'cancelled') throw new Error(job.error || run.status);
-      const state = nodes.get(run.node);
-      if (state?.statusElement) state.statusElement.textContent = run.status;
+      if (job.state === 'cancelled') break;
+      if (job.state === 'failed') throw new Error(job.error || run.status);
+      refreshProgress(run);
       await wait(750);
     }
   } catch (error) {
     if (current()) {
+      run.timingUnavailable = !terminal;
       run.status = error.message;
       notify('error', error.message);
     }
@@ -474,6 +518,7 @@ function render(node) {
           job: run.activityJob,
           running: run.running,
           message: run.status,
+          generationTime: generationTime(run),
           draft: run.draft,
           hasOutput: run.hasOutput,
           applied: run.hasOutput && run.draft === value(run.node, 'finalized_prompt'),
@@ -499,9 +544,10 @@ function render(node) {
   if (run.running)
     actions.unshift(
       el('button', {
-        textContent: 'Cancel',
+        textContent: run.cancelling ? 'Cancelling…' : 'Cancel',
+        disabled: run.cancelling,
         onclick: () => {
-          cancelGeneration(run);
+          void cancelGeneration(run);
           render(node);
         },
       }),
@@ -516,13 +562,16 @@ function render(node) {
     });
     actions.unshift(state.applyButton);
   }
-  const statusElement = el('div', {
+  const statusElement = el('span', {
     className: `status${run.running ? ' running' : ''}`,
     role: 'status',
     ariaLive: 'polite',
     textContent: run.status || (ready ? 'Ready' : 'Complete agent setup to generate.'),
   });
   state.statusElement = statusElement;
+  const time = generationTime(run);
+  state.timeElement = el('span', { className: 'generation-time', textContent: time ? ` · ${time}` : '', ariaLive: 'off' });
+  const statusRow = el('div', { className: 'status-row' }, [statusElement, state.timeElement]);
   const left = el('div', { className: 'generation' }, [
     el('div', { className: 'section-title', textContent: 'Prompt Direction' }),
     el('fieldset', { className: 'generation-fields', disabled: !state.agents?.docker, onwheel: keepScrollWheel }, [
@@ -551,7 +600,7 @@ function render(node) {
       ]),
       references,
     ]),
-    el('div', { className: 'footer' }, [statusElement, el('div', { className: 'actions' }, actions)]),
+    el('div', { className: 'footer' }, [statusRow, el('div', { className: 'actions' }, actions)]),
   ]);
   const final = textField('finalized_prompt', 'Finalized Prompt', true, 'Write a prompt here, or generate a draft to review…');
   final.className = 'final';
