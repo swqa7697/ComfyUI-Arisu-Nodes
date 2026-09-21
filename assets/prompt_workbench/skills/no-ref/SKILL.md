@@ -23,7 +23,7 @@ This skill writes T2VA / I2VA / FL2VA / L2VA only. Keep that field order even if
    - `non_diegetic_music:`
 3. Read `references/base-en.txt` and follow its shot notation, camera vocabulary, speaker IDs, `<d>` dialogue format, and examples exactly.
 4. **Character count hard limit ≤ 7000.** Soft target: keep tight; when keyframe images carry visual load the prompt can be shorter.
-5. **Background music off by default.** Set `non_diegetic_music: N/A` unless `requirements` asks for score, BGM, or music. Diegetic music belongs inside the multimodal description.
+5. **Background music off by default.** Set `non_diegetic_music: N/A` unless `requirements` explicitly requests score, BGM, or music. Diegetic music belongs inside the multimodal description.
 6. Output the finished prompt inside the single markdown fence required by `mcp.md`.
 
 ## Motion Context gate
@@ -31,9 +31,11 @@ This skill writes T2VA / I2VA / FL2VA / L2VA only. Keep that field order even if
 Read `references/motion-context.md` only when `motion.present` is true.
 
 - **Off (default).** Follow the rest of this skill unchanged. Keep I2VA / FL2VA / L2VA alignment lines. Do not insert an airlock.
-- **On.** Apply `motion-context.md` (union rule, airlock, sample-clock timestamps, drop first-frame alignment, continue audio). Use the Base section there.
+- **On.** Apply `motion-context.md` (union rule, airlock, sample-clock timestamps, first frame absent, continue audio). Use the Base section there.
 
 ## Infer mode from keyframes
+
+Apply the Motion Context gate first. If On, `keyframes.first` is absent.
 
 - no `keyframes.first` or `last` → T2VA
 - first only → I2VA
@@ -45,19 +47,20 @@ Duration and aspect come from MCP; if null, use 6 seconds and 16:9.
 ## Workflow
 
 1. **Parse mode and constraints**
-   - Call `get_context`. Read mounted keyframe images, then any useful reference images or video stills.
-   - Apply the Motion Context gate. If Off, ignore motion fields.
+   - Call `get_context`. Apply the Motion Context gate. If Off, ignore motion fields. If On, `keyframes.first` is absent — do not inspect that image.
+   - Infer mode from remaining keyframes. Read mounted keyframe images that are still in use, then any useful reference images or video stills.
    - On a continuation clip the previous tail is a Shot 1 description aid, not a new first-frame picture.
 
 2. **Director pass**
-   - Infer narrative arc, emotional beats, and physical actions that fill the full sample duration.
+   - If `requirements` is a one-liner or otherwise thin, invent the complete clip story (setting, blocking, narrative arc, emotional beats, and physical actions) that fills the full sample duration, consistent with the sentence, remaining keyframes, and extra images.
+   - If the user already specified beats, dialogue, positions, or a shot list, keep that story. Expand it onto the clock; do not replace it with a different plot.
    - Break into 1–4 shots with precise cut times that land inside that length.
    - Decide camera language using the official motion-type + amplitude + speed vocabulary.
    - Design diegetic sound timeline and any spoken lines.
-   - If Motion Context is On, Shot 1 is the previous closing state plus micro-motion; new plot and dialogue start after the airlock. Write times on the sample clock.
+   - If Motion Context is On, Shot 1 continues the previous closing state, including unfinished motion and sound at the same speed. New plot and dialogue start after the airlock. Write times on the sample clock.
 
 3. **Write the three core fields**
-   - Start `[Shot 1]` with style + composition (derive style from a keyframe when present; otherwise from `requirements`). Common anchors: `Live-action, cinematic`, `2D-animated`, `3D CG`, etc.
+   - Start `[Shot 1]` with style + composition (derive style from a still-active keyframe when present, never a dropped first frame; otherwise from `requirements`). Common anchors: `Live-action, cinematic`, `2D-animated`, `3D CG`, etc.
    - Later shots: `[Shot N] At MM:SS.mmm, the camera cuts to...`
    - Insert speaker IDs `(S1)`, dialogue as `<d>[Language] exact words</d>`.
    - Keep every visual and audio detail synchronized to the timeline.
@@ -78,7 +81,7 @@ Duration and aspect come from MCP; if null, use 6 seconds and 16:9.
      How the reference pictures align with the target video — <Picture 1> (from [Shot N]) aligns with the S.SS-second mark of the target video.
      ```
    Follow with one blank line, then the three core fields.
-   If Motion Context is On: omit the I2VA 0.00 line and any first-frame claim; keep last-frame alignment only, timed to the sample-clock end.
+   Write alignment for the inferred mode only. If Motion Context is On, that is T2VA (no alignment) or L2VA (last-frame line at the sample-clock end) — never an I2VA / FL2VA first-frame claim.
 
 5. **Negative / quality constraints**
    - Add quality prohibitions only when needed (no subtitles, no watermarks, no text unless spelled out, no soft dissolves unless requested, keep live-action texture). Prefer positive constraints.
@@ -91,8 +94,8 @@ Duration and aspect come from MCP; if null, use 6 seconds and 16:9.
 
 - Always fill the entire duration with observable change. A static hold still needs micro-motion (breathing, fabric, light, camera drift) or the model will invent filler.
 - Prefer hard cuts over dissolves unless the user asks.
-- When a keyframe is supplied, never re-describe its static appearance at length; anchor once then move forward.
-- For FL2VA favor a single continuous shot so the model can interpolate cleanly.
+- When a still-active keyframe is supplied, never re-describe its static appearance at length; anchor once then move forward.
+- For FL2VA (Motion Context Off) favor a single continuous shot so the model can interpolate cleanly from the starting pose to the last-frame pose. If Motion Context is On, there is no first-frame pose; open from the pinned closing state and land on last if present.
 - Spell every readable on-screen string in double quotes; add “do not misspell, do not add extra text”.
 - Camera motion is written as natural English inside the shot, never as trailing tags.
 - **LoRA trigger words**: when `trigger_words` is nonempty, place it at the very start of `integrated_multimodal_description` (right after the colon or as the first tokens of `[Shot 1]`).
