@@ -10,10 +10,13 @@ from typing import Any, Dict
 from urllib.parse import urlsplit
 
 import execution
+import folder_paths
 from aiohttp import web
 
+from ..common.paths import image_roots
+from . import workbench_execution
 from .agent_docker import AgentBusy
-from .core import preparation_graph
+from .core import preparation_graph, workbench_options
 from .workbench import Workbench, skill_catalog
 
 logger = logging.getLogger(__name__)
@@ -136,25 +139,49 @@ def register_routes(server: Any, owner: Workbench):
             workflow = value.get("workflow")
             if not isinstance(node_id, str) or not isinstance(workflow, str) or not 1 <= len(workflow) <= 160:
                 raise ValueError("invalid workflow identity")
-            graph = preparation_graph(value.get("prompt"), node_id)
-            reservation = asyncio.create_task(asyncio.to_thread(owner.create, node_id, workflow, value.get("options"), graph))
+            options = workbench_options(value.get("options"))
+            graph = preparation_graph(value.get("prompt"), node_id, options["motion_enabled"])
+            reservation = asyncio.create_task(asyncio.to_thread(owner.create, node_id, workflow, options, graph))
             job = await asyncio.shield(reservation)
-            prompt_id = str(uuid.uuid4())
-            valid = await execution.validate_prompt(prompt_id, graph, [node_id])
-            if not valid[0]:
-                raise ValueError("preparation inputs are invalid; check the connected loaders")
-            number = server.number
-            server.number += 1
-            queue = server.prompt_queue
-            server.prompt_queue.put((number, prompt_id, graph, {"client_id": value.get("client_id")}, [node_id], {}))
+            job.cpu_context = True
+            job.context_graph = graph
+            job.roots = image_roots(folder_paths.get_input_directory(), folder_paths.get_output_directory())
+            prompt_id = None
+            if "context_latent" in graph[node_id]["inputs"]:
+                motion_root = {
+                    **graph[node_id],
+                    "inputs": {k: v for k, v in graph[node_id]["inputs"].items() if k not in ("resources", "video_settings")},
+                }
+                motion_graph = preparation_graph({**graph, node_id: motion_root}, node_id)
+                job.graph = motion_graph
+                prompt_id = str(uuid.uuid4())
+                valid = await execution.validate_prompt(prompt_id, motion_graph, [node_id])
+                if not valid[0]:
+                    raise ValueError("preparation inputs are invalid; check the connected loaders")
+                job.vae_revision = await asyncio.to_thread(workbench_execution.vae_identity, job)
+                workbench_execution.register(prompt_id, job, motion_graph)
+                number = server.number
+                server.number += 1
+                queue = server.prompt_queue
 
-            def preparation_finished() -> bool:
-                if job.cancelled.is_set():
-                    queue.delete_queue_item(lambda entry: entry[1] == prompt_id)
-                running, pending = queue.get_current_queue()
-                return not any(entry[1] == prompt_id for entry in running + pending)
+                def preparation_finished() -> bool:
+                    if job.cancelled.is_set():
+                        queue.delete_queue_item(lambda entry: entry[1] == prompt_id)
+                    running, pending = queue.get_current_queue()
+                    finished = not any(entry[1] == prompt_id for entry in running + pending)
+                    if finished:
+                        workbench_execution.discard(prompt_id)
+                    return finished
 
-            job.queue_finished = preparation_finished
+                try:
+                    queue.put((number, prompt_id, motion_graph, {"client_id": value.get("client_id")}, [node_id], {}))
+                except BaseException:
+                    workbench_execution.discard(prompt_id)
+                    raise
+                job.queue_finished = preparation_finished
+            else:
+                job.prepared.set()
+                job.preparation_done.set()
             spawn(owner.execute, job)
             started = True
             return web.json_response({"id": job.id, "prompt_id": prompt_id}, status=202)

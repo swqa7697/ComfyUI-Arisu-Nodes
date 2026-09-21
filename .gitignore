@@ -123,6 +123,7 @@ node.zip
 # --- local additions ---
 .venv/
 .ruff_cache/
+.misc/
 .tmp/
 
 # Administrator-only image roots; never share machine paths

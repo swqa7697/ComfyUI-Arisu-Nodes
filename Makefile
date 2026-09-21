@@ -65,7 +65,7 @@ test-count: ## Selected cases per lane; compare with the budgets in CLAUDE.md
 	@printf 'unit lane:    '; uv run pytest --collect-only -q | $(_SELECTED)
 	@printf 'comfyui lane: '; bash scripts/test-comfyui.sh --collect-only -q 2>/dev/null | $(_SELECTED) || $(INFO) "skipped (no ComfyUI install)"
 	@printf 'web lane:     '; $(_NODE_TEST) --test-reporter=tap $(_WEB_TESTS) | awk '/^# tests/ {print $$3}'
-	@if [[ -x .tmp/browser/env/bin/python ]]; then printf 'browser lane: '; bash scripts/browser.sh test --collect-only -q | $(_SELECTED); else $(INFO) "browser lane not installed (make browser-install)"; fi
+	@if [[ -x .misc/browser/env/bin/python ]]; then printf 'browser lane: '; bash scripts/browser.sh test --collect-only -q | $(_SELECTED); else $(INFO) "browser lane not installed (make browser-install)"; fi
 
 comfyui-path: ## Print the resolved ComfyUI install root (the CLAUDE.md hard boundary)
 	@printf '%s\n' '$(COMFYUI_ABS)'

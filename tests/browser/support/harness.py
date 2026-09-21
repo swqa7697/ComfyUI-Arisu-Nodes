@@ -22,7 +22,7 @@ from assets.prompt_workbench.events import activity
 
 ROOT = Path(__file__).resolve().parents[3]
 FIXTURES = ROOT / "tests/browser/fixtures"
-ARTIFACTS = ROOT / ".tmp/browser/results"
+ARTIFACTS = ROOT / ".misc/browser/results"
 STUDIO = "ArisuMiniMaxH3ResourceStudio"
 WORKBENCH = "ArisuMiniMaxH3PromptWorkbench"
 DRAFT = "A paper boat drifts across a sunlit pond. The camera follows slowly."
@@ -307,9 +307,11 @@ class FixtureServer:
         if path == "/arisu/workbench/jobs/fixture-job":
             self.polls += 1
             if self.fail_generation:
-                return web.json_response({"state": "failed", "error": "Simulated provider unavailable"})
+                return web.json_response({"state": "failed", "error": "Simulated provider unavailable", "generation_elapsed_ms": 12500})
             return web.json_response(
-                {"state": "generating"} if self.hold_generation or self.polls < 3 else {"state": "complete", "draft": DRAFT}
+                {"state": "generating", "generation_elapsed_ms": 42000}
+                if self.hold_generation or self.polls < 3
+                else {"state": "complete", "draft": DRAFT, "generation_elapsed_ms": 78000}
             )
         if path in ("/arisu/workbench/release", "/arisu/workbench/cancel", "/arisu/workbench/action") and method == "POST":
             return web.json_response({"accepted": True})

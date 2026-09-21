@@ -325,6 +325,21 @@ def test_prompt_workbench():
                     page.get_by_label("Requirements", exact=True).fill("Follow a paper boat across a pond.")
                     page.get_by_label("LoRA Trigger Words", exact=True).fill("paper_art")
                     page.get_by_label("Finalized Prompt", exact=True).fill("Original prompt")
+                    # Reopening a pre-switch workflow preserves positional fields and defaults motion on.
+                    page.evaluate(
+                        """id => {
+                        const node = window.comfyAPI.app.app.graph.getNodeById(id);
+                        const old = node.serialize();
+                        const index = node.widgets.findIndex(widget => widget.name === 'motion_enabled');
+                        old.widgets_values = old.widgets_values.slice(0, index);
+                        node.widgets[index].value = false;
+                        node.configure(old);
+                        if (node.size[0] !== old.size[0] || node.size[1] !== old.size[1]) throw Error('Restoring workflow changed Workbench size');
+                    }""",
+                        node_id,
+                    )
+                    assert widget_value(page, node_id, "motion_enabled") is True
+                    assert widget_value(page, node_id, "finalized_prompt") == "Original prompt"
                     screenshot(page, name, "editing")
                     generate = page.get_by_role("button", name="Generate Prompt", exact=True)
                     results = page.get_by_role("button", name="Generation Results", exact=True)
@@ -359,8 +374,74 @@ def test_prompt_workbench():
                     screenshot(page, name, "trigger-focus")
                     page.locator(".arisu-workbench summary").click()
                     expect(page.get_by_label("Audio Context Length in Frames")).to_be_disabled()
+                    toggle = page.get_by_role("checkbox", name="Enable motion context")
+                    expect(toggle).to_be_checked()
+                    expect(toggle).to_be_disabled()
+                    # Locator.click intentionally rejects disabled labels; a physical click must remain inert.
+                    label_bounds = page.locator(".motion-switch span").bounding_box()
+                    page.mouse.click(label_bounds["x"] + label_bounds["width"] / 2, label_bounds["y"] + label_bounds["height"] / 2)
+                    expect(toggle).to_be_checked()
+                    assert page.locator(".arisu-workbench .context").evaluate("element => element.open")
+                    screenshot(page, name, "motion-unwired")
+                    # Use real graph wires: one alone leaves the switch disabled.
+                    source_id = page.evaluate(
+                        """id => {
+                        const app = window.comfyAPI.app.app, node = app.graph.getNodeById(id);
+                        const source = LiteGraph.createNode('FixtureSource');
+                        source.pos = [-1000, -1000]; app.graph.add(source);
+                        source.connect(0, node, node.inputs.findIndex(input => input.name === 'context_latent'));
+                        return source.id;
+                    }""",
+                        node_id,
+                    )
+                    expect(toggle).to_be_disabled()
+                    page.evaluate(
+                        """([id, sourceId]) => {
+                        const graph = window.comfyAPI.app.app.graph, node = graph.getNodeById(id);
+                        graph.getNodeById(sourceId).connect(1, node, node.inputs.findIndex(input => input.name === 'vae'));
+                    }""",
+                        [node_id, source_id],
+                    )
+                    expect(toggle).to_be_enabled()
+                    expect(page.get_by_label("Audio Context Length in Frames")).to_be_enabled()
+                    page.evaluate("window.comfyAPI.app.app.extensionManager.workflow.activeWorkflow.changeTracker.captureCanvasState()")
+                    page.locator(".motion-switch span").click()
+                    expect(toggle).not_to_be_checked()
+                    assert page.locator(".arisu-workbench .context").evaluate("element => element.open")
+                    assert widget_value(page, node_id, "motion_enabled") is False
+                    toggle.blur()
+                    page.evaluate("window.comfyAPI.app.app.extensionManager.workflow.activeWorkflow.changeTracker.captureCanvasState()")
+                    page.evaluate("window.comfyAPI.app.app.extensionManager.workflow.activeWorkflow.changeTracker.undo()")
+                    assert widget_value(page, node_id, "motion_enabled") is True
+                    page.evaluate("window.comfyAPI.app.app.extensionManager.workflow.activeWorkflow.changeTracker.redo()")
+                    assert widget_value(page, node_id, "motion_enabled") is False
+                    assert page.evaluate("id => window.comfyAPI.app.app.graph.getNodeById(id).size[0]", node_id) == 720
+                    if not page.locator(".arisu-workbench .context").evaluate("element => element.open"):
+                        page.locator(".arisu-workbench summary").click()
+                    toggle = page.get_by_role("checkbox", name="Enable motion context")
+                    screenshot(page, name, "motion-disabled")
+                    toggle.check()
+                    assert widget_value(page, node_id, "motion_enabled") is True
                     screenshot(page, name, "motion-expanded")
-                    page.locator(".arisu-workbench summary").click()
+                    page.locator(".arisu-workbench summary > span").click()
+                    assert not page.locator(".arisu-workbench .context").evaluate("element => element.open")
+                    toggle.focus()
+                    toggle.press("Space")
+                    expect(toggle).not_to_be_checked()
+                    assert not page.locator(".arisu-workbench .context").evaluate("element => element.open")
+                    page.locator(".motion-switch span").click()
+                    expect(toggle).to_be_checked()
+                    assert not page.locator(".arisu-workbench .context").evaluate("element => element.open")
+                    # Unwiring disables the switch without changing the saved choice.
+                    page.evaluate(
+                        """sourceId => {
+                        const graph = window.comfyAPI.app.app.graph;
+                        graph.remove(graph.getNodeById(sourceId));
+                    }""",
+                        source_id,
+                    )
+                    expect(toggle).to_be_disabled()
+                    assert widget_value(page, node_id, "motion_enabled") is True
                     expect(page.get_by_role("button", name="Generation Results", exact=True)).to_be_enabled()
                     page.get_by_role("button", name="Generation Results", exact=True).click()
                     empty_results = page.get_by_role("dialog", name="Generation Results", exact=True)
@@ -372,6 +453,7 @@ def test_prompt_workbench():
                     server.hold_generation = True
                     page.get_by_role("button", name="Generate Prompt", exact=True).click()
                     expect(page.locator(".arisu-workbench .status")).to_have_text("Generating prompt…")
+                    expect(page.locator(".arisu-workbench .generation-time")).to_have_text(" · Agent time 0:42")
                     screenshot(page, name, "generating")
                     # Context and output edits, including real frontend Undo/Redo, retain the job.
                     captured = server.generation_requests[-1]
@@ -399,6 +481,10 @@ def test_prompt_workbench():
                     page.emulate_media(reduced_motion="reduce")
                     page.get_by_role("button", name="Generation Results", exact=True).click()
                     activity = page.get_by_role("dialog", name="Generation Results", exact=True)
+                    expect(activity.locator("header .generation-time")).to_have_text("Agent time 0:42")
+                    activity.get_by_role("tab", name="Output Prompt", exact=True).click()
+                    expect(activity.locator("header .generation-time")).to_be_visible()
+                    activity.get_by_role("tab", name="Activity", exact=True).click()
                     terminal = activity.get_by_label("Generation Activity", exact=True)
                     expect(terminal).to_contain_text("workbench.read_skill")
                     assert len(terminal.inner_text()) > 10000
@@ -454,6 +540,8 @@ def test_prompt_workbench():
                     server.hold_generation = False
                     expect(activity.locator(".activity-state")).to_have_text("Output ready to apply")
                     expect(page.get_by_role("button", name="Generation Results", exact=True)).to_be_enabled()
+                    expect(activity.locator("header .generation-time")).to_have_text("Agent time 1:18")
+                    expect(page.locator(".arisu-workbench .generation-time")).to_have_text(" · Agent time 1:18")
                     screenshot(page, name, "activity-complete")
                     activity.get_by_role("button", name="Close", exact=True).click()
                     expect(page.get_by_role("dialog", name="Generation Results", exact=True)).to_have_count(0)

@@ -7,7 +7,7 @@ source scripts/logger.sh
 
 log_info "removing .venv, then delegating to clean.sh for build outputs and caches..."
 
-# .venv goes first, which is why clean.sh's './.venv/*' prune guards do not matter here.
+# clean.sh preserves the managed test infrastructure and developer artifacts.
 rm -rf .venv
 bash scripts/clean.sh
 

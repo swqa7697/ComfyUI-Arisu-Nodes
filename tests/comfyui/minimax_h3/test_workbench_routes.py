@@ -29,7 +29,7 @@ def test_workbench_routes_reject_untrusted_requests_and_queue_only_preparation(t
     server = SimpleNamespace(routes=web.RouteTableDef(), number=0, prompt_queue=SimpleNamespace(put=queued.append), app=None)
 
     async def validate(identifier, graph, targets):
-        assert set(graph) == {"w"} and targets == ["w"]
+        assert set(graph) == {"w", "l", "v"} and targets == ["w"]
         assert graph["w"]["inputs"]["prepare_job"] in owner.jobs
         return True, None, targets, {}
 
@@ -121,7 +121,7 @@ def test_workbench_routes_reject_untrusted_requests_and_queue_only_preparation(t
                     response = await request
             assert response.status == 202
             identifier = (await response.json())["id"]
-            assert len(queued) == 1 and set(queued[0][2]) == {"w"}
+            assert not queued and (await response.json())["prompt_id"] is None
             await asyncio.sleep(0.01)
             response = await client.get("/arisu/workbench/jobs/" + identifier)
             assert (await response.json())["draft"] == "review me"
@@ -131,9 +131,37 @@ def test_workbench_routes_reject_untrusted_requests_and_queue_only_preparation(t
                 response = await client.post(
                     "/arisu/workbench/generate", json={"node_id": "w", "workflow": "other", "prompt": graph, "options": {}}
                 )
-                assert response.status == 409 and len(queued) == 1
+                assert response.status == 409 and not queued
             finally:
                 owner.agents.guard.release()
+            # Disabled motion ignores even unsupported wired producers and never enters the queue.
+            graph["w"]["inputs"].update(context_latent=["s", 0], vae=["s", 0])
+            response = await client.post(
+                "/arisu/workbench/generate",
+                json={"node_id": "w", "workflow": "disabled", "prompt": graph, "options": {"motion_enabled": False}},
+            )
+            assert response.status == 202 and (await response.json())["prompt_id"] is None and not queued
+            await asyncio.sleep(0.01)
+            # Enabled motion submits only the allowlisted motion dependencies.
+            graph["w"]["inputs"].update(context_latent=["l", 0], vae=["v", 0])
+            graph["l"] = {"class_type": "MiniMaxH3MotionContextLoadLatent", "inputs": {"clip_index": 1, "latent_path": "context"}}
+            graph["v"] = {"class_type": "VAELoader", "inputs": {"vae_name": "test"}}
+            registered = []
+            monkeypatch.setattr(workbench_routes.workbench_execution, "vae_identity", lambda job: "test-revision")
+            monkeypatch.setattr(workbench_routes.workbench_execution, "register", lambda *args: registered.append(args))
+            response = await client.post(
+                "/arisu/workbench/generate", json={"node_id": "w", "workflow": "motion", "prompt": graph, "options": {}}
+            )
+            assert response.status == 202 and (await response.json())["prompt_id"]
+            assert len(queued) == 1 and set(queued[0][2]) == {"w", "l", "v"}
+            assert registered[0][2] is queued[0][2]
+            await asyncio.sleep(0.01)
+            # Queue tracking cannot mistake a running video for completion of this job.
+            server.prompt_queue.get_current_queue = lambda: ([queued[0]], [])
+            server.prompt_queue.delete_queue_item = lambda predicate: None
+            assert not registered[0][1].queue_finished()
+            server.prompt_queue.get_current_queue = lambda: ([], [])
+            assert registered[0][1].queue_finished()
             response = await client.post("/arisu/workbench/release", json={"workflow": "tab"})
             assert response.status == 200
             response = await client.get("/arisu/workbench/jobs/" + identifier)

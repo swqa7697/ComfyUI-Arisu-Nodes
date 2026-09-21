@@ -565,6 +565,12 @@ export function captureWorkbenchPrompt(node) {
     if (!active(source) || source.isVirtualNode) continue;
     const inputs = {};
     for (const [index, input] of (source.inputs ?? []).entries()) {
+      if (
+        source === node &&
+        node.widgets?.find((item) => item.name === 'motion_enabled')?.value === false &&
+        ['context_latent', 'vae'].includes(input.name)
+      )
+        continue;
       if (input.link == null) continue;
       const links = source.graph?.links;
       const link = links?.get?.(input.link) ?? links?.[input.link];

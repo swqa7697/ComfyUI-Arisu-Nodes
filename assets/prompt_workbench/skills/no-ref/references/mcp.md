@@ -18,7 +18,7 @@ Video references contain at most eight distinct ordered frames spanning the comp
 - `motion.present`: the only continuation switch.
   - False: ignore stills and notes. No airlock. Do not mention Motion Context in the prompt.
   - True: read `motion-context.md`. Inspect the attached image for every `motion.stills[].asset_id` in order. `motion.notes` may be empty; infer from stills. `sample_duration_seconds` is the clock for `At MM:SS.mmm` (Video Settings length, including the pinned head). `delivered_duration_seconds` is after Trim. Do not add `context_length` on top of Video Settings length.
-- `keyframes.first` / `keyframes.last`: `{asset_id, name, resource_id}` or null. These are locks, never members of `references`.
+- `keyframes.first` / `keyframes.last`: `{asset_id, name, resource_id}` or null. These are locks, never members of `references`. When `motion.present` is true, ignore `keyframes.first` even if it is listed or attached (the pin owns 0.00); `keyframes.last` is unchanged.
 - `references[]`: every active Studio card the local model will receive.
   - image: `inspect.type` is `image` — inspect the attached image for `asset_ids[0]` (already cropped).
   - video: `inspect.type` is `stills` — Inspect the attached image for each `frames[].asset_id` in order; `timestamp` is seconds on the selected clip. Reconstruct motion from stills; do not claim to have watched a file.

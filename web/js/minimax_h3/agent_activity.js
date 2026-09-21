@@ -29,7 +29,7 @@ export const ACTIVITY_STYLE = `
  box-shadow:0 24px 64px #0009;font:13px/1.5 Arial,system-ui,sans-serif;}
 .arisu-activity-modal[open]{display:flex;flex-direction:column;overflow:hidden;}
 .arisu-activity-modal::backdrop{background:#0009;backdrop-filter:blur(3px);}
-.arisu-activity-modal header{display:flex;align-items:center;gap:12px;padding:14px 18px;border-bottom:1px solid var(--border-color,#444);}
+.arisu-activity-modal header{display:flex;align-items:center;flex-wrap:wrap;gap:12px;padding:14px 18px;border-bottom:1px solid var(--border-color,#444);}
 .arisu-activity-modal header strong{flex:1;font-size:16px;}.arisu-activity-modal>.arisu-activity{padding:12px 18px 18px;}
 .arisu-activity-modal button,.arisu-activity button{font:inherit;color:inherit;background:var(--comfy-input-bg,#222);border:1px solid var(--border-color,#555);
  border-radius:5px;min-height:34px;padding:5px 10px;cursor:pointer;}
@@ -283,6 +283,7 @@ let resultDialogId = 0;
 export function openAgentActivity(snapshot, onClose, onEdit, onApply) {
   const dialog = el('dialog', { className: 'arisu-activity-modal', ariaLabel: 'Generation Results' });
   const id = `arisu-generation-${++resultDialogId}`;
+  const generationTime = el('span', { className: 'generation-time', ariaLive: 'off' });
   const activity = createActivity('Generation Activity');
   const draft = el('textarea', {
     ariaLabel: 'Output Prompt',
@@ -324,6 +325,8 @@ export function openAgentActivity(snapshot, onClose, onEdit, onApply) {
   }
   function refreshOutput() {
     const state = snapshot();
+    generationTime.textContent = state.generationTime || '';
+    generationTime.hidden = !state.generationTime;
     if (draft.value !== state.draft) draft.value = state.draft || '';
     draft.disabled = !state.hasOutput;
     apply.disabled = !state.draft?.trim() || state.applied;
@@ -348,6 +351,7 @@ export function openAgentActivity(snapshot, onClose, onEdit, onApply) {
     el('style', { textContent: ACTIVITY_STYLE }),
     el('header', {}, [
       el('strong', { textContent: 'Generation Results' }),
+      generationTime,
       el('button', { textContent: 'Close', onclick: () => dialog.close() }),
     ]),
     el('nav', { className: 'result-tabs', role: 'tablist', ariaLabel: 'Generation Results' }, tabs),

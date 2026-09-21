@@ -22,6 +22,7 @@ const FIELDS = [
   'requirements',
   'finalized_prompt',
   'prepare_job',
+  'motion_enabled',
 ];
 
 const STYLE = `
@@ -47,6 +48,9 @@ const STYLE = `
 .arisu-workbench .generation>.section-title{margin-bottom:-6px;}
 .arisu-workbench :is(input,textarea)::placeholder{color:var(--label);opacity:.75;}
 .arisu-workbench .context{border-top:1px solid var(--line);padding-top:8px;}
+.arisu-workbench .motion-switch{float:right;display:inline-flex;align-items:center;gap:6px;margin-left:8px;cursor:pointer;}
+.arisu-workbench .context summary .motion-toggle{width:16px;height:16px;min-height:16px;margin:0;padding:0;accent-color:var(--accent);}
+.arisu-workbench .motion-switch:has(input:disabled){opacity:.5;cursor:not-allowed;}
 .arisu-workbench .context summary{cursor:pointer;color:var(--label);padding:2px 0 6px;}
 .arisu-workbench .context summary:focus-visible{outline-offset:-2px;}
 .arisu-workbench .motion{border:1px solid var(--line);margin:0;padding:8px;border-radius:4px;background:color-mix(in srgb,var(--surface) 65%,var(--panel));
@@ -67,6 +71,7 @@ const STYLE = `
  background:var(--surface);padding:8px 12px;min-height:34px;cursor:pointer;transition:background-color 140ms ease,transform 100ms ease;}
 .arisu-workbench button:enabled:hover{border-color:var(--accent);}.arisu-workbench button:enabled:active{transform:translateY(1px);}
 .arisu-workbench button:disabled{opacity:.5;cursor:default;transform:none;}
+.arisu-workbench .status-row{font-size:11px;color:var(--label);min-height:16px;overflow-wrap:anywhere;}
 .arisu-workbench .status{font-size:11px;color:var(--label);min-height:16px;overflow-wrap:anywhere;}
 .arisu-workbench .hint{font-size:11px;color:var(--label);padding:4px 0;}
 .arisu-workbench .review{border-color:var(--accent);}.arisu-workbench .footer{margin-top:auto;padding:8px 4px 2px;border-top:1px solid var(--line);}
@@ -81,7 +86,7 @@ function widget(node, name) {
   return node?.widgets?.find((item) => item.name === name);
 }
 function value(node, name) {
-  return widget(node, name)?.value;
+  return widget(node, name)?.value ?? (name === 'motion_enabled' ? true : undefined);
 }
 function identity() {
   return globalThis.crypto?.randomUUID?.() ?? `${String(Date.now())}-${Math.random().toString(36).slice(2)}`;
@@ -200,13 +205,43 @@ function updateRun(run) {
   run.activity?.refreshOutput();
 }
 
-function cancelGeneration(run) {
-  run.epoch++;
-  if (run.job) void workbenchRequest('/release', { id: run.job }).catch(() => {});
-  run.job = null;
-  run.running = false;
-  run.status = 'Generation cancelled';
+async function cancelGeneration(run) {
+  if (run.cancelling) return;
+  run.cancelling = true;
+  run.status = 'Cancelling…';
   updateRun(run);
+  if (!run.job) return;
+  const epoch = run.epoch;
+  try {
+    await workbenchRequest('/release', { id: run.job });
+  } catch (error) {
+    if (run.disposed || run.epoch !== epoch || !run.running) return;
+    run.cancelling = false;
+    run.status = error.message;
+    notify('error', error.message);
+    updateRun(run);
+  }
+}
+
+function generationTime(run) {
+  if (run.elapsedMs == null) return '';
+  const seconds = Math.floor(run.elapsedMs / 1000);
+  const minutes = Math.floor(seconds / 60);
+  const duration =
+    minutes < 60
+      ? `${minutes}:${String(seconds % 60).padStart(2, '0')}`
+      : `${Math.floor(minutes / 60)}:${String(minutes % 60).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
+  return `Agent time ${duration}${run.timingUnavailable ? ' (updates unavailable)' : ''}`;
+}
+
+function refreshProgress(run) {
+  const state = nodes.get(run.node);
+  if (state?.run === run) {
+    if (state.statusElement?.textContent !== run.status) state.statusElement.textContent = run.status;
+    const time = generationTime(run);
+    if (state.timeElement) state.timeElement.textContent = time ? ` · ${time}` : '';
+  }
+  run.activity?.refreshOutput();
 }
 
 function disposeSession(run) {
@@ -313,18 +348,21 @@ async function generate(node) {
   run.activityJob = null;
   run.activity?.close();
   run.running = true;
+  run.cancelling = false;
+  run.elapsedMs = null;
+  run.timingUnavailable = false;
   run.status = 'Preparing workflow…';
   const epoch = run.epoch;
   const current = () => !run.disposed && run.epoch === epoch;
+  let terminal = false;
   try {
     // Capture everything in one synchronous turn. Edits after this point belong to the next Generate.
     const snapshot = sourceSnapshot(node);
     const prompt = captureWorkbenchPrompt(node);
     const options = Object.fromEntries(
-      ['agent', 'skill', 'context_length', 'audio_context_length', 'motion_notes', 'trigger_words', 'requirements'].map((name) => [
-        name,
-        value(node, name),
-      ]),
+      ['agent', 'skill', 'context_length', 'audio_context_length', 'motion_notes', 'trigger_words', 'requirements', 'motion_enabled'].map(
+        (name) => [name, value(node, name)],
+      ),
     );
     options.reference_notes = notes(node);
     options.source_id = snapshot.sourceId;
@@ -343,32 +381,41 @@ async function generate(node) {
     }
     run.job = response.id;
     run.activityJob = response.id;
+    if (run.cancelling) {
+      run.cancelling = false;
+      await cancelGeneration(run);
+    }
     while (current()) {
       const response = await api.fetchApi(`/arisu/workbench/jobs/${run.job}`);
       if (!response.ok) throw new Error('Generation job is unavailable.');
       const job = await response.json();
       if (!current()) return;
+      if (Number.isFinite(job.generation_elapsed_ms) && job.generation_elapsed_ms >= 0) run.elapsedMs = job.generation_elapsed_ms;
+      terminal = ['complete', 'failed', 'cancelled'].includes(job.state);
       run.status =
-        {
-          preparing: 'Loading motion context…',
-          preparing_media: 'Preparing selected references…',
-          generating: 'Generating prompt…',
-          complete: 'Output ready to apply',
-          cancelled: 'Generation cancelled',
-        }[job.state] ?? job.state;
+        run.cancelling && !terminal
+          ? 'Cancelling…'
+          : ({
+              preparing: 'Loading motion context…',
+              preparing_media: 'Preparing selected references…',
+              generating: 'Generating prompt…',
+              complete: 'Output ready to apply',
+              cancelled: 'Generation cancelled',
+            }[job.state] ?? job.state);
       if (job.state === 'complete') {
         run.draft = job.draft;
         run.hasOutput = true;
         notify('success', 'Prompt ready. Open Generation results to review it, or choose Apply output.');
         break;
       }
-      if (job.state === 'failed' || job.state === 'cancelled') throw new Error(job.error || run.status);
-      const state = nodes.get(run.node);
-      if (state?.statusElement) state.statusElement.textContent = run.status;
+      if (job.state === 'cancelled') break;
+      if (job.state === 'failed') throw new Error(job.error || run.status);
+      refreshProgress(run);
       await wait(750);
     }
   } catch (error) {
     if (current()) {
+      run.timingUnavailable = !terminal;
       run.status = error.message;
       notify('error', error.message);
     }
@@ -428,15 +475,33 @@ function render(node) {
   audio.onchange = () => {
     edit(node, 'audio_context_length', Math.max(0, Math.min(240, Math.round(Number(audio.value) || 0))));
   };
-  const motion = el('fieldset', { className: 'motion', disabled: !linked(node, 'context_latent') || !linked(node, 'vae') }, [
-    el('label', {}, [
-      el('span', { textContent: 'Video Frames' }),
-      combo('context_length', ['22', '5', '39', '56'], 'Context Length in Frames'),
-    ]),
-    el('label', {}, [el('span', { textContent: 'Audio Frames' }), audio]),
-    el('div', { className: 'hint', textContent: 'Frames at 24 fps · audio 0 follows video' }),
-    textField('motion_notes', 'Notes', true, 'Notes on motion continuity…'),
-  ]);
+  const motion = el(
+    'fieldset',
+    { className: 'motion', disabled: !value(node, 'motion_enabled') || !linked(node, 'context_latent') || !linked(node, 'vae') },
+    [
+      el('label', {}, [
+        el('span', { textContent: 'Video Frames' }),
+        combo('context_length', ['22', '5', '39', '56'], 'Context Length in Frames'),
+      ]),
+      el('label', {}, [el('span', { textContent: 'Audio Frames' }), audio]),
+      el('div', { className: 'hint', textContent: 'Frames at 24 fps · audio 0 follows video' }),
+      textField('motion_notes', 'Notes', true, 'Notes on motion continuity…'),
+    ],
+  );
+  const motionToggle = el('input', {
+    type: 'checkbox',
+    className: 'motion-toggle',
+    checked: value(node, 'motion_enabled'),
+    disabled: !linked(node, 'context_latent') || !linked(node, 'vae'),
+    ariaLabel: 'Enable motion context',
+    title: 'Enable motion context',
+    onclick: (event) => event.stopPropagation(),
+    onkeydown: (event) => event.stopPropagation(),
+  });
+  motionToggle.onchange = () => {
+    edit(node, 'motion_enabled', motionToggle.checked);
+    motion.disabled = !motionToggle.checked || !linked(node, 'context_latent') || !linked(node, 'vae');
+  };
   const savedNotes = notes(node);
   const rows = source.resources.map((item) => {
     const key = noteKey(source.sourceId, item);
@@ -474,6 +539,7 @@ function render(node) {
           job: run.activityJob,
           running: run.running,
           message: run.status,
+          generationTime: generationTime(run),
           draft: run.draft,
           hasOutput: run.hasOutput,
           applied: run.hasOutput && run.draft === value(run.node, 'finalized_prompt'),
@@ -499,9 +565,10 @@ function render(node) {
   if (run.running)
     actions.unshift(
       el('button', {
-        textContent: 'Cancel',
+        textContent: run.cancelling ? 'Cancelling…' : 'Cancel',
+        disabled: run.cancelling,
         onclick: () => {
-          cancelGeneration(run);
+          void cancelGeneration(run);
           render(node);
         },
       }),
@@ -516,13 +583,33 @@ function render(node) {
     });
     actions.unshift(state.applyButton);
   }
-  const statusElement = el('div', {
+  const statusElement = el('span', {
     className: `status${run.running ? ' running' : ''}`,
     role: 'status',
     ariaLive: 'polite',
     textContent: run.status || (ready ? 'Ready' : 'Complete agent setup to generate.'),
   });
   state.statusElement = statusElement;
+  const time = generationTime(run);
+  state.timeElement = el('span', { className: 'generation-time', textContent: time ? ` · ${time}` : '', ariaLive: 'off' });
+  const statusRow = el('div', { className: 'status-row' }, [statusElement, state.timeElement]);
+  state.motionContext = el(
+    'details',
+    { className: 'context', open: state.motionContext?.open ?? (linked(node, 'context_latent') && linked(node, 'vae')) },
+    [
+      el('summary', {}, [
+        el('span', { textContent: 'Motion Context' }),
+        el('label', { className: 'motion-switch', onclick: (event) => event.stopPropagation() }, [
+          el('span', { textContent: 'Enable' }),
+          motionToggle,
+        ]),
+      ]),
+      ...(!linked(node, 'context_latent') || !linked(node, 'vae')
+        ? [el('div', { className: 'hint', textContent: 'Connect context_latent and vae to use motion context.' })]
+        : []),
+      motion,
+    ],
+  );
   const left = el('div', { className: 'generation' }, [
     el('div', { className: 'section-title', textContent: 'Prompt Direction' }),
     el('fieldset', { className: 'generation-fields', disabled: !state.agents?.docker, onwheel: keepScrollWheel }, [
@@ -542,16 +629,10 @@ function render(node) {
       ]),
       textField('requirements', 'Requirements', true, 'Describe the shot, motion, pacing…'),
       textField('trigger_words', 'LoRA Trigger Words', false, 'e.g. aiko_style, filmgrain'),
-      el('details', { className: 'context', open: linked(node, 'context_latent') && linked(node, 'vae') }, [
-        el('summary', { textContent: 'Motion Context' }),
-        ...(!linked(node, 'context_latent') || !linked(node, 'vae')
-          ? [el('div', { className: 'hint', textContent: 'Connect context_latent and vae to use motion context.' })]
-          : []),
-        motion,
-      ]),
+      state.motionContext,
       references,
     ]),
-    el('div', { className: 'footer' }, [statusElement, el('div', { className: 'actions' }, actions)]),
+    el('div', { className: 'footer' }, [statusRow, el('div', { className: 'actions' }, actions)]),
   ]);
   const final = textField('finalized_prompt', 'Finalized Prompt', true, 'Write a prompt here, or generate a draft to review…');
   final.className = 'final';
@@ -627,7 +708,13 @@ app.registerExtension({
     chain('onAdded', function () {
       bindSession(this);
     });
-    chain('onConfigure', function () {
+    chain('onConfigure', function (info) {
+      const size = info?.size ?? this.size;
+      const savedSize = size ? [...size] : null;
+      const enabled = widget(this, 'motion_enabled');
+      if (enabled && Array.isArray(info?.widgets_values) && typeof info.widgets_values[this.widgets.indexOf(enabled)] !== 'boolean') {
+        enabled.value = true;
+      }
       const state = nodes.get(this);
       if (!state) return;
       bindSession(this);
@@ -635,6 +722,7 @@ app.registerExtension({
         const control = widget(this, name);
         if (control) hideWidget(this, control);
       }
+      if (savedSize) this.setSize(savedSize);
       widget(this, 'prepare_job').value = '';
       state.sourceSignature = '';
       render(this);

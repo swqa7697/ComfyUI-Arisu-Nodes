@@ -69,6 +69,11 @@ JSONC supports comments; omit trailing commas.
   directory on startup; administrators manage its contents. Select `custom:<skill-name>` in Prompt Workbench.
 
 In Prompt Workbench, choose a skill, connect your contexts, and click **Generate prompt**.
+For a first clip, turn off **Motion Context → Enable motion context** to keep the wires
+connected and generate without waiting for the video queue. Settings and references use
+CPU; enabled motion decoding uses the queued GPU with a separate preparation cache.
+**Agent time** shows elapsed generation time in the node and Generation results, excluding queueing
+and media preparation. The final duration stays available while the workflow remains open.
 Open **Generation results**, review the **Output Prompt** tab, and click **Apply to Workbench**
 to replace the finalized prompt. Use Undo to restore the previous text. Workflow edits and
 switching between open tabs preserve the running job and its result.

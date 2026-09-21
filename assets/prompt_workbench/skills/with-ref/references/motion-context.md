@@ -27,6 +27,16 @@ The node pins the previous clip's video+audio latent tail at the **head** of thi
 
 Use `motion.context_length` and `motion.audio_context_length` from MCP. Do not invent other values.
 
+## First frame is absent
+
+When On, treat `keyframes.first` as missing even if MCP lists it and the image is attached. The pin owns 0.00.
+
+- Do not inspect that image.
+- Infer / route mode as if `first` were null: I2VA → T2VA, FL2VA → L2VA, Hybrid with only first → Ref2VA. Last-only stays L2VA / Hybrid-last.
+- Drop first-frame alignment and lock language.
+- Shot 1 starts from the pinned closing state, not from that picture's pose or composition.
+- `keyframes.last` is unchanged.
+
 ## Sample clock vs delivered clock
 
 Video Settings length is already the sample clock.
@@ -51,10 +61,10 @@ Use stills and notes together. If notes are empty, infer from stills only.
 Do not ask for continuation and change at the same instant.
 
 1. `[Shot 1]` (no timestamp) restates the **exact closing state**: same people, wardrobe, props-in-hand, stance, lens height, framing, unfinished motion vector, and continuing sound. No new characters. No dialogue.
-2. Hold that framing about **2.0 s on the sample clock** (about 1.5 s is the minimum past a 22-frame pin). Then cut or move.
-3. Put the first new setup, new action peak, and first spoken line **after** the airlock.
-4. The hold must contain micro-motion (breath, weight shift, eyeline, fabric, unfinished inertia). A frozen actor reads as a stalled file.
-5. After Trim the audience sees a shorter hold (`2.0 − C/fps`). If the user wants a full 2 s hold **in the file**, extend the sample-side airlock to `2.0 + C/fps`.
+2. Keep that framing about **2.0 s on the sample clock** (about 1.5 s is the minimum past a 22-frame pin). Then cut or move.
+3. Put the first new setup, new beat, and first spoken line **after** the airlock. Unfinished motion keeps its current speed and contact through this window — do not pause, idle, or slow it to wait for the join.
+4. Add life on top of that vector (breath, weight shift, eyeline, fabric, inertia). Micro-motion is extra, not a replacement for the unfinished motion. A frozen or slowed actor reads as a stalled file.
+5. After Trim the audience sees a shorter matched head (`2.0 − C/fps`). If the user wants a full 2 s matched head **in the file**, extend the sample-side airlock to `2.0 + C/fps`.
 
 ## Union rule
 
@@ -73,8 +83,7 @@ Apply only the section that matches this skill's prompt format.
 
 ### Base — T2VA / I2VA / FL2VA / L2VA
 
-- Drop the I2VA line `at 0.00 seconds ... Picture 1 is fully referenced`. The pin owns 0.00.
-- FL2VA / L2VA: keep the last-frame alignment sentence; set its time to the **sample** end. Do not claim a first-frame lock.
+- After first is absent, I2VA jobs are T2VA (no 0.00 Picture 1 line). FL2VA jobs are L2VA: keep the last-frame alignment sentence; set its time to the **sample** end.
 - Do not treat motion stills as I2VA Picture 1.
 
 ### Ref2VA
@@ -87,8 +96,7 @@ Apply only the section that matches this skill's prompt format.
 
 ### Hybrid
 
-- Treat `keyframes.first` as absent even if MCP lists it. The pin owns 0.00.
-- Keep `keyframes.last` if an end lock is still wanted. Do not move it into `references`.
+- After first is absent, keep `keyframes.last` if an end lock is still wanted. Do not move it into `references`.
 - Do not emit `The first frame is fully locked at 0.00s ...`. Optionally state that the opening continues the previous tail.
 - Last-frame lock line, if any, uses the sample-clock end time.
 - Decision tree for identity/style images is unchanged. The previous tail is not a Hybrid keyframe image and not a `<Picture N>`.

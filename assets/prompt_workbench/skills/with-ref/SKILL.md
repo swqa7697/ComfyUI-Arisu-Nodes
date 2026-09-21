@@ -15,6 +15,8 @@ This skill writes Ref2VA or Hybrid only. If MCP has no references and no keyfram
 
 ### Mode routing
 
+Apply the Motion Context gate first. If On, `keyframes.first` is absent.
+
 - **Hybrid** when `keyframes.first` or `keyframes.last` is set (plus any `references`).
 - **Ref2VA** when mixed references are used without a keyframe lock.
 - Do not invent Hybrid keyframe language on a pure Ref2VA job.
@@ -34,12 +36,12 @@ Duration typically 5–15 s. If MCP duration/aspect are null, use 6 seconds and 
    ```
 2. Read `references/ref-en.txt` (labels, retention, examples) and `references/base-en.txt` (shot / camera / dialogue / alignment vocabulary). Follow them exactly.
 3. **Hybrid keyframe handling** (Hybrid only):
-   - `keyframes.first` and `keyframes.last` are true keyframes. Do not add them to the ordinary reference list (`ref_image` / standalone `<Picture N>`).
+   - Remaining `keyframes.first` / `keyframes.last` after the Motion Context gate are true keyframes. Do not add them to the ordinary reference list (`ref_image` / standalone `<Picture N>`).
    - Declare their role in `summary` and `retention_analysis`.
-   - Optionally place a short base-style alignment instruction as the very first line before the six sections when Motion Context is Off.
+   - Optionally place a short base-style alignment instruction as the very first line before the six sections when a first-frame lock remains (Motion Context Off).
 4. **Reference list is not 1:1 with files.** Apply the decision tree below. Character / identity / costume / style / object images are cited inline inside `<Subject N>` and do not get an independent `<Picture N>` item. Standalone `<Picture N>` only when that image is itself a frame, composition, or storyboard anchor.
 5. **Character count hard limit ≤ 7000.** Soft target for `detailed_description`: 350–500 English words for generation tasks.
-6. **Background music off by default.** Set `non_diegetic_music: N/A` unless `requirements` asks for score or BGM. Diegetic music stays inside `detailed_description`.
+6. **Background music off by default.** Set `non_diegetic_music: N/A` unless `requirements` explicitly requests score or BGM. Diegetic music stays inside `detailed_description`.
 7. Output the finished prompt inside the single markdown fence required by `mcp.md`.
 
 ## Motion Context gate
@@ -91,19 +93,20 @@ List every `references[]` row the local model will receive, including pure video
 ## Workflow
 
 1. **Parse assets and roles**
-   - Call `get_context`. Inspect attached keyframe images, reference images, and video stills using their asset IDs and matching notes.
-   - Route Ref2VA vs Hybrid.
-   - Apply the Motion Context gate. If Off, ignore those fields.
-   - Map Hybrid first/last as true keyframes (outside the reference list). If Motion Context is On, treat `keyframes.first` as absent.
+   - Call `get_context`. Apply the Motion Context gate. If Off, ignore those fields. If On, `keyframes.first` is absent — do not inspect that image.
+   - Route Ref2VA vs Hybrid from remaining keyframes.
+   - Inspect attached keyframe images that are still in use, reference images, and video stills using their asset IDs and matching notes.
+   - Map remaining Hybrid first/last as true keyframes (outside the reference list).
    - Map remaining `references` with the decision tree. Do not dump every file and do not strip source keywords.
    - Note duration and aspect.
 
 2. **Director pass**
-   - Infer the narrative or motion arc the references enable.
+   - If `requirements` is a one-liner or otherwise thin, invent the complete clip story (setting, blocking, narrative arc, and the motion the references enable) that fills the full sample duration, consistent with the sentence, remaining keyframes, and references.
+   - If the user already specified beats, dialogue, positions, or a shot list, keep that story. Expand it onto the clock; do not replace it with a different plot.
    - Design 1–N shots that fill the full sample duration with concrete change.
    - Decide retention strength (fully_preserved, partially_preserved, attribute_transfer, weak_reference, fully_copy, etc.).
    - For motion-reference videos, extract useful action or camera path from the stills; do not copy the entire source timeline unless the task is video editing / continuation.
-   - If Motion Context is On, Shot 1 restates the previous closing state with micro-motion; new plot and dialogue start after the airlock. Write times on the sample clock. Do not plan a first-frame lock.
+   - If Motion Context is On, Shot 1 continues the previous closing state, including unfinished motion and sound at the same speed. New plot and dialogue start after the airlock. Write times on the sample clock. Do not plan a first-frame lock.
 
 3. **Write the sections**
 
@@ -117,9 +120,9 @@ List every `references[]` row the local model will receive, including pure video
 
    **summary** — one short paragraph starting with a square-bracketed task-type prefix, e.g. `[reference generation]`, `[video editing + audio reuse]`, `[keyframe completion + reference generation]`, `[first-frame locked + multi-reference]`. If Motion Context is On, include `video continuation` in that prefix. Mention Hybrid keyframe role when applicable.
 
-   **retention_analysis** — one line per standalone label, plus one Hybrid keyframe lock line when Motion Context is Off:
+   **retention_analysis** — one line per standalone label, plus a Hybrid lock line for each still-active keyframe:
    `The first frame is fully locked at 0.00s as the opening keyframe (composition, identity, lighting, style).`
-   If Motion Context is On, do not write a first-frame lock line. Keep a last-frame lock line only when `keyframes.last` is still in use.
+   Do not write a first-frame lock line when Motion Context is On. Keep a last-frame lock line only when `keyframes.last` is still in use.
 
    **detailed_description**
    - 1–2 English sentences of overall style first.
@@ -137,7 +140,7 @@ List every `references[]` row the local model will receive, including pure video
    - All standalone labels appear consistently later.
    - Identity/style/object source images are cited inline and do not have their own definition or retention line.
    - No dump-all picture list. No strip-all missing source keywords.
-   - Hybrid keyframe locking is stated in summary / retention when Motion Context is Off. First/last frames still have no `<Picture N>` label.
+   - First-frame Hybrid locking is stated in summary / retention only when Motion Context is Off. Last-frame locking is stated when `keyframes.last` is still in use. First/last frames still have no `<Picture N>` label.
    - Timing never exceeds the sample duration (sample clock if Motion Context is On).
    - Readable on-screen text is spelled out in double quotes.
 
@@ -147,7 +150,7 @@ List every `references[]` row the local model will receive, including pure video
 ## Practical Optimizations
 
 - Never put Hybrid first/last keyframes into the reference list. On a Motion Context continuation clip, treat first as empty; the pinned head already owns those frames.
-- When a first-frame or identity image carries look and composition, declare the lock or subject once, then move the action forward.
+- When a still-active first-frame lock or an identity image carries look and composition, declare the lock or subject once, then move the action forward.
 - Prefer hard cuts. Soft transitions only when the user asks.
 - Always keep the storyboard continuous; empty seconds produce model hallucination.
 - **LoRA trigger words**: when `trigger_words` is nonempty, place it at the very start of `detailed_description` (right after the colon or as the first tokens before style / `[Shot 1]`).

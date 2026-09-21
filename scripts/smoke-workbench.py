@@ -202,7 +202,7 @@ def main():
     if borrowed and not args.live:
         parser.error("--auth-volume requires --live")
     logging.basicConfig(level=logging.ERROR)
-    scratch = Path(__file__).resolve().parents[1] / ".tmp" / "workbench"
+    scratch = Path(__file__).resolve().parents[1] / ".misc" / "workbench"
     scratch.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="smoke-", dir=scratch) as temporary:
         directory = Path(temporary)
