@@ -32,14 +32,15 @@ extension markup. The goal is a visible, usable improvement in the real ComfyUI 
   Use `make test-browser` for both. The journeys cover 1440×900 and 1024×768 with Nodes 2.0
   disabled. `make inspect-browser` is optional for interactive exploration on a desktop;
   headless Chromium and saved PNGs are sufficient for the automated loop.
-- Inspect the actual PNGs in `.tmp/browser/results/{studio,workbench}-{1440,1024}/` with an
+- Inspect the actual PNGs in `.misc/browser/results/{studio,workbench}-{1440,1024}/` with an
   available image-viewing tool. Read `diagnostics.json` and use `trace.zip` when an interaction
   or layout failure needs explanation. Do not claim visual inspection from DOM text alone.
 - Before rerunning, copy the relevant baseline screenshots and diagnostics to a fresh
-  `.tmp/browser/reviews/<task>/before/` directory: scenario outputs are replaced on each run.
+  `.misc/browser/reviews/<task>/before/` directory: scenario outputs are replaced on each run.
   Keep subsequent comparison copies under that same task directory, logs under
-  `.tmp/browser/logs/`, and temporary scripts under `.tmp/browser/scratch/`. Create no files
-  directly in `.tmp/` and no tracked screenshot baselines or review reports.
+  `.misc/browser/logs/`, and temporary scripts under `.misc/browser/scratch/`. Create no files
+  directly in `.misc/` and no tracked screenshot baselines or review reports. Use `/tmp` for
+  unrelated disposable scratchpads. `.tmp/` is developer-managed; agents must not write there.
 
 ## Repeat: inspect → change → render → compare
 
@@ -62,7 +63,7 @@ extension markup. The goal is a visible, usable improvement in the real ComfyUI 
    baseline. Verify interactions through real browser mouse/keyboard input, not only programmatic
    state changes. Check that the intended improvement occurred without displaced controls,
    clipped content, broken media, lost focus, or new console errors. Preserve useful comparison
-   screenshots under `.tmp/browser/reviews/<task>/` before the next run.
+   screenshots under `.misc/browser/reviews/<task>/` before the next run.
 6. Keep the change only if the evidence supports it. Otherwise revise or undo that batch while
    preserving unrelated user work. Continue until the requested problems are resolved and the
    affected states remain usable; stop speculative polishing once those criteria are met.

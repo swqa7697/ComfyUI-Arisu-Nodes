@@ -2,8 +2,8 @@
 # Browser tooling is isolated from both the normal dev environment and ComfyUI.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-BROWSER_ENV="$PWD/.tmp/browser/env"
-export PLAYWRIGHT_BROWSERS_PATH="$PWD/.tmp/browser/binaries"
+BROWSER_ENV="$PWD/.misc/browser/env"
+export PLAYWRIGHT_BROWSERS_PATH="$PWD/.misc/browser/binaries"
 export ARISU_BROWSER_TEST=1
 unset COMFYUI_PATH
 case "${1:-test}" in

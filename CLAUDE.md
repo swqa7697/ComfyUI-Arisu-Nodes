@@ -15,6 +15,13 @@ Run development commands from this checkout. Personal Codex settings in `.codex/
 are ignored; this project needs no model, credential, or permission overrides.
 Agent configuration and skills are excluded from the Registry archive.
 
+## Local development artifacts
+
+- `.misc/` holds ignored, tool-managed test infrastructure and retained artifacts: browser environments, binaries, results, logs and reviews under `.misc/browser/`; Workbench smoke fixtures under `.misc/workbench/`; explicitly requested review artifacts under `.misc/reviews/`. Keep each workflow in its own subdirectory and exclude `.misc/` from published archives.
+- `.tmp/` is reserved for developers to manage manually. Agents and automated development commands must not create, modify or delete anything there.
+- Use the system temporary directory `/tmp` for disposable scratchpads outside the defined `.misc/` workflows, including PR body files. Remove scratchpads after use when practical.
+- `make clean` and `make uninstall` preserve both `.misc/` and `.tmp/`.
+
 ## Hard boundary: the ComfyUI install at `$COMFYUI_PATH`
 
 `$COMFYUI_PATH` names a live ComfyUI install on the developer's machine, the one tree this repo must never write to. `make comfyui-path` prints the resolved path; this file never spells it out, and an unset `COMFYUI_PATH` means the live install, never "somewhere safe". Machine facts live in the untracked `.claude/comfyui-env.md` (template `.claude/comfyui-env.example.md`); read it if present, otherwise ask rather than guess. The install is an always-on user systemd unit on the only GPU (restarting it is the owner's test loop) and a uv project alive only because `uv run` syncs inexactly: one `uv sync` there removes every package, and with no `pip` in the `.venv` and a CUDA torch wheel from an index `requirements.txt` omits, a rebuild costs tens of minutes.
@@ -55,7 +62,7 @@ These rules apply to shipped nodes and frontend routes. Consult the [Comfy Regis
 - **Prompt Workbench agents.** Ordinary execution returns finalized text and requests no lazy inputs. Only an explicit Generate action issues a one-shot preparation ID and queues the pruned dependency graph; validate the supported Motion Context loader before enqueueing and request its latent before the VAE. Retain the generation guard through queued loaders, CPU workers and container exit, even on cancellation. Reuse media-root and revision checks, stage applied crops/clips without excluded audio, and bound prepared media to 2 GiB with thirty-minute idle expiry. Build/update native agent images only from the fixed `assets/prompt_workbench` context through explicit same-origin settings actions; this is isolated Docker image preparation, never package installation into ComfyUI or arbitrary host commands. Require the current Workbench policy revision, immutable input/skill mounts and an unprivileged read-only container. Keep native CLI sandboxes disabled; use never/dontAsk approvals and explicit tool restrictions. Provider adapters, policies and installers live under `assets/prompt_workbench/agents/<provider>`. Validate ownership labels before removing any Docker resource; authentication stays in provider volumes and complete removal needs explicit destructive confirmation. Only administrator-owned contained custom skills are discovered. Bundled skills live under `assets/prompt_workbench/skills/` (`no-ref`, `with-ref`); MCP serves only v3 job metadata (keyframes separate from references, video as stills, audio as notes, motion gated by `present`, absolute container image paths) and bounded selected skill text; never transfer image bytes through MCP. Attach only prepared lossless WebP images from the job cache to the initial provider prompt; cap the longer edge at 4000 without upscaling, sample videos without transcoding/audio decode, and preserve one-to-one asset IDs, attachment order and note associations. Native image/file readers are disabled. Fresh CLI state must not load configuration, plugins or hooks from auth volumes; synchronize only credentials. Disable web, shell, edits, code execution, delegation and questions. Reject mixed prohibited requests; semantic injection detection is probabilistic. Extract output only from provider streams and parse exactly one nonempty markdown, text or unlabeled fence, and require user Apply for one undoable finalized-text edit. Tests and smoke checks use temporary roots/accounts; no live-install writes or authenticated generation without an account explicitly configured for that purpose. Optional `make test-workbench-docker` and `make test-workbench-live` lanes use disposable fixtures/images; live runs require explicit provider-to-auth-volume mappings, preserve borrowed volumes and never log them out. Test actual hook denials separately from model refusals; never infer native macOS/Windows compatibility from Linux checks.
 - **Avoid unsafe execution.** Do not introduce `eval`/`exec`, user-controlled shell commands, unsafe deserialization or runtime package installation. Use ComfyUI's supported model-loading APIs and validate selected models against installed names. Keep development installers and release tooling out of shipped runtime code; do not embed credentials or local machine data in source, examples or image metadata.
 - **Keep publishing deliberate.** Publish only matching `vX.Y.Z` release tags, use read-only repository permissions, and disable persisted checkout credentials. This project intentionally uses action version tags and `Comfy-Org/publish-node-action@main`; do not replace them with exact commit hashes or a direct `comfy-cli` install/invocation. Pass the Registry secret through the action's token input and use `skip_checkout: 'true'` after the workflow's own checkout.
-- **Regressions and review artifacts.** Follow the test-growth ladder below. Cover external-root success and refusals, traversal/encoding variants, file and directory symlinks, unchanged outside sentinels, verbatim file streaming, refused extensions, disguised documents at execution, malformed/oversized requests and worker cancellation at the owning layer. Inspect the prospective Registry contents, including new files and example metadata, without generating review artifacts. Generate security reports, manifests, review archives or other review artifacts only when the user explicitly requests them; put requested artifacts in ignored `.tmp/`, never in new root-level tracked documents. Maintain lasting rules here. Distinguish verified fixes from host-level assumptions and pending Registry/browser review.
+- **Regressions and review artifacts.** Follow the test-growth ladder below. Cover external-root success and refusals, traversal/encoding variants, file and directory symlinks, unchanged outside sentinels, verbatim file streaming, refused extensions, disguised documents at execution, malformed/oversized requests and worker cancellation at the owning layer. Inspect the prospective Registry contents, including new files and example metadata, without generating review artifacts. Generate security reports, manifests, review archives or other review artifacts only when the user explicitly requests them; put requested artifacts in ignored `.misc/reviews/`, never in new root-level tracked documents. Maintain lasting rules here. Distinguish verified fixes from host-level assumptions and pending Registry/browser review.
 
 ## Commands
 
@@ -89,9 +96,9 @@ Run `make tidy`, then `make lint test`, then `make build`, and commit whatever `
 
 ### Optional browser lane
 
-`make browser-install` installs the optional `browser` dependency group into `.tmp/browser/env/`
+`make browser-install` installs the optional `browser` dependency group into `.misc/browser/env/`
 and refreshes the latest stable `comfyui-frontend-package` there, outside `uv.lock`. Chromium lives
-in `.tmp/browser/binaries/`. Never reuse the live ComfyUI environment for this setup. `make test-browser`
+in `.misc/browser/binaries/`. Never reuse the live ComfyUI environment for this setup. `make test-browser`
 runs two grouped journeys under `tests/browser/`; ordinary pytest collection ignores that directory
 unless the launcher sets `ARISU_BROWSER_TEST=1`. `make inspect-browser` runs the same fixture host
 with visible Chromium. No browser CI or pixel baselines. Keep the browser count at two unless a new
@@ -99,9 +106,9 @@ behavior cannot extend a journey; `make test-count` reports it separately when i
 
 The loopback host serves real frontend/extension assets with synthetic API and media responses;
 HTTP and WebSocket requests cannot reach the live service or external hosts. Diagnostic screenshots
-and traces are explicitly part of this lane and belong in ignored `.tmp/browser/results/`. Keep all
-browser environments, binaries, logs, and scratch checks beneath `.tmp/browser/`, never directly in
-`.tmp/`. Inspect screenshots
+and traces are explicitly part of this lane and belong in ignored `.misc/browser/results/`. Keep all
+browser environments, binaries, logs, and browser-specific scratch checks beneath `.misc/browser/`.
+Use `/tmp` for unrelated disposable scratchpads. Inspect screenshots
 before claiming visual verification. Keep shared browser support under `tests/browser/support/`,
 never under shipped `web/`. Node-definition fixture drift is checked by the existing ComfyUI pack
 regression. Preserve default appearance and legacy rendering; fail visibly on frontend incompatibility.

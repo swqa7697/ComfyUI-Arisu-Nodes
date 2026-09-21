@@ -22,7 +22,7 @@ from assets.prompt_workbench.events import activity
 
 ROOT = Path(__file__).resolve().parents[3]
 FIXTURES = ROOT / "tests/browser/fixtures"
-ARTIFACTS = ROOT / ".tmp/browser/results"
+ARTIFACTS = ROOT / ".misc/browser/results"
 STUDIO = "ArisuMiniMaxH3ResourceStudio"
 WORKBENCH = "ArisuMiniMaxH3PromptWorkbench"
 DRAFT = "A paper boat drifts across a sunlit pond. The camera follows slowly."
