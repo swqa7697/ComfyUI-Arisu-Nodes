@@ -3,7 +3,49 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, Dict, List
+
+
+class EventValidationError(ValueError):
+    """A provider rejection with a fixed, payload-free reason."""
+
+
+def _scalar(value: Any) -> str:
+    """Bound metadata and suppress credentials, paths and terminal controls."""
+    if not isinstance(value, str):
+        return "<" + type(value).__name__ + ">"
+    if re.search(r"(?i)bearer|token|api[_-]?key|\b(?:sk-|xai-)|[/\\\x00-\x1f\x7f]", value):
+        return "<redacted>"
+    return value[:160]
+
+
+def _servers(value: Any) -> Any:
+    if not isinstance(value, list):
+        return "<" + type(value).__name__ + ">"
+    return [
+        {key: _scalar(item.get(key)) for key in ("name", "status")} if isinstance(item, dict) else "<" + type(item).__name__ + ">"
+        for item in value[:8]
+    ]
+
+
+def diagnostic(event: Any, provider: str, version: Any, reason: str) -> str:
+    """Describe a rejected envelope without rendering its content or tool payloads."""
+    summary: Dict[str, Any] = {"provider": _scalar(provider), "cli_version": _scalar(version)}
+    if isinstance(event, dict):
+        summary.update({key: _scalar(event[key]) for key in ("type", "subtype") if key in event})
+        if "mcp_servers" in event:
+            summary["mcp_servers"] = _servers(event["mcp_servers"])
+    else:
+        summary["event"] = "<" + type(event).__name__ + ">"
+    details = json.dumps(summary, ensure_ascii=False)
+    # Bound encoded bytes as well as characters; keep the summary valid JSON.
+    while len(details.encode("utf-8")) > 4096:
+        summary["mcp_servers"].pop()
+        details = json.dumps(summary, ensure_ascii=False)
+    return "ARISU_ACTIVITY " + json.dumps(
+        {"version": 1, "entries": [{"id": "", "kind": "error", "text": reason, "details": details}]}, ensure_ascii=False
+    )
 
 
 def _text(content: Any) -> str:
@@ -23,7 +65,8 @@ def activity(event: Dict[str, Any], provider: str = "") -> str:
         entries.append({"id": provider + ":" + identifier if identifier else "", "kind": kind, "text": str(text), "details": details})
 
     kind = event.get("type", "progress")
-    item = event.get("item") or {}
+    item = event.get("item") if kind in ("progress", "item.started", "item.updated", "item.completed") else {}
+    item = item if isinstance(item, dict) else {}
     item_type = item.get("type", "")
     identifier = str(item.get("id", ""))
     if item_type in ("reasoning", "agent_message"):
@@ -35,7 +78,7 @@ def activity(event: Dict[str, Any], provider: str = "") -> str:
         if item.get("error"):
             details += "\n" + str(item["error"])
         add("tool", str(item.get("server", "")) + "." + str(item.get("tool", "")), identifier, details)
-    elif isinstance(event.get("message"), dict):
+    elif kind in ("assistant", "user") and isinstance(event.get("message"), dict):
         message = event["message"]
         message_id = str(message.get("id") or event.get("uuid") or "")
         for index, block in enumerate(message.get("content", [])):
@@ -65,7 +108,12 @@ def activity(event: Dict[str, Any], provider: str = "") -> str:
             "details",
             "Agent session",
             details=json.dumps(
-                {key: event[key] for key in ("subtype", "model", "permissionMode", "tools") if key in event}, ensure_ascii=False, indent=2
+                {
+                    **{key: event[key] for key in ("subtype", "model", "permissionMode", "tools") if key in event},
+                    **({"mcp_servers": _servers(event["mcp_servers"])} if "mcp_servers" in event else {}),
+                },
+                ensure_ascii=False,
+                indent=2,
             ),
         )
     elif kind in ("thread.started", "turn.started", "turn.completed", "result"):

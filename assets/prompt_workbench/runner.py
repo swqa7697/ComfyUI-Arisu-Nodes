@@ -13,7 +13,7 @@ import tempfile
 from typing import Any, Dict, List
 
 from contract import POLICY_REVISION, context, final_response, read_text
-from events import activity
+from events import EventValidationError, activity, diagnostic
 from gate import AUDIT
 from runtime import Runtime, stop_on_signal
 
@@ -86,13 +86,19 @@ def generate(agent: str, options: Dict[str, Any]):
                     if "hook" in line.lower() and any(word in line.lower() for word in ("fail", "error", "timeout", "timed out")):
                         raise ValueError("agent policy hook failed")
                     continue
-                if completed:
-                    raise ValueError("agent emitted events after completion")
-                event = json.loads(line)
-                if not isinstance(event, dict):
-                    raise TypeError("invalid agent event")
+                event = None
+                try:
+                    event = json.loads(line)
+                    if completed:
+                        raise EventValidationError("Agent emitted events after completion")
+                    if not isinstance(event, dict):
+                        raise EventValidationError("Malformed agent event envelope")
+                    value = adapter.event(event)
+                except (ValueError, TypeError, AttributeError, KeyError) as error:
+                    reason = str(error) if isinstance(error, EventValidationError) else "Provider event rejected or malformed"
+                    print(diagnostic(event, agent, details.get("version"), reason), flush=True)
+                    raise ValueError(reason) from None
                 print(activity(event, agent), flush=True)
-                value = adapter.event(event)
                 completed = adapter.is_complete(event)
                 if value:
                     final = value

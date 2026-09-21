@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 from contract import INPUTS, POLICY_REVISION, contained_file, read_text
+from events import EventValidationError
 from gate import authorize
 from process import rpc, run
 
@@ -130,38 +131,108 @@ def command(model: str, effort: str, prompt: str, assets: List[Dict[str, Any]]) 
     return arguments
 
 
+def _startup(value: Dict[str, Any]):
+    """Validate authorization separately from the MCP startup snapshot."""
+    tools = value.get("tools")
+    if not isinstance(tools, list) or any(not isinstance(tool, str) for tool in tools):
+        raise EventValidationError("Grok malformed tool list")
+    permitted = {"search_tool", "use_tool", "workbench__get_context", "workbench__read_skill"}
+    if set(tools) - permitted:
+        raise EventValidationError("Grok advertised prohibited tools")
+    if value.get("permissionMode") != "dontAsk":
+        raise EventValidationError("Grok permission mode mismatch")
+    servers = value.get("mcp_servers")
+    if not isinstance(servers, list):
+        raise EventValidationError("Grok malformed MCP server list")
+    if len(servers) != 1:
+        raise EventValidationError("Grok expected exactly one MCP server")
+    server = servers[0]
+    if not isinstance(server, dict) or any(not isinstance(server.get(key), str) for key in ("name", "status")):
+        raise EventValidationError("Grok malformed MCP server entry")
+    if server["name"] != "workbench":
+        raise EventValidationError("Grok unauthorized MCP server")
+    status = server["status"]
+    # Grok snapshots MCP before its prompt-time startup wait. Pending is valid;
+    # the runner still requires both managed MCP reads before accepting output.
+    if status in ("pending", "connected"):
+        return
+    failures = {
+        "failed": "Grok MCP connection failed",
+        "disabled": "Grok MCP server disabled",
+        "needs-auth": "Grok MCP authentication required",
+    }
+    raise EventValidationError(failures.get(status, "Grok unsupported MCP status"))
+
+
+def _content(value: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Check the message envelope before interpreting individual blocks."""
+    message = value.get("message")
+    if not isinstance(message, dict) or not isinstance(message.get("content"), list):
+        raise EventValidationError("Grok malformed message content")
+    content = message["content"]
+    if any(not isinstance(block, dict) or not isinstance(block.get("type"), str) for block in content):
+        raise EventValidationError("Grok malformed content block")
+    return content
+
+
+def _assistant(content: List[Dict[str, Any]]) -> str:
+    for block in content:
+        kind = block["type"]
+        if kind == "tool_use":
+            if not isinstance(block.get("name"), str) or not isinstance(block.get("input"), dict):
+                raise EventValidationError("Grok malformed tool call")
+            name, arguments = normalize({"toolName": block["name"], "toolInput": block["input"]})
+            if not authorize(name, arguments):
+                raise EventValidationError("Grok attempted a prohibited tool")
+        elif kind in ("text", "thinking"):
+            field = "text" if kind == "text" else "thinking"
+            if not isinstance(block.get(field), str):
+                raise EventValidationError("Grok malformed assistant text")
+        else:
+            raise EventValidationError("Grok unsupported assistant content")
+    return "\n".join(block["text"] for block in content if block["type"] == "text")
+
+
+def _tool_results(content: List[Dict[str, Any]]):
+    for block in content:
+        if block["type"] != "tool_result":
+            raise EventValidationError("Grok unsupported user content")
+        if not isinstance(block.get("is_error", False), bool):
+            raise EventValidationError("Grok malformed tool result")
+        if block.get("is_error"):
+            raise EventValidationError("Grok reader failed")
+        result = block.get("content", [])
+        if isinstance(result, str):
+            continue
+        if not isinstance(result, list) or any(
+            not isinstance(item, dict)
+            or not isinstance(item.get("type"), str)
+            or (item["type"] == "text" and not isinstance(item.get("text"), str))
+            for item in result
+        ):
+            raise EventValidationError("Grok malformed tool result content")
+
+
 def event(value: Dict[str, Any]) -> str:
+    """Validate recognized events without treating extra metadata as actions."""
     kind = value.get("type")
+    if not isinstance(kind, str):
+        raise EventValidationError("Grok malformed event type")
     if kind == "system" and value.get("subtype") == "init":
-        permitted = {"search_tool", "use_tool", "workbench__get_context", "workbench__read_skill"}
-        if set(value.get("tools", [])) - permitted:
-            raise ValueError("Grok advertised prohibited tools: " + str(sorted(set(value.get("tools", [])) - permitted)))
-        if value.get("permissionMode") != "dontAsk":
-            raise ValueError("Grok permission mode mismatch")
-        servers = value.get("mcp_servers", [])
-        if any(item.get("name") != "workbench" or item.get("status") != "connected" for item in servers):
-            raise ValueError("Grok MCP policy mismatch")
+        _startup(value)
         return ""
     if kind == "assistant":
-        content = value.get("message", {}).get("content", [])
-        for block in content:
-            if block.get("type") == "tool_use":
-                name, arguments = normalize({"toolName": block.get("name"), "toolInput": block.get("input", {})})
-                if not authorize(name, arguments):
-                    raise ValueError("Grok attempted a prohibited tool: " + str(block.get("name")))
-            elif block.get("type") not in ("text", "thinking"):
-                raise ValueError("unsupported Grok assistant content")
-        return "\n".join(block["text"] for block in content if block.get("type") == "text")
+        return _assistant(_content(value))
     if kind == "user":
-        for block in value.get("message", {}).get("content", []):
-            if block.get("type") != "tool_result" or block.get("is_error"):
-                raise ValueError("Grok reader failed")
+        _tool_results(_content(value))
         return ""
     if kind == "result":
+        if not isinstance(value.get("is_error", False), bool) or not isinstance(value.get("result", ""), str):
+            raise EventValidationError("Grok malformed generation result")
         if value.get("is_error") or value.get("subtype") not in (None, "success"):
-            raise ValueError("Grok generation failed")
+            raise EventValidationError("Grok generation failed")
         return value.get("result", "")
-    raise ValueError("unsupported Grok event: " + str(kind))
+    raise EventValidationError("Grok unsupported event")
 
 
 def is_complete(value: Dict[str, Any]) -> bool:

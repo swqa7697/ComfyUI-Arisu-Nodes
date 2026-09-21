@@ -266,6 +266,28 @@ def test_agent_update_preserves_working_image_and_settings_reject_unavailable_mo
     assert [entry["kind"] for entry in grok] == ["analysis", "agent"] and grok[0]["text"] == first
     result = records({"type": "result", "result": "Repeated answer", "usage": {"tokens": 100}}, "grok")
     assert len(result) == 1 and result[0]["kind"] == "progress" and "Repeated answer" not in str(result)
+    startup = {"type": "system", "subtype": "init", "mcp_servers": [{"name": "workbench", "status": "pending"}]}
+    session = records(startup, "grok")[0]
+    assert json.loads(session["details"])["mcp_servers"] == startup["mcp_servers"]
+    # Only selected envelope metadata enters rejection diagnostics, bounded in UTF-8 bytes.
+    for servers in (
+        [{"name": "workbench", "status": "pending", "credentials": "private-secret"}],
+        [{"name": "雪" * 200, "status": "🎬" * 200}] * 20,
+        [None, {"name": {"secret": "private-secret"}, "status": "Bearer private-token"}],
+        {"secret": "private-secret"},
+        [{"name": "/private/path", "status": "\x1b[31mprivate-control"}],
+    ):
+        wire = runner.diagnostic({**startup, "mcp_servers": servers, "prompt": "private-prompt"}, "grok", "grok 1.0.40", "Rejected")
+        assert len(wire.splitlines()) == 1 and "private-" not in wire and "/private" not in wire
+        entry = json.loads(wire.removeprefix("ARISU_ACTIVITY "))["entries"][0]
+        assert len(entry["details"].encode("utf-8")) <= 4096
+        summary = json.loads(entry["details"])
+        assert summary["provider"] == "grok" and summary["cli_version"] == "grok 1.0.40"
+        if isinstance(summary["mcp_servers"], list):
+            assert len(summary["mcp_servers"]) <= 8
+            for server in summary["mcp_servers"]:
+                if isinstance(server, dict):
+                    assert all(len(value) <= 160 for value in server.values())
     agents.begin_logs("codex", "generate", "framed")
     agents.log(runner.activity({"item": {"id": "secret", "type": "reasoning", "text": 'api_key="secret"\nBearer token\nSafe text'}}))
     redacted = json.loads(agents.read_logs()["lines"][0].removeprefix("ARISU_ACTIVITY "))["entries"][0]["text"]
@@ -609,3 +631,105 @@ def test_mcp_manifest_images_and_unlisted_or_escaping_assets(
             with pytest.raises(ValueError):
                 runner.generate("codex", {"model": "test"})
             assert "ARISU_RESULT " not in capsys.readouterr().out
+
+    # Grok can emit init before MCP connects; required reads still gate final output.
+    monkeypatch.setattr(grok_provider, "inspect", lambda: {"policy_ready": True, "policy_revision": 6})
+    monkeypatch.setattr(runner, "adapter_for", lambda agent: grok_provider)
+    init = {
+        "type": "system",
+        "subtype": "init",
+        "permissionMode": "dontAsk",
+        "tools": ["search_tool", "use_tool"],
+        "mcp_servers": [{"name": "workbench", "status": "pending"}],
+    }
+    reads = [{"tool": "get_context", "arguments": {}}, {"tool": "read_skill", "arguments": {"path": "SKILL.md"}}]
+    result = {"type": "result", "subtype": "success", "result": "```text\nA quiet dolly shot.\n```"}
+    for status in ("pending", "connected", "failed", "disabled", "needs-auth", "unknown", None):
+        startup = {**init, "mcp_servers": [{"name": "workbench", "status": status}], "extra": {"future": True}}
+        if status in ("pending", "connected"):
+            assert grok_provider.event(startup) == ""
+        else:
+            with pytest.raises(ValueError, match="Grok .*MCP"):
+                grok_provider.event(startup)
+    for servers in (None, [], {}, [None], [{}], [{"name": "other", "status": "pending"}], init["mcp_servers"] * 2):
+        with pytest.raises(ValueError, match="Grok .*MCP"):
+            grok_provider.event({**init, "mcp_servers": servers})
+    for events, records, accepted in (
+        ([init, result], reads, True),
+        ([init], reads, False),
+        ([init, result, result], reads, False),
+        ([init, result], [], False),
+        ([init, result], reads[:1], False),
+        ([init, result], reads[1:], False),
+        ([init, {"type": "user", "message": {"content": [{"type": "tool_result", "is_error": True}]}}, result], reads, False),
+        ([{**init, "tools": ["bash"]}, result], reads, False),
+        ([{**init, "permissionMode": "default"}, result], reads, False),
+        ([init, {"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "bash", "input": {}}]}}], reads, False),
+    ):
+        wire = "".join(json.dumps(event) + "\n" for event in events)
+        monkeypatch.setattr(runner, "audit", lambda records=records: records)
+        monkeypatch.setattr(
+            grok_provider, "command", lambda *args, wire=wire: [sys.executable, "-c", "import sys; sys.stdout.write(" + repr(wire) + ")"]
+        )
+        if accepted:
+            runner.generate("grok", {"model": "test"})
+            assert "ARISU_RESULT " in capsys.readouterr().out
+        else:
+            with pytest.raises(ValueError):
+                runner.generate("grok", {"model": "test"})
+            assert "ARISU_RESULT " not in capsys.readouterr().out
+
+    # Malformed envelopes fail deliberately, and failure reasons distinguish the cause.
+    reasons = set()
+    for invalid in (
+        {**init, "tools": None},
+        {**init, "tools": [{}]},
+        {**init, "mcp_servers": None},
+        {**init, "mcp_servers": []},
+        {**init, "mcp_servers": [None]},
+        {**init, "mcp_servers": [{"name": "other", "status": "pending"}]},
+        *({**init, "mcp_servers": [{"name": "workbench", "status": state}]} for state in ("failed", "disabled", "needs-auth", "new")),
+        {"type": []},
+        {"type": "new"},
+        {"type": "assistant", "message": None},
+        {"type": "assistant", "message": {"content": [None]}},
+        {"type": "assistant", "message": {"content": [{"type": "text", "text": {}}]}},
+        {"type": "assistant", "message": {"content": [{"type": "thinking", "thinking": []}]}},
+        {"type": "assistant", "message": {"content": [{"type": "tool_use", "name": [], "input": {}}]}},
+        {"type": "user", "message": {"content": [{"type": "tool_result", "content": [None]}]}},
+        {**result, "result": {}},
+        {**result, "is_error": "false"},
+    ):
+        with pytest.raises(runner.EventValidationError) as rejected:
+            grok_provider.event(invalid)
+        reasons.add(str(rejected.value))
+    assert {
+        "Grok MCP connection failed",
+        "Grok MCP server disabled",
+        "Grok MCP authentication required",
+        "Grok unsupported MCP status",
+        "Grok unauthorized MCP server",
+        "Grok malformed MCP server entry",
+    } <= reasons
+
+    # Neither provider's rejected payload reaches the normal activity renderer.
+    def forbidden_activity(*args: Any) -> str:
+        raise AssertionError("rejected event reached activity formatting")
+
+    with monkeypatch.context() as patches:
+        patches.setattr(runner, "activity", forbidden_activity)
+        for selected, invalid in (
+            (grok_provider, {**init, "tools": ["bash"], "prompt": "private-prompt"}),
+            (provider, {"type": "item.started", "item": {"type": "command_execution", "command": "private-command"}}),
+            (grok_provider, ["private-envelope"]),
+        ):
+            patches.setattr(runner, "adapter_for", lambda agent, selected=selected: selected)
+            patches.setattr(selected, "inspect", lambda: {"policy_ready": True, "policy_revision": 6, "version": "test-cli 1.0"})
+            wire = json.dumps(invalid) + "\n"
+            patches.setattr(selected, "command", lambda *args, wire=wire: [sys.executable, "-c", "print(" + repr(wire) + ")"])
+            with pytest.raises(ValueError):
+                runner.generate("grok" if selected is grok_provider else "codex", {"model": "test"})
+            output = capsys.readouterr().out
+            assert "private-" not in output and "ARISU_RESULT" not in output
+            entry = json.loads(output.removeprefix("ARISU_ACTIVITY "))["entries"][0]
+            assert entry["kind"] == "error" and json.loads(entry["details"])["cli_version"] == "test-cli 1.0"

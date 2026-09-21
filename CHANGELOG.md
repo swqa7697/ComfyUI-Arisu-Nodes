@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Allow Grok Prompt Workbench generation while MCP startup is pending and report clearer, bounded provider validation errors.
+
 ## [1.2.3] - 2026-09-17
 
 ### Fixed
