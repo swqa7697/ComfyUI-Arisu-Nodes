@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Preserve the expanded or collapsed Motion Context section in Prompt Workbench across panel refreshes and connection changes.
 - Prepare Prompt Workbench settings and references on CPU without waiting for video generation; isolate queued motion preparation caches while retaining normal memory-pressure relief.
 - Stream Grok Prompt Workbench thoughts during generation and drain provider output promptly without waiting for a completed round.
 - Allow Grok Prompt Workbench generation while MCP startup is pending and report clearer, bounded provider validation errors.

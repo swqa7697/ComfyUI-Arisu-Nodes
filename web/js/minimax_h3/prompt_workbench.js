@@ -593,6 +593,23 @@ function render(node) {
   const time = generationTime(run);
   state.timeElement = el('span', { className: 'generation-time', textContent: time ? ` · ${time}` : '', ariaLive: 'off' });
   const statusRow = el('div', { className: 'status-row' }, [statusElement, state.timeElement]);
+  state.motionContext = el(
+    'details',
+    { className: 'context', open: state.motionContext?.open ?? (linked(node, 'context_latent') && linked(node, 'vae')) },
+    [
+      el('summary', {}, [
+        el('span', { textContent: 'Motion Context' }),
+        el('label', { className: 'motion-switch', onclick: (event) => event.stopPropagation() }, [
+          el('span', { textContent: 'Enable' }),
+          motionToggle,
+        ]),
+      ]),
+      ...(!linked(node, 'context_latent') || !linked(node, 'vae')
+        ? [el('div', { className: 'hint', textContent: 'Connect context_latent and vae to use motion context.' })]
+        : []),
+      motion,
+    ],
+  );
   const left = el('div', { className: 'generation' }, [
     el('div', { className: 'section-title', textContent: 'Prompt Direction' }),
     el('fieldset', { className: 'generation-fields', disabled: !state.agents?.docker, onwheel: keepScrollWheel }, [
@@ -612,19 +629,7 @@ function render(node) {
       ]),
       textField('requirements', 'Requirements', true, 'Describe the shot, motion, pacing…'),
       textField('trigger_words', 'LoRA Trigger Words', false, 'e.g. aiko_style, filmgrain'),
-      el('details', { className: 'context', open: linked(node, 'context_latent') && linked(node, 'vae') }, [
-        el('summary', {}, [
-          el('span', { textContent: 'Motion Context' }),
-          el('label', { className: 'motion-switch', onclick: (event) => event.stopPropagation() }, [
-            el('span', { textContent: 'Enable' }),
-            motionToggle,
-          ]),
-        ]),
-        ...(!linked(node, 'context_latent') || !linked(node, 'vae')
-          ? [el('div', { className: 'hint', textContent: 'Connect context_latent and vae to use motion context.' })]
-          : []),
-        motion,
-      ]),
+      state.motionContext,
       references,
     ]),
     el('div', { className: 'footer' }, [statusRow, el('div', { className: 'actions' }, actions)]),

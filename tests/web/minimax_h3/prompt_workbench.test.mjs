@@ -71,6 +71,13 @@ test('Workbench keeps finalized text independent of setup, source notes and revi
     await settle();
     assert(find(panel(node), 'Setup') && find(panel(node), 'Generate Prompt').disabled);
     assert(!find(panel(node), 'Generation Results').disabled);
+    // Disclosure choices survive rebuilds even before a browser toggle event arrives.
+    const motionContext = () => descendants(panel(node)).find((item) => item.className === 'context');
+    assert.equal(motionContext().open, false);
+    motionContext().open = true;
+    find(panel(node), 'Skill').onchange();
+    assert.equal(motionContext().open, true);
+
     // Disabling motion preserves connected sockets and stored controls.
     const latentInput = node.inputs.find((item) => item.name === 'context_latent');
     const vaeInput = node.inputs.find((item) => item.name === 'vae');
@@ -78,10 +85,13 @@ test('Workbench keeps finalized text independent of setup, source notes and revi
     latentInput.link = 990;
     definition.prototype.onConnectionsChange.call(node);
     assert.equal(find(panel(node), 'Enable motion context').disabled, true);
+    assert.equal(motionContext().open, true);
+    motionContext().open = false;
     vaeInput.link = 991;
     definition.prototype.onConnectionsChange.call(node);
     await settle();
     assert.equal(descendants(panel(node)).find((item) => item.className === 'motion').disabled, false);
+    assert.equal(motionContext().open, false);
     const toggle = find(panel(node), 'Enable motion context');
     assert.equal(toggle.disabled, false);
     toggle.checked = false;
