@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.4] - 2026-09-20
+
 ### Added
 
 - Add an Enable motion context switch at the right of the Prompt Workbench section header, available when both motion sockets are wired; preserve connected wires and saved motion settings when disabled.

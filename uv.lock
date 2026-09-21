@@ -176,7 +176,7 @@ wheels = [
 
 [[package]]
 name = "arisu-nodes"
-version = "1.2.3"
+version = "1.2.4"
 source = { editable = "." }
 dependencies = [
     { name = "av", version = "17.1.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
