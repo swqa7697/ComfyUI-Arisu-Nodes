@@ -36,7 +36,17 @@ Cancellation affects this job; it does not interrupt unrelated ComfyUI work.
 Connect **H3 Motion Context Load Latent** to `context_latent` and its video VAE
 to `vae`. Both sockets are required to enable Motion Context. The section opens
 automatically when both are connected; click **Motion context** to expand or
-collapse its controls.
+collapse its controls. The **Enable motion context** checkbox at the right of the header
+defaults to on and is available only when both sockets are connected. Clicking the checkbox
+does not expand or collapse the section. Switch it off for a
+first clip without disconnecting either wire; motion settings remain saved, and motion
+frames and notes are omitted from that generation.
+
+Settings and reference preparation run on CPU without entering the video queue. Only
+motion preparation joins that queue, using the GPU for VAE decoding after earlier video
+jobs finish. Workbench uses a separate execution cache for this preparation, preserving
+video cache entries. Memory pressure, model offloading, and changes to the video workflow
+can still cause reloads or recomputation.
 
 - Load index **0** returns no previous context: the first clip needs no VAE decode.
 - Windows **5, 22, 39, 56** are video frames at 24 fps. Respectively **2, 4, 6, 8** ordered stills

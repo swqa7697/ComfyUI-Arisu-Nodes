@@ -94,8 +94,13 @@ def test_workbench_plain_string_first_clip_and_phase_aligned_tail(tmp_path: Path
     with Image.open(continued.directory / continued.motion[-1]["file"]) as image:
         assert image.getpixel((0, 0)) == (255, 255, 255)
     repeated = job("repeated")
-    node.execute(**inputs(prepare_job="repeated", context_latent=latent, vae=vae))
-    assert len(repeated.motion) == 4 and vae.calls == 1
+    fresh_vae = Vae()
+    node.execute(**inputs(prepare_job="repeated", context_latent=latent, vae=fresh_vae))
+    assert len(repeated.motion) == 4 and fresh_vae.calls == 0 and vae.calls == 1
+    revised = job("revised-weights")
+    revised.vae_revision = "updated-model"
+    node.execute(**inputs(prepare_job=revised.id, context_latent=latent, vae=fresh_vae))
+    assert fresh_vae.calls == 1
     for length, count in ((5, 2), (39, 6), (56, 8)):
         vae.length = length
         selected = job("motion-" + str(length), length)
@@ -319,7 +324,51 @@ def test_workbench_stages_crops_refuses_escapes_and_cancellation_retains_guard(t
         assert prepared_job.public()["generation_elapsed_ms"] is None
         prepared_job.resources = ResourceBundle(images=(image,))
         prepared_job.roots = {"input": str(source)}
-        prepared_job.prepared.set()
+        if index == 0:
+            # Description preparation and the media worker finish while GPU motion is still queued.
+            prepared_job.cpu_context = True
+            prepared_job.context_graph = {
+                "w": {"inputs": {"resources": ["r", 0], "video_settings": ["s", 0]}},
+                "r": {
+                    "class_type": "ArisuMiniMaxH3ResourceStudio",
+                    "inputs": {
+                        "aspect_ratio": "16:9 (Widescreen)",
+                        "resources_json": json.dumps(
+                            {
+                                "version": 1,
+                                "keyframes": {"first": None, "last": None},
+                                "references": [
+                                    {
+                                        "id": "ref",
+                                        "kind": "image",
+                                        "root": "input",
+                                        "path": "reference.png",
+                                        "muted": False,
+                                        "crop": {"left": 2, "top": 2, "width": 8, "height": 6},
+                                    }
+                                ],
+                            }
+                        ),
+                    },
+                },
+                "s": {
+                    "class_type": "ArisuMiniMaxH3VideoSettings",
+                    "inputs": {"aspect_ratio": "16:9 (Widescreen)", "megapixels": 1.0, "duration": ["duration", 0]},
+                },
+                "duration": {"class_type": "PrimitiveFloat", "inputs": {"value": 5.0}},
+            }
+
+            def motion_pending(prepared_job: Generation = prepared_job) -> bool:
+                if prepared_job.cancelled.is_set():
+                    return True
+                assert list(prepared_job.directory.glob("*.webp")), "CPU media must finish before waiting for motion"
+                assert prepared_job.settings.length == 124
+                prepared_job.prepared.set()
+                return False
+
+            prepared_job.queue_finished = motion_pending
+        else:
+            prepared_job.prepared.set()
         owner.execute(prepared_job)
         assert prepared_job.state == ("failed" if index == 2 else "cancelled" if index == 3 else "complete")
         if index < 2:

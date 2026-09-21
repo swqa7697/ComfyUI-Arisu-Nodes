@@ -44,6 +44,7 @@ test('Workbench keeps finalized text independent of setup, source notes and revi
       requirements: '',
       finalized_prompt: 'keep',
       prepare_job: 'stale',
+      motion_enabled: true,
     }).map(([name, value]) => ({ name, value })),
     inputs: ['video_settings', 'resources', 'context_latent', 'vae'].map((name) => ({ name })),
   });
@@ -70,6 +71,35 @@ test('Workbench keeps finalized text independent of setup, source notes and revi
     await settle();
     assert(find(panel(node), 'Setup') && find(panel(node), 'Generate Prompt').disabled);
     assert(!find(panel(node), 'Generation Results').disabled);
+    // Disabling motion preserves connected sockets and stored controls.
+    const latentInput = node.inputs.find((item) => item.name === 'context_latent');
+    const vaeInput = node.inputs.find((item) => item.name === 'vae');
+    assert.equal(find(panel(node), 'Enable motion context').disabled, true);
+    latentInput.link = 990;
+    definition.prototype.onConnectionsChange.call(node);
+    assert.equal(find(panel(node), 'Enable motion context').disabled, true);
+    vaeInput.link = 991;
+    definition.prototype.onConnectionsChange.call(node);
+    await settle();
+    assert.equal(descendants(panel(node)).find((item) => item.className === 'motion').disabled, false);
+    const toggle = find(panel(node), 'Enable motion context');
+    assert.equal(toggle.disabled, false);
+    toggle.checked = false;
+    toggle.onchange();
+    assert.equal(descendants(panel(node)).find((item) => item.className === 'motion').disabled, true);
+    assert.equal(latentInput.link, 990);
+    assert.equal(vaeInput.link, 991);
+    assert.equal(widget(node, 'context_length').value, '22');
+    const noMotion = captureWorkbenchPrompt(node);
+    assert.equal(noMotion.output['1'].inputs.context_latent, undefined);
+    assert.equal(noMotion.output['1'].inputs.vae, undefined);
+    toggle.checked = true;
+    toggle.onchange();
+    delete latentInput.link;
+    definition.prototype.onConnectionsChange.call(node);
+    assert.equal(find(panel(node), 'Enable motion context').disabled, true);
+    assert.equal(widget(node, 'motion_enabled').value, true);
+    delete vaeInput.link;
 
     const data = {
       version: 1,
@@ -311,6 +341,12 @@ test('Workbench keeps finalized text independent of setup, source notes and revi
     await settle();
     assert.equal(releases(), beforeEdits);
     assert(find(panel(node), 'Generate Prompt').disabled);
+    assert.equal(captured.options.motion_enabled, true);
+    const motionSwitch = find(panel(node), 'Enable motion context');
+    motionSwitch.checked = false;
+    motionSwitch.onchange();
+    assert.equal(widget(node, 'motion_enabled').value, false);
+    assert.equal(captured.options.motion_enabled, true);
     assert.equal(captured.options.requirements, '');
     assert.equal(JSON.parse(captured.prompt['2'].inputs.resources_json).references.length, 3);
     assert.equal(captured.node_id, '20:1');

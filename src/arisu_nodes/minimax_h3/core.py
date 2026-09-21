@@ -636,7 +636,10 @@ def workbench_options(value: Any) -> Dict[str, Any]:
     """Validate the generation snapshot without allowing executable configuration."""
     if not isinstance(value, dict):
         raise TypeError("invalid workbench settings")
-    result = {}
+    enabled = value.get("motion_enabled", True)
+    if type(enabled) is not bool:
+        raise ValueError("invalid motion_enabled")
+    result = {"motion_enabled": enabled}
     for key, default, limit in (
         ("agent", "codex", 16),
         ("skill", "bundled:with-ref", 160),
@@ -665,7 +668,7 @@ def workbench_options(value: Any) -> Dict[str, Any]:
     return result
 
 
-def preparation_graph(prompt: Any, node_id: str) -> Dict[str, Any]:
+def preparation_graph(prompt: Any, node_id: str, motion_enabled: bool = True) -> Dict[str, Any]:
     """Prune to fixed preparation nodes, refusing samplers and output side effects."""
     if not isinstance(prompt, dict) or node_id not in prompt or len(prompt) > 10000:
         raise ValueError("workbench is absent from the prompt")
@@ -724,7 +727,7 @@ def preparation_graph(prompt: Any, node_id: str) -> Dict[str, Any]:
     inputs = root.get("inputs", {})
     if not isinstance(inputs, dict):
         raise TypeError("invalid node inputs")
-    if not all(name in inputs for name in ("context_latent", "vae")):
+    if not motion_enabled or not all(name in inputs for name in ("context_latent", "vae")):
         inputs.pop("context_latent", None)
         inputs.pop("vae", None)
     for name, types in expected.items():

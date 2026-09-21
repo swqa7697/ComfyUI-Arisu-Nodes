@@ -1114,6 +1114,7 @@ class ArisuMiniMaxH3PromptWorkbench(io.ComfyNode):
                 io.String.Input("requirements", default="", multiline=True, socketless=True),
                 io.String.Input("finalized_prompt", default="", multiline=True, socketless=True),
                 io.String.Input("prepare_job", default="", optional=True, socketless=True),
+                io.Boolean.Input("motion_enabled", default=True, optional=True, socketless=True),
             ],
             outputs=[io.String.Output("prompt")],
         )
@@ -1147,6 +1148,7 @@ class ArisuMiniMaxH3PromptWorkbench(io.ComfyNode):
         context_latent: Optional[Dict[str, Any]] = None,
         vae: Optional[comfy.sd.VAE] = None,
         prepare_job: str = "",
+        motion_enabled: bool = True,
     ) -> io.NodeOutput:
         """Return finalized text; an authorized queue request may prepare context only."""
         if not prepare_job:
@@ -1154,7 +1156,8 @@ class ArisuMiniMaxH3PromptWorkbench(io.ComfyNode):
         owner = workbench_service()
         job = owner.take(prepare_job, getattr(cls.hidden, "unique_id", None))
         try:
-            job.settings, job.resources, job.roots = video_settings, resources, _resource_roots()
+            if not job.cpu_context:
+                job.settings, job.resources, job.roots = video_settings, resources, _resource_roots()
             if context_latent is not None:
                 if vae is None:
                     raise PreparationError("connect a video VAE for motion context")
@@ -1169,19 +1172,27 @@ class ArisuMiniMaxH3PromptWorkbench(io.ComfyNode):
                 if video.shape[0] != 1:
                     raise PreparationError("motion context requires one video")
                 start, end = motion_tail(video.shape[2], job.options["context_length"])
-                tail = video[:, :, start:end].contiguous()
+                tail = video[:, :, start:end].detach().cpu().contiguous()
                 if not all(tail.shape) or not torch.isfinite(tail).all():
                     raise PreparationError("motion context contains empty dimensions or non-finite values")
                 digest = hashlib.sha256(tail.detach().float().cpu().contiguous().numpy().tobytes()).hexdigest()
-                key = motion_key(job, tail.shape, str(id(vae)) + digest)
+                if job.cpu_context:
+                    from .workbench_execution import vae_identity
+
+                    if vae_identity(job) != job.vae_revision:
+                        raise PreparationError("video VAE changed during preparation; generate again")
+                key = motion_key(job, tail.shape, job.vae_revision + digest)
                 if not owner.cache_motion(job, key):
                     if job.cancelled.is_set():
                         raise PreparationError("generation cancelled")
                     decoded = vae.decode(tail)
+                    if job.cpu_context and vae_identity(job) != job.vae_revision:
+                        raise PreparationError("video VAE changed during decoding; generate again")
                     if decoded.ndim == 5 and decoded.shape[0] == 1:
                         decoded = decoded[0]
                     if decoded.ndim != 4 or decoded.shape[0] != job.options["context_length"] or decoded.shape[-1] != 3:
                         raise PreparationError("video VAE returned an unexpected motion shape")
+                    decoded = decoded.detach().cpu()
                     indices = motion_samples(decoded.shape[0])
                     images = (decoded[indices].detach().float().cpu().clamp(0, 1).numpy() * 255).round().astype("uint8")
                     owner.cache_motion(job, key, [Image.fromarray(image) for image in images])

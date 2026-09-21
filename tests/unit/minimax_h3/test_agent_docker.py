@@ -39,6 +39,11 @@ def test_generation_contract_prunes_side_effects_and_parses_only_final_markdown(
         "v": {"class_type": "VAELoader", "inputs": {"vae_name": "video.safetensors"}},
         "s": {"class_type": "KSampler", "inputs": {"prompt": ["w", 0]}},
     }
+    assert set(preparation_graph(prompt, "w", False)) == {"w"}
+    assert workbench_options({})["motion_enabled"] is True
+    for invalid in ("false", 0, None):
+        with pytest.raises(ValueError, match="motion_enabled"):
+            workbench_options({"motion_enabled": invalid})
     selected = preparation_graph(prompt, "w")
     assert set(selected) == {"w", "l", "v"}
     selected["w"]["inputs"]["prepare_job"] = "not persisted"

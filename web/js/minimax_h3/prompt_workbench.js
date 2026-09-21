@@ -22,6 +22,7 @@ const FIELDS = [
   'requirements',
   'finalized_prompt',
   'prepare_job',
+  'motion_enabled',
 ];
 
 const STYLE = `
@@ -47,6 +48,9 @@ const STYLE = `
 .arisu-workbench .generation>.section-title{margin-bottom:-6px;}
 .arisu-workbench :is(input,textarea)::placeholder{color:var(--label);opacity:.75;}
 .arisu-workbench .context{border-top:1px solid var(--line);padding-top:8px;}
+.arisu-workbench .motion-switch{float:right;display:inline-flex;align-items:center;gap:6px;margin-left:8px;cursor:pointer;}
+.arisu-workbench .context summary .motion-toggle{width:16px;height:16px;min-height:16px;margin:0;padding:0;accent-color:var(--accent);}
+.arisu-workbench .motion-switch:has(input:disabled){opacity:.5;cursor:not-allowed;}
 .arisu-workbench .context summary{cursor:pointer;color:var(--label);padding:2px 0 6px;}
 .arisu-workbench .context summary:focus-visible{outline-offset:-2px;}
 .arisu-workbench .motion{border:1px solid var(--line);margin:0;padding:8px;border-radius:4px;background:color-mix(in srgb,var(--surface) 65%,var(--panel));
@@ -82,7 +86,7 @@ function widget(node, name) {
   return node?.widgets?.find((item) => item.name === name);
 }
 function value(node, name) {
-  return widget(node, name)?.value;
+  return widget(node, name)?.value ?? (name === 'motion_enabled' ? true : undefined);
 }
 function identity() {
   return globalThis.crypto?.randomUUID?.() ?? `${String(Date.now())}-${Math.random().toString(36).slice(2)}`;
@@ -356,10 +360,9 @@ async function generate(node) {
     const snapshot = sourceSnapshot(node);
     const prompt = captureWorkbenchPrompt(node);
     const options = Object.fromEntries(
-      ['agent', 'skill', 'context_length', 'audio_context_length', 'motion_notes', 'trigger_words', 'requirements'].map((name) => [
-        name,
-        value(node, name),
-      ]),
+      ['agent', 'skill', 'context_length', 'audio_context_length', 'motion_notes', 'trigger_words', 'requirements', 'motion_enabled'].map(
+        (name) => [name, value(node, name)],
+      ),
     );
     options.reference_notes = notes(node);
     options.source_id = snapshot.sourceId;
@@ -472,15 +475,33 @@ function render(node) {
   audio.onchange = () => {
     edit(node, 'audio_context_length', Math.max(0, Math.min(240, Math.round(Number(audio.value) || 0))));
   };
-  const motion = el('fieldset', { className: 'motion', disabled: !linked(node, 'context_latent') || !linked(node, 'vae') }, [
-    el('label', {}, [
-      el('span', { textContent: 'Video Frames' }),
-      combo('context_length', ['22', '5', '39', '56'], 'Context Length in Frames'),
-    ]),
-    el('label', {}, [el('span', { textContent: 'Audio Frames' }), audio]),
-    el('div', { className: 'hint', textContent: 'Frames at 24 fps · audio 0 follows video' }),
-    textField('motion_notes', 'Notes', true, 'Notes on motion continuity…'),
-  ]);
+  const motion = el(
+    'fieldset',
+    { className: 'motion', disabled: !value(node, 'motion_enabled') || !linked(node, 'context_latent') || !linked(node, 'vae') },
+    [
+      el('label', {}, [
+        el('span', { textContent: 'Video Frames' }),
+        combo('context_length', ['22', '5', '39', '56'], 'Context Length in Frames'),
+      ]),
+      el('label', {}, [el('span', { textContent: 'Audio Frames' }), audio]),
+      el('div', { className: 'hint', textContent: 'Frames at 24 fps · audio 0 follows video' }),
+      textField('motion_notes', 'Notes', true, 'Notes on motion continuity…'),
+    ],
+  );
+  const motionToggle = el('input', {
+    type: 'checkbox',
+    className: 'motion-toggle',
+    checked: value(node, 'motion_enabled'),
+    disabled: !linked(node, 'context_latent') || !linked(node, 'vae'),
+    ariaLabel: 'Enable motion context',
+    title: 'Enable motion context',
+    onclick: (event) => event.stopPropagation(),
+    onkeydown: (event) => event.stopPropagation(),
+  });
+  motionToggle.onchange = () => {
+    edit(node, 'motion_enabled', motionToggle.checked);
+    motion.disabled = !motionToggle.checked || !linked(node, 'context_latent') || !linked(node, 'vae');
+  };
   const savedNotes = notes(node);
   const rows = source.resources.map((item) => {
     const key = noteKey(source.sourceId, item);
@@ -592,7 +613,13 @@ function render(node) {
       textField('requirements', 'Requirements', true, 'Describe the shot, motion, pacing…'),
       textField('trigger_words', 'LoRA Trigger Words', false, 'e.g. aiko_style, filmgrain'),
       el('details', { className: 'context', open: linked(node, 'context_latent') && linked(node, 'vae') }, [
-        el('summary', { textContent: 'Motion Context' }),
+        el('summary', {}, [
+          el('span', { textContent: 'Motion Context' }),
+          el('label', { className: 'motion-switch', onclick: (event) => event.stopPropagation() }, [
+            el('span', { textContent: 'Enable' }),
+            motionToggle,
+          ]),
+        ]),
         ...(!linked(node, 'context_latent') || !linked(node, 'vae')
           ? [el('div', { className: 'hint', textContent: 'Connect context_latent and vae to use motion context.' })]
           : []),
@@ -676,7 +703,13 @@ app.registerExtension({
     chain('onAdded', function () {
       bindSession(this);
     });
-    chain('onConfigure', function () {
+    chain('onConfigure', function (info) {
+      const size = info?.size ?? this.size;
+      const savedSize = size ? [...size] : null;
+      const enabled = widget(this, 'motion_enabled');
+      if (enabled && Array.isArray(info?.widgets_values) && typeof info.widgets_values[this.widgets.indexOf(enabled)] !== 'boolean') {
+        enabled.value = true;
+      }
       const state = nodes.get(this);
       if (!state) return;
       bindSession(this);
@@ -684,6 +717,7 @@ app.registerExtension({
         const control = widget(this, name);
         if (control) hideWidget(this, control);
       }
+      if (savedSize) this.setSize(savedSize);
       widget(this, 'prepare_job').value = '';
       state.sourceSignature = '';
       render(this);

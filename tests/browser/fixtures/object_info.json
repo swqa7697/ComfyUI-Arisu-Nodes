@@ -118,6 +118,13 @@
             "socketless": true,
             "multiline": false
           }
+        ],
+        "motion_enabled": [
+          "BOOLEAN",
+          {
+            "default": true,
+            "socketless": true
+          }
         ]
       },
       "hidden": {
@@ -149,7 +156,8 @@
         "resources",
         "context_latent",
         "vae",
-        "prepare_job"
+        "prepare_job",
+        "motion_enabled"
       ],
       "hidden": [
         "unique_id",

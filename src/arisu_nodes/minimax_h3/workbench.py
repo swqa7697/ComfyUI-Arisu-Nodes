@@ -23,7 +23,8 @@ from ..worker import worker_command, worker_environment
 from .agent_docker import ASSETS, AgentBusy, DockerAgents
 from .core import ResourceBundle, VideoSettings, finalized_markdown, motion_samples, validate_bundle, workbench_options
 from .media import validate_workbench_source
-from .workbench_images import PROCESSING, encode_image
+from .workbench_context import context_inputs
+from .workbench_images import IMAGE_LIMIT, PROCESSING, encode_image
 
 logger = logging.getLogger(__name__)
 CACHE_LIMIT = 2 * 1024 * 1024 * 1024
@@ -68,6 +69,9 @@ class Generation:
     cancelled: threading.Event = field(default_factory=threading.Event)
     prepared: threading.Event = field(default_factory=threading.Event)
     preparation_done: threading.Event = field(default_factory=threading.Event)
+    cpu_context: bool = False
+    context_graph: Dict[str, Any] = field(default_factory=dict)
+    vae_revision: str = ""
     state: str = "preparing"
     error: str = ""
     draft: str = ""
@@ -363,19 +367,27 @@ class Workbench:
         self.reap(workflow)
 
     def execute(self, job: Generation):
-        """Wait for queued preparation, stage media, then run the agent off the graph queue."""
+        """Prepare CPU references independently, join queued motion, then run the agent."""
         process = None
         try:
-            while not job.prepared.wait(0.1):
-                if job.queue_finished and job.queue_finished():
-                    raise ValueError("preparation did not complete; check the connected loaders and ComfyUI execution error")
-                if job.cancelled.is_set() or time.monotonic() > job.deadline:
-                    raise ValueError("generation cancelled or preparation timed out")
             if job.error:
                 raise ValueError(job.error)
-            if job.cancelled.is_set():
-                raise ValueError("generation cancelled")
-            job.state = "preparing_media"
+            if job.cancelled.is_set() or time.monotonic() > job.deadline:
+                raise ValueError("generation cancelled or preparation timed out")
+            if job.cpu_context:
+                values = context_inputs(job.context_graph, job.node_id, job.roots)
+                job.settings = values.get("video_settings")
+                job.resources = values.get("resources")
+            else:
+                while not job.prepared.wait(0.1):
+                    if job.queue_finished and job.queue_finished():
+                        raise ValueError("preparation did not complete; check the connected loaders and ComfyUI execution error")
+                    if job.cancelled.is_set() or time.monotonic() > job.deadline:
+                        raise ValueError("generation cancelled or preparation timed out")
+                if job.error:
+                    raise ValueError(job.error)
+                if job.cancelled.is_set():
+                    raise ValueError("generation cancelled")
             resources = job.resources or ResourceBundle()
             validate_bundle(resources)
             sources = []
@@ -389,11 +401,13 @@ class Workbench:
                         validate_workbench_source(job.roots, item)
                         sources.append({"role": role, "item": asdict(item)})
             used = self.used_bytes()
+            # Reserve eight maximum-size motion stills and their cache links while GPU work is outstanding.
+            motion_reserve = 16 * IMAGE_LIMIT if job.queue_finished and not job.prepared.is_set() else 0
             payload = {
                 "directory": str(job.directory),
                 "roots": job.roots,
                 "resources": sources,
-                "max_bytes": CACHE_LIMIT - used,
+                "max_bytes": max(0, CACHE_LIMIT - used - motion_reserve),
             }
             media_key = hashlib.sha256(json.dumps([sources, PROCESSING], sort_keys=True).encode()).hexdigest()
             assets = self.restore_assets(job, media_key)
@@ -422,6 +436,15 @@ class Workbench:
                     raise ValueError("selected media could not be prepared")
                 assets = json.loads(stdout)
                 self.store_assets(job, media_key, assets)
+            while not job.prepared.wait(0.1):
+                if job.queue_finished and job.queue_finished():
+                    raise ValueError("preparation did not complete; check the connected loaders and ComfyUI execution error")
+                if job.cancelled.is_set() or time.monotonic() > job.deadline:
+                    raise ValueError("generation cancelled or preparation timed out")
+            if job.error:
+                raise ValueError(job.error)
+            if job.cancelled.is_set():
+                raise ValueError("generation cancelled")
             assets = assets + job.motion
             (job.directory / "context.json").write_text(json.dumps(job_context(job, assets, resources), ensure_ascii=False))
             self.enforce_budget()
