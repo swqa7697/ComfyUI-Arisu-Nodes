@@ -55,6 +55,20 @@ def inspect_native_nodes(page: Page, name: str):
     for node_type in definitions:
         if node_type in (STUDIO, WORKBENCH):
             continue
+        if node_type == "ArisuMiniMaxH3ModelLoader" and page.viewport_size["width"] == 1024:
+            # Repeat the loader journey with the locked DynamicCombo accessor
+            # used by frontend 1.52.7, even when the browser lane runs newer code.
+            page.evaluate(
+                """() => {
+                const prototype = LiteGraph.registered_node_types.ArisuMiniMaxH3ModelLoader.prototype;
+                const created = prototype.onNodeCreated;
+                prototype.onNodeCreated = function () {
+                    const mode = this.widgets.find(widget => widget.name === 'mode');
+                    Object.defineProperty(mode, 'value', {configurable: false});
+                    return created.apply(this, arguments);
+                };
+            }"""
+            )
         node_id = add_node(page, node_type)
         # Defaults come from the real Colors menu. Workflow restoration must win
         # over them when the workflow carries saved custom colors.
@@ -75,7 +89,7 @@ def inspect_native_nodes(page: Page, name: str):
             node_id,
         )
         screenshot(page, name, node_type)
-        if node_type == "ArisuMiniMaxH3Loader":
+        if node_type == "ArisuMiniMaxH3ModelLoader":
             inspect_loader(page, node_id, name)
         # Canvas buttons have no DOM :hover. Sample their actual fill pixels
         # before/after pointer entry and exit, including both Path Builder cells.
@@ -164,11 +178,15 @@ def inspect_loader(page: Page, node_id: str, name: str):
         const nativePrompt = (await app.graphToPrompt()).output[id].inputs;
         check(Object.keys(nativePrompt).sort(),['base_model','mode','weight_dtype']);
         const workflow = app.graph.serialize();
+        // Older workflows carry only positional values. Mode reconstruction
+        // must not shift the base/overlay selection or the block range.
+        for (const savedNode of workflow.nodes) delete savedNode.widgets_values_named;
         await app.loadGraphData(workflow);
         node = app.graph.getNodeById(id);
         check(node.widgets.find(w=>w.name==='mode').value,'native');
         controls(true);
         set('mode','hybrid'); check(hybrid(),expected);
+        check(node.widgets.find(w=>w.name==='base_model').value,'base.safetensors');
         check(node.outputs[0].links,[link.id]); check(app.graph.getNodeById(sinkId).inputs[0].link,link.id);
         const tracker = app.extensionManager.workflow.activeWorkflow.changeTracker;
         tracker.captureCanvasState();
@@ -181,7 +199,7 @@ def inspect_loader(page: Page, node_id: str, name: str):
         // A second workflow carries separate node properties even with reused IDs.
         const saved = app.graph.serialize();
         await app.loadGraphData({nodes:[],links:[],groups:[],version:0.4});
-        const other=LiteGraph.createNode('ArisuMiniMaxH3Loader');app.graph.add(other);
+        const other=LiteGraph.createNode('ArisuMiniMaxH3ModelLoader');app.graph.add(other);
         node=other;set('mode','hybrid');set('mode.block_start',3);set('mode','native');
         await app.loadGraphData(saved);node=app.graph.getNodeById(id);check(hybrid(),expected);
         app.graph.remove(app.graph.getNodeById(sinkId));
@@ -194,7 +212,7 @@ def inspect_loader(page: Page, node_id: str, name: str):
     assert result["hybridPrompt"]["mode.block_end"] == 19
     page.get_by_text("Unsaved Workflow (3)", exact=True).click()
     page.wait_for_function(
-        """() => window.comfyAPI.app.app.graph._nodes.find(n => n.type === 'ArisuMiniMaxH3Loader')
+        """() => window.comfyAPI.app.app.graph._nodes.find(n => n.type === 'ArisuMiniMaxH3ModelLoader')
             ?.properties.arisu_h3_hybrid?.block_start === 3"""
     )
     page.get_by_text("Unsaved Workflow (4)", exact=True).click()

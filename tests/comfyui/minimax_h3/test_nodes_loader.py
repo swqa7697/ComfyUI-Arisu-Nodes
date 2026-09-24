@@ -115,15 +115,15 @@ def test_loader_preflight_and_active_branch_contract(tmp_path: Path, monkeypatch
         exported = {"base_model": "base.safetensors", "weight_dtype": "default", "mode": branch}
         if branch == "hybrid":
             exported.update({"mode." + k: v for k, v in hybrid_mode().items() if k != "mode"})
-        inputs, _hidden, dynamic = _io.get_finalized_class_inputs(h3.ArisuMiniMaxH3Loader.INPUT_TYPES(), exported)
+        inputs, _hidden, dynamic = _io.get_finalized_class_inputs(h3.ArisuMiniMaxH3ModelLoader.INPUT_TYPES(), exported)
         assert set(inputs["required"]) == set(exported)
         nested = _io.build_nested_inputs(exported, dynamic)
         assert nested["mode"] == (hybrid_mode() if branch == "hybrid" else {"mode": "native"})
         assert h3.h3_selection(nested["mode"], nested["weight_dtype"])[0] == branch
-    assert h3.ArisuMiniMaxH3Loader.execute("base.safetensors", "default", inactive)[0] is native
-    assert h3.ArisuMiniMaxH3Loader.fingerprint_inputs(
+    assert h3.ArisuMiniMaxH3ModelLoader.execute("base.safetensors", "default", inactive)[0] is native
+    assert h3.ArisuMiniMaxH3ModelLoader.fingerprint_inputs(
         "base.safetensors", "default", inactive
-    ) == h3.ArisuMiniMaxH3Loader.fingerprint_inputs("base.safetensors", "default", {"mode": "native"})
+    ) == h3.ArisuMiniMaxH3ModelLoader.fingerprint_inputs("base.safetensors", "default", {"mode": "native"})
     for change in (
         {"block_start": True},
         {"block_end": 49.5},
@@ -135,12 +135,12 @@ def test_loader_preflight_and_active_branch_contract(tmp_path: Path, monkeypatch
         {"overlay_model": "missing"},
     ):
         with pytest.raises(ValueError):
-            h3.ArisuMiniMaxH3Loader.execute("base.safetensors", "default", hybrid_mode(**change))
+            h3.ArisuMiniMaxH3ModelLoader.execute("base.safetensors", "default", hybrid_mode(**change))
     for name in ("../base.safetensors", base.path, "~base", "missing"):
         with pytest.raises(ValueError):
-            h3.ArisuMiniMaxH3Loader.execute(name, "default", inactive)
+            h3.ArisuMiniMaxH3ModelLoader.execute(name, "default", inactive)
     with pytest.raises(ValueError, match="weight_dtype"):
-        h3.ArisuMiniMaxH3Loader.execute("base.safetensors", "invalid", inactive)
+        h3.ArisuMiniMaxH3ModelLoader.execute("base.safetensors", "invalid", inactive)
     for start, end, final in ((45, 49, False), (25, 49, False), (0, 49, False), (17, 17, False), (17, 17, True)):
         plan = h3_plan(base, overlay, start, end, final, "default")
         expected = {f"blocks.{i}.adaln_proj.linear.{suffix}" for i in range(start, end + 1) for suffix in ("weight", "bias")}

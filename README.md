@@ -101,7 +101,7 @@ Click a node name for its full reference, also available through the node's righ
 
 | Node                                                                                        | Summary                                                                       |
 | ------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
-| [MiniMax H3 Model Loader](web/docs/ArisuMiniMaxH3Loader/en.md)                              | Load H3 natively or experimentally replace an inclusive AdaLN block range.    |
+| [MiniMax H3 Model Loader](web/docs/ArisuMiniMaxH3ModelLoader/en.md)                         | Load H3 natively or experimentally replace an inclusive AdaLN block range.    |
 | [MiniMax H3 Prompt Workbench](web/docs/ArisuMiniMaxH3PromptWorkbench/en.md)                 | Write prompts or generate and review drafts with Codex or Grok.               |
 | [MiniMax H3 Resource Studio](web/docs/ArisuMiniMaxH3ResourceStudio/en.md)                   | Arrange, crop, and trim keyframes and image, video, or audio references.      |
 | [MiniMax H3 Hybrid to Video](web/docs/ArisuMiniMaxH3HybridToVideo/en.md)                    | Combine keyframes and media references into H3 conditioning and an AV latent. |

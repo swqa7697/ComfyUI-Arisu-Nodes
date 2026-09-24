@@ -50,9 +50,9 @@ function updateControls(node, mode) {
 }
 
 app.registerExtension({
-  name: 'Arisu.MiniMaxH3.Loader',
+  name: 'Arisu.MiniMaxH3.ModelLoader',
   async beforeRegisterNodeDef(nodeType, nodeData) {
-    if (nodeData.name !== 'ArisuMiniMaxH3Loader') return;
+    if (nodeData.name !== 'ArisuMiniMaxH3ModelLoader') return;
     // Render both branches with native widgets. The server's native branch
     // remains empty, so inactive overlay settings never become dependencies.
     const options = nodeData.input.required.mode[1].options;
@@ -65,38 +65,78 @@ app.registerExtension({
       const callback = mode.callback;
       let configuring = false;
       const value = Object.getOwnPropertyDescriptor(mode, 'value');
-      if (!value?.get || !value?.set || !value.configurable) {
+      if (!value?.get || !value?.set) {
         throw new Error('MiniMax H3 Model Loader requires a compatible native DynamicCombo value accessor.');
       }
-      Object.defineProperty(mode, 'value', {
-        ...value,
-        set: (next) => {
-          if (!configuring) remember(this);
-          value.set.call(mode, next);
-          if (!configuring) restore(this);
-          updateControls(this, mode);
-        },
-      });
+      const tracked = new WeakSet();
+      const update = () => {
+        updateControls(this, mode);
+        if (value.configurable) return;
+        // Older frontends lock the native accessor. Capture each outgoing
+        // widget before DynamicCombo disposes it, then restore on its callback.
+        for (const name of FIELDS) {
+          const widget = this.widgets.find((item) => item.name === `mode.${name}`);
+          if (!widget || tracked.has(widget)) continue;
+          tracked.add(widget);
+          const removed = widget.onRemove;
+          widget.onRemove = (...args) => {
+            if (!configuring) {
+              this.properties ??= {};
+              this.properties[PROPERTY] = { ...selections(this.properties[PROPERTY]), ...selections({ [name]: widget.value }) };
+            }
+            return removed?.apply(widget, args);
+          };
+        }
+      };
+      if (value.configurable) {
+        Object.defineProperty(mode, 'value', {
+          ...value,
+          set: (next) => {
+            if (!configuring) remember(this);
+            value.set.call(mode, next);
+            if (!configuring) restore(this);
+            update();
+          },
+        });
+      }
       mode.callback = (...args) => {
         const output = callback?.apply(mode, args);
         if (!configuring) restore(this);
-        updateControls(this, mode);
+        update();
         return output;
       };
       const configure = this.configure;
-      this.configure = function () {
+      this.configure = function (info) {
         configuring = true;
         try {
+          // The locked setter rebuilds children ahead of base_model during
+          // positional restoration. Reapply by the saved display order after
+          // native configure finishes, without changing the workflow object.
+          const saved = !value.configurable
+            ? (info.widgets_values_named ??
+              Object.fromEntries(
+                this.widgets
+                  .filter((widget) => widget.serialize !== false)
+                  .flatMap((widget, index) =>
+                    index < (info.widgets_values?.length ?? 0) ? [[widget.name, info.widgets_values[index]]] : [],
+                  ),
+              ))
+            : null;
           const output = configure.apply(this, arguments);
+          if (saved) {
+            for (const widget of this.widgets) {
+              if (widget !== mode && Object.hasOwn(saved, widget.name)) widget.value = saved[widget.name];
+            }
+          }
           // Serialized widgets take precedence in both modes.
           remember(this);
           return output;
         } finally {
           configuring = false;
-          updateControls(this, mode);
+          update();
         }
       };
-      updateControls(this, mode);
+      update();
       return result;
     };
     const serialize = nodeType.prototype.onSerialize;

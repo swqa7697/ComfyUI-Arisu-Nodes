@@ -1,5 +1,5 @@
 {
-  "ArisuMiniMaxH3Loader": {
+  "ArisuMiniMaxH3ModelLoader": {
     "input": {
       "required": {
         "mode": [
@@ -99,7 +99,7 @@
       null
     ],
     "output_matchtypes": null,
-    "name": "ArisuMiniMaxH3Loader",
+    "name": "ArisuMiniMaxH3ModelLoader",
     "display_name": "MiniMax H3 Model Loader",
     "description": "Load one H3 checkpoint natively, or experimentally replace an inclusive range of complete AdaLN families.",
     "python_module": "custom_nodes.arisu",

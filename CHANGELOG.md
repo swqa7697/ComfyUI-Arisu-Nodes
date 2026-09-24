@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Add MiniMax H3 Model Loader with `native` loading and experimental `hybrid` AdaLN replacement over an inclusive block range, an independent final-AdaLN toggle, source-checked native reload support, mode-first controls, and visible disabled `hybrid` settings in `native` mode.
+- Add MiniMax H3 Model Loader with `native` loading and experimental `hybrid` AdaLN replacement over an inclusive block range, an independent final-AdaLN toggle, source-checked native reload support, mode-first controls, and visible disabled `hybrid` settings in `native` mode; preserve model selections across mode changes and workflow restoration.
 
 ## [1.2.4] - 2026-09-20
 

@@ -134,7 +134,7 @@ class FixtureServer:
             definitions = json.loads((FIXTURES / "object_info.json").read_text())
             # Portable schema fixtures contain no host inventory. These names are
             # synthetic browser choices; no checkpoint endpoint serves their bytes.
-            loader = definitions["ArisuMiniMaxH3Loader"]["input"]["required"]
+            loader = definitions["ArisuMiniMaxH3ModelLoader"]["input"]["required"]
             models = ["base.safetensors", "overlay.safetensors"]
             loader["base_model"][1]["options"] = models
             loader["mode"][1]["options"][1]["inputs"]["required"]["overlay_model"][1]["options"] = models

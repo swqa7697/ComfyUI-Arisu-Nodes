@@ -244,14 +244,14 @@ def load_h3_hybrid(plan: H3Plan, *, disable_dynamic: bool = False) -> Any:
         base.clear()
 
 
-class ArisuMiniMaxH3Loader(io.ComfyNode):
+class ArisuMiniMaxH3ModelLoader(io.ComfyNode):
     """One stable MODEL output for native H3 loading and experimental raw AdaLN replacement."""
 
     @classmethod
     def define_schema(cls) -> io.Schema:
         models = folder_paths.get_filename_list("diffusion_models")
         return io.Schema(
-            node_id="ArisuMiniMaxH3Loader",
+            node_id="ArisuMiniMaxH3ModelLoader",
             display_name="MiniMax H3 Model Loader",
             category="Arisu Nodes/MiniMax H3",
             description="Load one H3 checkpoint natively, or experimentally replace an inclusive range of complete AdaLN families.",
@@ -1448,7 +1448,7 @@ class ArisuMiniMaxH3PromptWorkbench(io.ComfyNode):
 
 
 NODES: List[Type[io.ComfyNode]] = [
-    ArisuMiniMaxH3Loader,
+    ArisuMiniMaxH3ModelLoader,
     ArisuMiniMaxH3PromptWorkbench,
     ArisuMiniMaxH3ResourceStudio,
     ArisuMiniMaxH3HybridToVideo,
