@@ -64,6 +64,7 @@ app.registerExtension({
       if (!mode) throw new Error('MiniMax H3 Model Loader requires native V3 DynamicCombo support.');
       const callback = mode.callback;
       let configuring = false;
+      let sizeBeforeRebuild = null;
       const value = Object.getOwnPropertyDescriptor(mode, 'value');
       if (!value?.get || !value?.set) {
         throw new Error('MiniMax H3 Model Loader requires a compatible native DynamicCombo value accessor.');
@@ -73,7 +74,8 @@ app.registerExtension({
         updateControls(this, mode);
         if (value.configurable) return;
         // Older frontends lock the native accessor. Capture each outgoing
-        // widget before DynamicCombo disposes it, then restore on its callback.
+        // widget and size before DynamicCombo disposes it and shrinks the node,
+        // then restore on its callback.
         for (const name of FIELDS) {
           const widget = this.widgets.find((item) => item.name === `mode.${name}`);
           if (!widget || tracked.has(widget)) continue;
@@ -81,6 +83,7 @@ app.registerExtension({
           const removed = widget.onRemove;
           widget.onRemove = (...args) => {
             if (!configuring) {
+              sizeBeforeRebuild ??= [...this.size];
               this.properties ??= {};
               this.properties[PROPERTY] = { ...selections(this.properties[PROPERTY]), ...selections({ [name]: widget.value }) };
             }
@@ -92,21 +95,29 @@ app.registerExtension({
         Object.defineProperty(mode, 'value', {
           ...value,
           set: (next) => {
+            const size = [...this.size];
             if (!configuring) remember(this);
             value.set.call(mode, next);
+            this.setSize(size);
             if (!configuring) restore(this);
             update();
           },
         });
       }
       mode.callback = (...args) => {
+        // Older frontends shrink in the locked setter; newer ones shrink in
+        // this callback. Both modes have the same controls and need no resize.
+        const size = sizeBeforeRebuild ?? [...this.size];
+        sizeBeforeRebuild = null;
         const output = callback?.apply(mode, args);
+        this.setSize(size);
         if (!configuring) restore(this);
         update();
         return output;
       };
       const configure = this.configure;
       this.configure = function (info) {
+        sizeBeforeRebuild = null;
         configuring = true;
         try {
           // The locked setter rebuilds children ahead of base_model during

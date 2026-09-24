@@ -56,15 +56,23 @@ def inspect_native_nodes(page: Page, name: str):
         if node_type in (STUDIO, WORKBENCH):
             continue
         if node_type == "ArisuMiniMaxH3ModelLoader" and page.viewport_size["width"] == 1024:
-            # Repeat the loader journey with the locked DynamicCombo accessor
-            # used by frontend 1.52.7, even when the browser lane runs newer code.
+            # Frontend 1.52.7 locks the accessor and shrinks inside the setter,
+            # before the callback. Exercise both differences on newer frontends.
             page.evaluate(
                 """() => {
                 const prototype = LiteGraph.registered_node_types.ArisuMiniMaxH3ModelLoader.prototype;
                 const created = prototype.onNodeCreated;
                 prototype.onNodeCreated = function () {
                     const mode = this.widgets.find(widget => widget.name === 'mode');
-                    Object.defineProperty(mode, 'value', {configurable: false});
+                    const node = this;
+                    const value = Object.getOwnPropertyDescriptor(mode, 'value');
+                    Object.defineProperty(mode, 'value', {
+                        ...value, configurable: false,
+                        set(next) {
+                            value.set.call(this, next);
+                            node.size[1] = node.computeSize([...node.size])[1];
+                        },
+                    });
                     return created.apply(this, arguments);
                 };
             }"""
@@ -161,20 +169,23 @@ def inspect_loader(page: Page, node_id: str, name: str):
             }
         };
         controls(true);
+        // Mode changes keep a user-sized node, including after workflow restore.
+        node.setSize([node.size[0] + 80, node.size[1] + 100]);
+        const size = Array.from(node.size);
         // A real MODEL link must retain its ID/socket throughout mode changes.
         class Sink extends LGraphNode { constructor() { super(); this.addInput('model','MODEL'); } }
         LiteGraph.registerNodeType('FixtureH3Sink', Sink);
         const sink = LiteGraph.createNode('FixtureH3Sink'); app.graph.add(sink);
         const link = node.connect(0, sink, 0), sinkId = sink.id;
         set('base_model','base.safetensors'); set('mode','hybrid');
-        controls(false);
+        controls(false); check(Array.from(node.size),size);
         set('mode.overlay_model','overlay.safetensors'); set('mode.block_start',17);
         set('mode.block_end',19); set('mode.include_final_adaln',true);
         const expected = hybrid();
         const hybridPrompt = (await app.graphToPrompt()).output[id].inputs;
         check(hybridPrompt['mode.block_start'],17); check(hybridPrompt['mode.include_final_adaln'],true);
         set('mode','native');
-        controls(true); check(hybrid(),expected);
+        controls(true); check(hybrid(),expected); check(Array.from(node.size),size);
         const nativePrompt = (await app.graphToPrompt()).output[id].inputs;
         check(Object.keys(nativePrompt).sort(),['base_model','mode','weight_dtype']);
         const workflow = app.graph.serialize();
@@ -185,7 +196,7 @@ def inspect_loader(page: Page, node_id: str, name: str):
         node = app.graph.getNodeById(id);
         check(node.widgets.find(w=>w.name==='mode').value,'native');
         controls(true);
-        set('mode','hybrid'); check(hybrid(),expected);
+        set('mode','hybrid'); check(hybrid(),expected); check(Array.from(node.size),size);
         check(node.widgets.find(w=>w.name==='base_model').value,'base.safetensors');
         check(node.outputs[0].links,[link.id]); check(app.graph.getNodeById(sinkId).inputs[0].link,link.id);
         const tracker = app.extensionManager.workflow.activeWorkflow.changeTracker;
@@ -240,9 +251,11 @@ def inspect_loader(page: Page, node_id: str, name: str):
         )
         page.mouse.click(*point)
 
+    size = page.evaluate("id => Array.from(window.comfyAPI.app.app.graph.getNodeById(id).size)", node_id)
     click_widget("mode")
     page.locator(".litecontextmenu .litemenu-entry").filter(has_text="native").click()
     assert widget_value(page, node_id, "mode") == "native"
+    assert page.evaluate("id => Array.from(window.comfyAPI.app.app.graph.getNodeById(id).size)", node_id) == size
     for field in ["overlay_model", "block_start", "block_end", "include_final_adaln"]:
         value = widget_value(page, node_id, "mode." + field)
         click_widget("mode." + field)
@@ -251,6 +264,7 @@ def inspect_loader(page: Page, node_id: str, name: str):
     screenshot(page, name, "h3-loader-native")
     click_widget("mode")
     page.locator(".litecontextmenu .litemenu-entry").filter(has_text="hybrid").click()
+    assert page.evaluate("id => Array.from(window.comfyAPI.app.app.graph.getNodeById(id).size)", node_id) == size
     click_widget("mode.include_final_adaln")
     assert widget_value(page, node_id, "mode.include_final_adaln") is False
 
