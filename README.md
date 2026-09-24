@@ -95,7 +95,7 @@ Click a node name for its full reference, also available through the node's righ
 | [Preview & Save Image](web/docs/ArisuPreviewSaveImage/en.md)                  | Preview images and save them on demand.                     |
 | [Preview & Save Image (Upscale)](web/docs/ArisuPreviewSaveImageUpscale/en.md) | Upscale previewed images when saving.                       |
 | [Load Image (Browse)](web/docs/ArisuLoadImage/en.md)                          | Browse and crop images from configured directories.         |
-| [Resize Image](web/docs/ArisuResizeImage/en.md)                               | Resize images by cropping, padding, fitting, or stretching. |
+| [Resize Image](web/docs/ArisuResizeImage/en.md)                               | Resize and preview images by cropping, padding, fitting, or stretching; runs with unconnected outputs. |
 
 ### MiniMax H3
 

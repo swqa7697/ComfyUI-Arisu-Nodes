@@ -1913,6 +1913,14 @@
             "tooltip": "Optional; follows the image through the crop, scale and pad. Without it the mask output marks only the padding."
           }
         ]
+      },
+      "hidden": {
+        "prompt": [
+          "PROMPT"
+        ],
+        "extra_pnginfo": [
+          "EXTRA_PNGINFO"
+        ]
       }
     },
     "input_order": {
@@ -1928,6 +1936,10 @@
       ],
       "optional": [
         "mask"
+      ],
+      "hidden": [
+        "prompt",
+        "extra_pnginfo"
       ]
     },
     "is_input_list": false,
@@ -1953,7 +1965,7 @@
     "description": "Resize an image batch to width x height: cropped, padded, fitted or stretched to the size and snapped to a pixel grid, with the result shown on the node. The options live behind the settings button; 0 for a dimension takes it from the image.",
     "python_module": "custom_nodes.arisu",
     "category": "Arisu Nodes/Common",
-    "output_node": false,
+    "output_node": true,
     "deprecated": false,
     "experimental": false,
     "dev_only": false,
