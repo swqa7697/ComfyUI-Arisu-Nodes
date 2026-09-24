@@ -75,6 +75,8 @@ def inspect_native_nodes(page: Page, name: str):
             node_id,
         )
         screenshot(page, name, node_type)
+        if node_type == "ArisuMiniMaxH3Loader":
+            inspect_loader(page, node_id, name)
         # Canvas buttons have no DOM :hover. Sample their actual fill pixels
         # before/after pointer entry and exit, including both Path Builder cells.
         points = page.evaluate(
@@ -121,6 +123,118 @@ def inspect_native_nodes(page: Page, name: str):
             screenshot(page, name, node_type + "-settings")
             page.keyboard.press("Escape")
             expect(page.locator(".arisu-settings[open]")).to_have_count(0)
+
+
+def inspect_loader(page: Page, node_id: str, name: str):
+    """Keep inactive controls visible and persist selections through real workflows."""
+    result = page.evaluate(
+        """async id => {
+        const app = window.comfyAPI.app.app;
+        let node = app.graph.getNodeById(id);
+        const set = (name, value) => {
+            const widget = node.widgets.find(w => w.name === name);
+            widget.value = value; widget.callback?.(value);
+        };
+        const hybrid = () => Object.fromEntries(node.widgets.filter(w => w.name.startsWith('mode.')).map(w => [w.name,w.value]));
+        const check = (actual, expected) => { if (JSON.stringify(actual) !== JSON.stringify(expected))
+            throw Error(JSON.stringify({actual,expected})); };
+        const controls = inactive => {
+            check(node.widgets.map(w => w.name), ['mode','base_model','mode.overlay_model',
+                'mode.block_start','mode.block_end','mode.include_final_adaln','weight_dtype']);
+            for (const widget of node.widgets.filter(w => w.name.startsWith('mode.'))) {
+                check(widget.disabled,inactive);
+                check(widget.options.serialize,!inactive);
+            }
+        };
+        controls(true);
+        // A real MODEL link must retain its ID/socket throughout mode changes.
+        class Sink extends LGraphNode { constructor() { super(); this.addInput('model','MODEL'); } }
+        LiteGraph.registerNodeType('FixtureH3Sink', Sink);
+        const sink = LiteGraph.createNode('FixtureH3Sink'); app.graph.add(sink);
+        const link = node.connect(0, sink, 0), sinkId = sink.id;
+        set('base_model','base.safetensors'); set('mode','hybrid');
+        controls(false);
+        set('mode.overlay_model','overlay.safetensors'); set('mode.block_start',17);
+        set('mode.block_end',19); set('mode.include_final_adaln',true);
+        const expected = hybrid();
+        const hybridPrompt = (await app.graphToPrompt()).output[id].inputs;
+        check(hybridPrompt['mode.block_start'],17); check(hybridPrompt['mode.include_final_adaln'],true);
+        set('mode','native');
+        controls(true); check(hybrid(),expected);
+        const nativePrompt = (await app.graphToPrompt()).output[id].inputs;
+        check(Object.keys(nativePrompt).sort(),['base_model','mode','weight_dtype']);
+        const workflow = app.graph.serialize();
+        await app.loadGraphData(workflow);
+        node = app.graph.getNodeById(id);
+        check(node.widgets.find(w=>w.name==='mode').value,'native');
+        controls(true);
+        set('mode','hybrid'); check(hybrid(),expected);
+        check(node.outputs[0].links,[link.id]); check(app.graph.getNodeById(sinkId).inputs[0].link,link.id);
+        const tracker = app.extensionManager.workflow.activeWorkflow.changeTracker;
+        tracker.captureCanvasState();
+        set('mode','native'); tracker.captureCanvasState();
+        await tracker.undo(); node=app.graph.getNodeById(id);
+        check(node.widgets.find(w=>w.name==='mode').value,'hybrid'); check(hybrid(),expected);
+        await tracker.redo(); node=app.graph.getNodeById(id);
+        check(node.widgets.find(w=>w.name==='mode').value,'native');
+        set('mode','hybrid'); check(hybrid(),expected);
+        // A second workflow carries separate node properties even with reused IDs.
+        const saved = app.graph.serialize();
+        await app.loadGraphData({nodes:[],links:[],groups:[],version:0.4});
+        const other=LiteGraph.createNode('ArisuMiniMaxH3Loader');app.graph.add(other);
+        node=other;set('mode','hybrid');set('mode.block_start',3);set('mode','native');
+        await app.loadGraphData(saved);node=app.graph.getNodeById(id);check(hybrid(),expected);
+        app.graph.remove(app.graph.getNodeById(sinkId));
+        node.pos=[100,140];node.setDirtyCanvas(true,true);
+        return {nativePrompt,hybridPrompt};
+        }""",
+        node_id,
+    )
+    assert result["nativePrompt"]["mode"] == "native"
+    assert result["hybridPrompt"]["mode.block_end"] == 19
+    page.get_by_text("Unsaved Workflow (3)", exact=True).click()
+    page.wait_for_function(
+        """() => window.comfyAPI.app.app.graph._nodes.find(n => n.type === 'ArisuMiniMaxH3Loader')
+            ?.properties.arisu_h3_hybrid?.block_start === 3"""
+    )
+    page.get_by_text("Unsaved Workflow (4)", exact=True).click()
+    page.wait_for_function(
+        """id => window.comfyAPI.app.app.graph.getNodeById(id)?.widgets.find(w => w.name === 'mode.block_start')?.value === 17""",
+        arg=node_id,
+    )
+    screenshot(page, name, "h3-loader-hybrid")
+
+    # Use the real canvas combo menu and try editing the now-disabled controls.
+    def click_widget(widget_name: str):
+        page.wait_for_function(
+            """([id,name]) => Number.isFinite(window.comfyAPI.app.app.graph.getNodeById(id)
+                .widgets.find(w=>w.name===name)?.last_y)""",
+            arg=[node_id, widget_name],
+        )
+        point = page.evaluate(
+            """([id,name]) => {
+            const app=window.comfyAPI.app.app, node=app.graph.getNodeById(id), ds=app.canvas.ds;
+            const widget=node.widgets.find(w=>w.name===name), rect=app.canvas.canvas.getBoundingClientRect();
+            return [(node.pos[0]+node.size[0]/2+ds.offset[0])*ds.scale+rect.left,
+                (node.pos[1]+widget.last_y+10+ds.offset[1])*ds.scale+rect.top];
+            }""",
+            [node_id, widget_name],
+        )
+        page.mouse.click(*point)
+
+    click_widget("mode")
+    page.locator(".litecontextmenu .litemenu-entry").filter(has_text="native").click()
+    assert widget_value(page, node_id, "mode") == "native"
+    for field in ["overlay_model", "block_start", "block_end", "include_final_adaln"]:
+        value = widget_value(page, node_id, "mode." + field)
+        click_widget("mode." + field)
+        assert widget_value(page, node_id, "mode." + field) == value
+        expect(page.locator(".litecontextmenu, .graphdialog")).to_have_count(0)
+    screenshot(page, name, "h3-loader-native")
+    click_widget("mode")
+    page.locator(".litecontextmenu .litemenu-entry").filter(has_text="hybrid").click()
+    click_widget("mode.include_final_adaln")
+    assert widget_value(page, node_id, "mode.include_final_adaln") is False
 
 
 def inspect_set_get(page: Page):

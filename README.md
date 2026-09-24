@@ -86,20 +86,28 @@ to prompt generation, with web search, commands, and file editing disabled.
 
 Click a node name for its full reference, also available through the node's right-click **Help** menu.
 
-| Node                                                                                        | Category   | Summary                                                                       |
-| ------------------------------------------------------------------------------------------- | ---------- | ----------------------------------------------------------------------------- |
-| [Path Builder](web/docs/ArisuPathBuilder/en.md)                                             | Common     | Build a filename prefix from separate text fields.                            |
-| [Extract Last Images](web/docs/ArisuExtractLastImages/en.md)                                | Common     | Keep the last N images from a batch.                                          |
-| [Preview & Save Image](web/docs/ArisuPreviewSaveImage/en.md)                                | Common     | Preview images and save them on demand.                                       |
-| [Preview & Save Image (Upscale)](web/docs/ArisuPreviewSaveImageUpscale/en.md)               | Common     | Upscale previewed images when saving.                                         |
-| [Load Image (Browse)](web/docs/ArisuLoadImage/en.md)                                        | Common     | Browse and crop images from configured directories.                           |
-| [Resize Image](web/docs/ArisuResizeImage/en.md)                                             | Common     | Resize images by cropping, padding, fitting, or stretching.                   |
-| [MiniMax H3 Prompt Workbench](web/docs/ArisuMiniMaxH3PromptWorkbench/en.md)                 | MiniMax H3 | Write prompts or generate and review drafts with Codex or Grok.               |
-| [MiniMax H3 Resource Studio](web/docs/ArisuMiniMaxH3ResourceStudio/en.md)                   | MiniMax H3 | Arrange, crop, and trim keyframes and image, video, or audio references.      |
-| [MiniMax H3 Hybrid to Video](web/docs/ArisuMiniMaxH3HybridToVideo/en.md)                    | MiniMax H3 | Combine keyframes and media references into H3 conditioning and an AV latent. |
-| [MiniMax H3 Hybrid to Video (Advanced)](web/docs/ArisuMiniMaxH3HybridToVideoAdvanced/en.md) | MiniMax H3 | Add upscaled conditioning for two-pass workflows.                             |
-| [MiniMax H3 Video Settings](web/docs/ArisuMiniMaxH3VideoSettings/en.md)                     | MiniMax H3 | Set canvas size, aspect ratio, and duration in one bundle.                    |
-| [MiniMax H3 Video Settings (Upscale)](web/docs/ArisuMiniMaxH3VideoSettingsUpscale/en.md)    | MiniMax H3 | Include a target size for latent upscaling.                                   |
+### Common
+
+| Node                                                                          | Summary                                                     |
+| ----------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| [Path Builder](web/docs/ArisuPathBuilder/en.md)                               | Build a filename prefix from separate text fields.          |
+| [Extract Last Images](web/docs/ArisuExtractLastImages/en.md)                  | Keep the last N images from a batch.                        |
+| [Preview & Save Image](web/docs/ArisuPreviewSaveImage/en.md)                  | Preview images and save them on demand.                     |
+| [Preview & Save Image (Upscale)](web/docs/ArisuPreviewSaveImageUpscale/en.md) | Upscale previewed images when saving.                       |
+| [Load Image (Browse)](web/docs/ArisuLoadImage/en.md)                          | Browse and crop images from configured directories.         |
+| [Resize Image](web/docs/ArisuResizeImage/en.md)                               | Resize images by cropping, padding, fitting, or stretching. |
+
+### MiniMax H3
+
+| Node                                                                                        | Summary                                                                       |
+| ------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| [MiniMax H3 Model Loader](web/docs/ArisuMiniMaxH3Loader/en.md)                              | Load H3 natively or experimentally replace an inclusive AdaLN block range.    |
+| [MiniMax H3 Prompt Workbench](web/docs/ArisuMiniMaxH3PromptWorkbench/en.md)                 | Write prompts or generate and review drafts with Codex or Grok.               |
+| [MiniMax H3 Resource Studio](web/docs/ArisuMiniMaxH3ResourceStudio/en.md)                   | Arrange, crop, and trim keyframes and image, video, or audio references.      |
+| [MiniMax H3 Hybrid to Video](web/docs/ArisuMiniMaxH3HybridToVideo/en.md)                    | Combine keyframes and media references into H3 conditioning and an AV latent. |
+| [MiniMax H3 Hybrid to Video (Advanced)](web/docs/ArisuMiniMaxH3HybridToVideoAdvanced/en.md) | Add upscaled conditioning for two-pass workflows.                             |
+| [MiniMax H3 Video Settings](web/docs/ArisuMiniMaxH3VideoSettings/en.md)                     | Set canvas size, aspect ratio, and duration in one bundle.                    |
+| [MiniMax H3 Video Settings (Upscale)](web/docs/ArisuMiniMaxH3VideoSettingsUpscale/en.md)    | Include a target size for latent upscaling.                                   |
 
 See [example workflows](example_workflows) for ready-made graphs and the [changelog](CHANGELOG.md) for release notes.
 
