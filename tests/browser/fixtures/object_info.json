@@ -1,4 +1,119 @@
 {
+  "ArisuMiniMaxH3ModelLoader": {
+    "input": {
+      "required": {
+        "mode": [
+          "COMFY_DYNAMICCOMBO_V3",
+          {
+            "options": [
+              {
+                "key": "native",
+                "inputs": {
+                  "required": {}
+                }
+              },
+              {
+                "key": "hybrid",
+                "inputs": {
+                  "required": {
+                    "overlay_model": [
+                      "COMBO",
+                      {
+                        "multiselect": false,
+                        "options": []
+                      }
+                    ],
+                    "block_start": [
+                      "INT",
+                      {
+                        "tooltip": "First block, zero-based and inclusive. Experimental; no range is universally better.",
+                        "default": 25,
+                        "min": 0,
+                        "max": 49
+                      }
+                    ],
+                    "block_end": [
+                      "INT",
+                      {
+                        "tooltip": "Last block, zero-based and inclusive.",
+                        "default": 49,
+                        "min": 0,
+                        "max": 49
+                      }
+                    ],
+                    "include_final_adaln": [
+                      "BOOLEAN",
+                      {
+                        "tooltip": "Also use overlay's final AdaLN. Time representation and output heads remain on base.",
+                        "advanced": true,
+                        "default": false
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        ],
+        "base_model": [
+          "COMBO",
+          {
+            "multiselect": false,
+            "options": []
+          }
+        ],
+        "weight_dtype": [
+          "COMBO",
+          {
+            "advanced": true,
+            "default": "default",
+            "multiselect": false,
+            "options": [
+              "default",
+              "fp8_e4m3fn",
+              "fp8_e4m3fn_fast",
+              "fp8_e5m2"
+            ]
+          }
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "mode",
+        "base_model",
+        "weight_dtype"
+      ]
+    },
+    "is_input_list": false,
+    "output": [
+      "MODEL"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "output_name": [
+      "model"
+    ],
+    "output_tooltips": [
+      null
+    ],
+    "output_matchtypes": null,
+    "name": "ArisuMiniMaxH3ModelLoader",
+    "display_name": "MiniMax H3 Model Loader",
+    "description": "Load one H3 checkpoint natively, or experimentally replace an inclusive range of complete AdaLN families.",
+    "python_module": "custom_nodes.arisu",
+    "category": "Arisu Nodes/MiniMax H3",
+    "output_node": false,
+    "deprecated": false,
+    "experimental": false,
+    "dev_only": false,
+    "api_node": false,
+    "price_badge": null,
+    "search_aliases": null,
+    "essentials_category": null,
+    "has_intermediate_output": false
+  },
   "ArisuMiniMaxH3PromptWorkbench": {
     "input": {
       "required": {
@@ -1798,6 +1913,14 @@
             "tooltip": "Optional; follows the image through the crop, scale and pad. Without it the mask output marks only the padding."
           }
         ]
+      },
+      "hidden": {
+        "prompt": [
+          "PROMPT"
+        ],
+        "extra_pnginfo": [
+          "EXTRA_PNGINFO"
+        ]
       }
     },
     "input_order": {
@@ -1813,6 +1936,10 @@
       ],
       "optional": [
         "mask"
+      ],
+      "hidden": [
+        "prompt",
+        "extra_pnginfo"
       ]
     },
     "is_input_list": false,
@@ -1838,7 +1965,7 @@
     "description": "Resize an image batch to width x height: cropped, padded, fitted or stretched to the size and snapped to a pixel grid, with the result shown on the node. The options live behind the settings button; 0 for a dimension takes it from the image.",
     "python_module": "custom_nodes.arisu",
     "category": "Arisu Nodes/Common",
-    "output_node": false,
+    "output_node": true,
     "deprecated": false,
     "experimental": false,
     "dev_only": false,

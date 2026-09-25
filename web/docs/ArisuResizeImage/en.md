@@ -59,8 +59,8 @@ Load Image (Browse) ─▶ Resize Image (width = 1024, height = 576) ─▶ (fir
   link, not the settings.
 - The result is previewed on the node the way ComfyUI's own **Image Crop** previews: the preview
   survives cache hits and a page reload, and shows in both the classic canvas and the Vue node
-  renderer ("Nodes 2.0"), where the dialog works too. The node runs when something downstream needs
-  its output; on its own it is not an output node.
+  renderer ("Nodes 2.0"), where the dialog works too. As an output node, it runs when the workflow is
+  queued even when its image and mask outputs are unconnected.
 - Bypassing the node passes `image` through to `image` and `mask` through to `mask`; with no mask
   connected, the mask output then carries nothing.
 - In `pad` the canvas is snapped to `divisible_by` first and the image fitted inside it, so the

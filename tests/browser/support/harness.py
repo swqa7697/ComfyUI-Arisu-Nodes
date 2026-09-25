@@ -131,7 +131,14 @@ class FixtureServer:
                 ["/extensions/arisu/" + p.relative_to(ROOT / "web").as_posix() for p in sorted((ROOT / "web/js").rglob("*.js"))]
             )
         if path == "/object_info":
-            return web.json_response(json.loads((FIXTURES / "object_info.json").read_text()))
+            definitions = json.loads((FIXTURES / "object_info.json").read_text())
+            # Portable schema fixtures contain no host inventory. These names are
+            # synthetic browser choices; no checkpoint endpoint serves their bytes.
+            loader = definitions["ArisuMiniMaxH3ModelLoader"]["input"]["required"]
+            models = ["base.safetensors", "overlay.safetensors"]
+            loader["base_model"][1]["options"] = models
+            loader["mode"][1]["options"][1]["inputs"]["required"]["overlay_model"][1]["options"] = models
+            return web.json_response(definitions)
         if path == "/settings":
             if method == "POST":
                 self.settings.update(await request.json())
@@ -155,6 +162,7 @@ class FixtureServer:
             "/prompt": {"exec_info": {"queue_remaining": 0}},
             "/embeddings": [],
             "/models": [],
+            "/internal/folder_paths": {},
             "/experiment/models": [],
             "/features": {},
             "/i18n": {},

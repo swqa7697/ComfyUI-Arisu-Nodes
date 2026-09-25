@@ -45,6 +45,8 @@ def convert(payload: Dict[str, Any]):
             vout = output.add_stream("libvpx-vp9", rate=video.average_rate or 24) if video else None
             if vout:
                 vout.time_base = vout.codec_context.time_base = Fraction(1, 1000)
+                vout.pix_fmt = "yuv420p"
+                vout.options = {"deadline": "realtime", "cpu-used": "6"}
             aout = output.add_stream("libopus", rate=48000) if audio else None
             if aout:
                 aout.layout = "stereo"
@@ -61,9 +63,9 @@ def convert(payload: Dict[str, Any]):
                         continue
                     if packet.stream == video:
                         picture = upright(frame)
-                        vout.width, vout.height = picture.size
-                        vout.pix_fmt = "yuv420p"
-                        vout.options = {"deadline": "realtime", "cpu-used": "6"}
+                        # Encoding opens the codec; PyAV forbids later dimension assignments.
+                        if not vout.codec_context.is_open:
+                            vout.width, vout.height = picture.size
                         converted = av.VideoFrame.from_image(picture)
                         converted.pts = round(time * 1000)
                         converted.time_base = Fraction(1, 1000)

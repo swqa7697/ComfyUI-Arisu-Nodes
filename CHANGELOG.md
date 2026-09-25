@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-09-25
+
+### Added
+
+- Add MiniMax H3 Model Loader with `native` loading and experimental `hybrid` AdaLN replacement over an inclusive block range, an independent final-AdaLN toggle, source-checked native reload support, mode-first controls, and visible disabled `hybrid` settings in `native` mode; preserve model selections and node size across mode changes and workflow restoration, and update the example workflow to use the new loader.
+
+### Changed
+
+- Make Resize Image an output node so queuing a workflow previews the resized image even when its outputs are unconnected.
+
+### Fixed
+
+- Fix Resource Studio video playback conversion failing with PyAV 18.1.0 after the first frame.
+
 ## [1.2.4] - 2026-09-20
 
 ### Added

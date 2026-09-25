@@ -13,12 +13,20 @@ Image**'s geometry (``common.core.resize_plan``) and pixel path
 from __future__ import annotations
 
 import hashlib
+import logging
+import math
+import os
+import stat
+import struct
 from dataclasses import asdict
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Type, Union
 
+import comfy.memory_management
 import comfy.model_management
 import comfy.nested_tensor
 import comfy.sd
+import comfy.storage
+import comfy.utils
 import folder_paths
 import node_helpers
 import torch
@@ -26,6 +34,7 @@ import torchaudio
 from comfy_api.latest import io
 from nodes import MAX_RESOLUTION
 from PIL import Image
+from safetensors import safe_open
 
 from ..common.core import CROP_POSITIONS, DEFAULT_PAD_COLOR, KEYFRAME_MODES, RESIZE_METHODS, FrameFit, resize_plan
 from ..common.nodes import apply_resize_plan, pad_color_error
@@ -37,9 +46,13 @@ from .core import (
     CANVAS_MULTIPLE,
     EMPTY_RESOURCES,
     FRAME_TAG_MODES,
+    H3_HEADER_LIMIT,
+    H3_WEIGHT_DTYPES,
     MOTION_WINDOWS,
     REF_IMAGE_SIZE_MODES,
     VIDEO_LATENT_CHANNELS,
+    H3Plan,
+    H3Source,
     PreparationError,
     ResourceBundle,
     VideoSettings,
@@ -47,6 +60,10 @@ from .core import (
     canvas_from_megapixels,
     frame_needs_resize,
     frames_for_duration,
+    h3_architecture,
+    h3_header,
+    h3_plan,
+    h3_selection,
     keyframe_canvases,
     latent_size,
     motion_samples,
@@ -71,6 +88,226 @@ RefBlock = Dict[str, Any]
 Conditioning = List[List[Any]]
 # A keyframe before it is fitted to a canvas: (frames [1, H, W, C], how to fit them, resolved frame index).
 KeyframeSource = Tuple[torch.Tensor, FrameFit, int]
+_LOGGER = logging.getLogger(__name__)
+
+
+def _h3_identity(path: str) -> Tuple[int, ...]:
+    info = os.stat(path)
+    if not stat.S_ISREG(info.st_mode):
+        raise ValueError("H3 checkpoint must be a regular file")
+    return info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns
+
+
+def _h3_header_bytes(path: str) -> Tuple[bytes, Tuple[int, ...]]:
+    before = _h3_identity(path)
+    with open(path, "rb") as stream:
+        size_bytes = stream.read(8)
+        if len(size_bytes) != 8:
+            raise ValueError("truncated H3 checkpoint header")
+        length = int.from_bytes(size_bytes, "little")
+        if not 0 < length <= H3_HEADER_LIMIT or length > before[2] - 8:
+            raise ValueError("H3 checkpoint header is truncated or exceeds the 16 MiB limit")
+        raw = stream.read(length)
+    if len(raw) != length or before != _h3_identity(path):
+        raise ValueError("H3 source changed during preparation; re-execute with the current files")
+    return raw, before
+
+
+def read_h3_source(path: str) -> H3Source:
+    """Preflight a registered H3 file, reading only its header and small curve table."""
+    if os.path.splitext(path)[1].lower() not in (".safetensors", ".sft"):
+        raise ValueError("H3 Loader supports unsharded .safetensors and .sft checkpoints only")
+    raw, identity = _h3_header_bytes(path)
+    tensors, metadata = h3_header(raw, identity[2] - 8 - len(raw))
+    representation, architecture = h3_architecture(tensors, metadata)
+    if representation == "pruned":
+        table = next(t for t in tensors if t.name == "adaln_t_table")
+        with open(path, "rb") as stream:
+            stream.seek(8 + len(raw) + table.start)
+            values = stream.read(table.end - table.start)
+        if len(values) != table.end - table.start or any(not math.isfinite(v[0]) for v in struct.iter_unpack("<f", values)):
+            raise ValueError("pruned H3 curve table must contain finite F32 values")
+    if identity != _h3_identity(path):
+        raise ValueError("H3 source changed during preparation; re-execute with the current files")
+    return H3Source(path, identity, hashlib.sha256(raw).hexdigest(), 8 + len(raw), tensors, metadata, representation, architecture)
+
+
+def _resolve_h3(name: str, role: str) -> H3Source:
+    if not isinstance(name, str) or name not in folder_paths.get_filename_list("diffusion_models"):
+        raise ValueError(f"{role}: select an installed diffusion_models checkpoint")
+    # Registered model roots (including administrator symlinks) are authoritative.
+    # Workflow paths never choose their own root or bypass the installed inventory.
+    if (
+        os.path.isabs(name.replace("\\", "/"))
+        or "\x00" in name
+        or name.startswith("~")
+        or ":" in name
+        or ".." in name.replace("\\", "/").split("/")
+    ):
+        raise ValueError(f"{role}: select a registered relative checkpoint name")
+    path = folder_paths.get_full_path("diffusion_models", name)
+    if path is None:
+        raise ValueError(f"{role}: checkpoint is missing; reselect an installed model")
+    try:
+        return read_h3_source(os.path.realpath(path))
+    except (ValueError, OSError) as exc:
+        _LOGGER.debug("H3 %s preflight failed", role, exc_info=True)
+        message = str(exc) if isinstance(exc, ValueError) else "checkpoint could not be read; reselect an installed model"
+        raise ValueError(f"{role}: {message}") from exc
+
+
+def _check_h3_source(source: H3Source):
+    try:
+        raw, identity = _h3_header_bytes(source.path)
+    except (OSError, ValueError) as exc:
+        raise ValueError("H3 source changed or disappeared; re-execute with the current files") from exc
+    if identity != source.identity or hashlib.sha256(raw).hexdigest() != source.digest:
+        raise ValueError("H3 source changed since planning; re-execute with the current files")
+
+
+def _h3_options(weight_dtype: str) -> Dict[str, Any]:
+    if weight_dtype == "default":
+        return {}
+    dtype = torch.float8_e5m2 if weight_dtype == "fp8_e5m2" else torch.float8_e4m3fn
+    return {"dtype": dtype, **({"fp8_optimizations": True} if weight_dtype == "fp8_e4m3fn_fast" else {})}
+
+
+def load_h3_hybrid(plan: H3Plan, *, disable_dynamic: bool = False) -> Any:
+    """Compose native tensor references and install an exact, tensor-free reload factory."""
+    _check_h3_source(plan.base)
+    _check_h3_source(plan.overlay)
+    comfy.model_management.throw_exception_if_processing_interrupted()
+    # Follow load_torch_file's branch order, including AIMDO + DISABLE_MMAP.
+    strategy = "aimdo" if comfy.memory_management.aimdo_enabled else "owned-copy" if comfy.utils.DISABLE_MMAP else "mmap"
+    _LOGGER.info(
+        "H3 %s experimental %s blocks=%d..%d final=%s families=%d tensors=%d selected_tensor_bytes=%d storage=%s fingerprint=%s",
+        plan.revision,
+        plan.base.representation,
+        plan.block_start,
+        plan.block_end,
+        "overlay" if plan.include_final else "base",
+        len(plan.families),
+        sum(map(len, plan.families)),
+        plan.overlay_bytes,
+        strategy,
+        plan.fingerprint[:16],
+    )
+    base: Dict[str, torch.Tensor] = {}
+    overlay: Dict[str, torch.Tensor] = {}
+    model = None
+    try:
+        base, metadata = comfy.utils.load_torch_file(plan.base.path, return_metadata=True)
+        _check_h3_source(plan.base)
+        comfy.model_management.throw_exception_if_processing_interrupted()
+        if strategy == "owned-copy":
+            with safe_open(plan.overlay.path, framework="pt", device="cpu") as reader:
+                for family in plan.families:
+                    comfy.model_management.throw_exception_if_processing_interrupted()
+                    for key in family:
+                        copied = reader.get_tensor(key).to(device="cpu", copy=True)
+                        comfy.storage.annotate_state_dict({key: copied}, plan.overlay.path)
+                        base[key] = copied
+                    del copied
+        else:
+            overlay = comfy.utils.load_torch_file(plan.overlay.path)
+            selected = {key for family in plan.families for key in family}
+            for key in list(overlay):
+                if key not in selected:
+                    del overlay[key]
+            for family in plan.families:
+                comfy.model_management.throw_exception_if_processing_interrupted()
+                for key in family:
+                    base[key] = overlay.pop(key)
+        _check_h3_source(plan.base)
+        _check_h3_source(plan.overlay)
+        comfy.model_management.throw_exception_if_processing_interrupted()
+        model = comfy.sd.load_diffusion_model_state_dict(
+            base,
+            model_options=_h3_options(plan.weight_dtype),
+            metadata=metadata,
+            disable_dynamic=disable_dynamic,
+        )
+        if model is None:
+            raise ValueError("native ComfyUI detection failed for the composed H3 checkpoint; no native fallback was used")
+        _check_h3_source(plan.base)
+        _check_h3_source(plan.overlay)
+        comfy.model_management.throw_exception_if_processing_interrupted()
+        model.cached_patcher_init = (load_h3_hybrid, (plan,))
+        return model
+    except BaseException:
+        # An exception traceback must not keep a successfully constructed model
+        # alive when a final identity check or interruption rejects the invocation.
+        model = None
+        raise
+    finally:
+        overlay.clear()
+        base.clear()
+
+
+class ArisuMiniMaxH3ModelLoader(io.ComfyNode):
+    """One stable MODEL output for native H3 loading and experimental raw AdaLN replacement."""
+
+    @classmethod
+    def define_schema(cls) -> io.Schema:
+        models = folder_paths.get_filename_list("diffusion_models")
+        return io.Schema(
+            node_id="ArisuMiniMaxH3ModelLoader",
+            display_name="MiniMax H3 Model Loader",
+            category="Arisu Nodes/MiniMax H3",
+            description="Load one H3 checkpoint natively, or experimentally replace an inclusive range of complete AdaLN families.",
+            inputs=[
+                io.DynamicCombo.Input(
+                    "mode",
+                    options=[
+                        io.DynamicCombo.Option("native", []),
+                        io.DynamicCombo.Option(
+                            "hybrid",
+                            [
+                                io.Combo.Input("overlay_model", options=models),
+                                io.Int.Input(
+                                    "block_start",
+                                    default=25,
+                                    min=0,
+                                    max=49,
+                                    tooltip="First block, zero-based and inclusive. Experimental; no range is universally better.",
+                                ),
+                                io.Int.Input("block_end", default=49, min=0, max=49, tooltip="Last block, zero-based and inclusive."),
+                                io.Boolean.Input(
+                                    "include_final_adaln",
+                                    default=False,
+                                    advanced=True,
+                                    tooltip="Also use overlay's final AdaLN. Time representation and output heads remain on base.",
+                                ),
+                            ],
+                        ),
+                    ],
+                ),
+                io.Combo.Input("base_model", options=models),
+                io.Combo.Input("weight_dtype", options=list(H3_WEIGHT_DTYPES), default="default", advanced=True),
+            ],
+            outputs=[io.Model.Output("model")],
+        )
+
+    @classmethod
+    def fingerprint_inputs(cls, base_model: str, weight_dtype: str, mode: Dict[str, Any]) -> str:
+        branch, start, end, final = h3_selection(mode, weight_dtype)
+        base = _resolve_h3(base_model, "base")
+        if branch == "native":
+            return hashlib.sha256(repr((base.identity, base.digest, weight_dtype)).encode()).hexdigest()
+        overlay = _resolve_h3(mode.get("overlay_model"), "overlay")
+        return h3_plan(base, overlay, start, end, final, weight_dtype).fingerprint
+
+    @classmethod
+    def execute(cls, base_model: str, weight_dtype: str, mode: Dict[str, Any]) -> io.NodeOutput:
+        branch, start, end, final = h3_selection(mode, weight_dtype)
+        base = _resolve_h3(base_model, "base")
+        if branch == "native":
+            return io.NodeOutput(comfy.sd.load_diffusion_model(base.path, model_options=_h3_options(weight_dtype)))
+        overlay = _resolve_h3(mode.get("overlay_model"), "overlay")
+        plan = h3_plan(base, overlay, start, end, final, weight_dtype)
+        return io.NodeOutput(load_h3_hybrid(plan))
+
+
 # References are lanczos-stretched to their canvas, as the stock node does.
 STRETCH_FIT = FrameFit("lanczos", "stretch", DEFAULT_PAD_COLOR, "center")
 _KEYFRAME_METHOD_TOOLTIP = (
@@ -1211,6 +1448,7 @@ class ArisuMiniMaxH3PromptWorkbench(io.ComfyNode):
 
 
 NODES: List[Type[io.ComfyNode]] = [
+    ArisuMiniMaxH3ModelLoader,
     ArisuMiniMaxH3PromptWorkbench,
     ArisuMiniMaxH3ResourceStudio,
     ArisuMiniMaxH3HybridToVideo,

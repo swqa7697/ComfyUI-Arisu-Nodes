@@ -10,16 +10,401 @@ multiple, and the reference sizing rules.
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import math
 import mimetypes
 import re
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Sequence, Set, Tuple, TypeVar
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple, TypeVar, Union
 
 from ..common.core import image_content_type, relative_path
 
 T = TypeVar("T")
+
+# Loader descriptors contain only immutable header data, never tensors/readers.
+H3_HEADER_LIMIT = 16 * 1024 * 1024
+H3_WEIGHT_DTYPES = ("default", "fp8_e4m3fn", "fp8_e4m3fn_fast", "fp8_e5m2")
+_TENSOR_BYTES = {
+    "BOOL": 1,
+    "U8": 1,
+    "I8": 1,
+    "I16": 2,
+    "U16": 2,
+    "F16": 2,
+    "BF16": 2,
+    "I32": 4,
+    "U32": 4,
+    "F32": 4,
+    "I64": 8,
+    "U64": 8,
+    "F64": 8,
+    "F8_E4M3": 1,
+    "F8_E5M2": 1,
+    "F8_E8M0": 1,
+}
+
+
+@dataclass(frozen=True)
+class H3Tensor:
+    """One validated safetensors header entry; offsets are relative to data."""
+
+    name: str
+    dtype: str
+    shape: Tuple[int, ...]
+    start: int
+    end: int
+
+
+@dataclass(frozen=True)
+class H3Source:
+    """A bounded checkpoint snapshot used to refuse changed-source reloads."""
+
+    path: str
+    identity: Tuple[int, ...]
+    digest: str
+    data_start: int
+    tensors: Tuple[H3Tensor, ...]
+    metadata: Tuple[Tuple[str, str], ...]
+    representation: str
+    architecture: str
+
+
+@dataclass(frozen=True)
+class H3Plan:
+    """Reproducible raw replacement recipe with no retained model state."""
+
+    base: H3Source
+    overlay: H3Source
+    families: Tuple[Tuple[str, ...], ...]
+    block_start: int
+    block_end: int
+    include_final: bool
+    weight_dtype: str
+    overlay_bytes: int
+    fingerprint: str
+    revision: str = "raw_adaln_v1"
+
+
+def h3_json(text: Union[str, bytes]) -> Any:
+    """Parse bounded checkpoint JSON without duplicate keys or nonfinite numbers."""
+
+    def pairs(items: List[Tuple[str, Any]]) -> Dict[str, Any]:
+        result: Dict[str, Any] = {}
+        for key, value in items:
+            if key in result:
+                raise ValueError(f"duplicate checkpoint JSON key: {key}")
+            result[key] = value
+        return result
+
+    def constant(value: str) -> Any:
+        raise ValueError(f"nonfinite checkpoint JSON value: {value}")
+
+    def number(value: str) -> float:
+        result = float(value)
+        if not math.isfinite(result):
+            constant(value)
+        return result
+
+    try:
+        return json.loads(text, object_pairs_hook=pairs, parse_constant=constant, parse_float=number)
+    except (UnicodeError, RecursionError, json.JSONDecodeError) as exc:
+        raise ValueError("malformed checkpoint JSON") from exc
+
+
+def h3_header(raw: bytes, data_size: int) -> Tuple[Tuple[H3Tensor, ...], Tuple[Tuple[str, str], ...]]:
+    """Validate safetensors structure before asking the official reader for tensors."""
+    if not 0 < len(raw) <= H3_HEADER_LIMIT:
+        raise ValueError("checkpoint header exceeds the 16 MiB limit or is empty")
+    header = h3_json(raw)
+    if not isinstance(header, dict):
+        raise ValueError("checkpoint header must be an object")  # noqa: TRY004 -- malformed file content, not a caller type error.
+    metadata = header.pop("__metadata__", {})
+    if not isinstance(metadata, dict) or any(not isinstance(v, str) for v in metadata.values()):
+        raise ValueError("checkpoint metadata must contain strings")
+    entries = []
+    for name, value in header.items():
+        if not name or not isinstance(value, dict) or set(value) != {"dtype", "shape", "data_offsets"}:
+            raise ValueError(f"invalid tensor descriptor: {name}")
+        dtype, shape, offsets = value["dtype"], value["shape"], value["data_offsets"]
+        if not isinstance(dtype, str) or dtype not in _TENSOR_BYTES:
+            raise ValueError(f"unsupported tensor dtype: {name}")
+        if not isinstance(shape, list) or len(shape) > 16 or any(type(d) is not int or d < 0 or d > 2**63 - 1 for d in shape):
+            raise ValueError(f"invalid tensor shape: {name}")
+        if not isinstance(offsets, list) or len(offsets) != 2 or any(type(v) is not int for v in offsets):
+            raise ValueError(f"invalid tensor offsets: {name}")
+        start, end = offsets
+        if not 0 <= start <= end <= data_size or end - start != math.prod(shape) * _TENSOR_BYTES[dtype]:
+            raise ValueError(f"invalid tensor byte range: {name}")
+        entries.append(H3Tensor(name, dtype, tuple(shape), start, end))
+    cursor = 0
+    for entry in sorted(entries, key=lambda item: (item.start, item.end)):
+        if entry.start != cursor:
+            raise ValueError(f"overlapping or incomplete tensor data: {entry.name}")
+        cursor = entry.end
+    if not entries or cursor != data_size:
+        raise ValueError("truncated or unindexed checkpoint data")
+    return tuple(sorted(entries, key=lambda item: item.name)), tuple(sorted(metadata.items()))
+
+
+def h3_architecture(tensors: Tuple[H3Tensor, ...], metadata: Tuple[Tuple[str, str], ...]) -> Tuple[str, str]:
+    """Recognize unprefixed H3 and resolve shape-derived and effective configuration."""
+    entries = {t.name: t for t in tensors}
+    metadata_values = dict(metadata)
+    if "_quantization_metadata" in metadata_values:
+        quantization = h3_json(metadata_values["_quantization_metadata"])
+        if not isinstance(quantization, dict) or not isinstance(quantization.get("layers"), dict):
+            raise ValueError("invalid H3 quantization metadata layers")
+        for layer, declaration in quantization["layers"].items():
+            if not isinstance(declaration, dict) or not isinstance(declaration.get("format"), str):
+                raise ValueError(f"invalid H3 quantization declaration: {layer}")  # noqa: TRY004 -- malformed serialized metadata.
+
+    def shape(name: str, rank: int) -> Tuple[int, ...]:
+        entry = entries.get(name)
+        if entry is None or len(entry.shape) != rank or any(d <= 0 for d in entry.shape):
+            raise ValueError(f"unsupported H3 layout (unprefixed tensors required): {name}")
+        return entry.shape
+
+    hidden, video = shape("video_patch_proj.weight", 2)
+    audio_hidden, audio = shape("audio_patch_proj.weight", 2)
+    out_video, out_hidden = shape("final_layer.video_out.weight", 2)
+    out_audio, out_audio_hidden = shape("final_layer.audio_out.weight", 2)
+    if (
+        hidden != audio_hidden
+        or hidden != out_hidden
+        or hidden != out_audio_hidden
+        or video != out_video
+        or audio != out_audio
+        or video % 4
+    ):
+        raise ValueError("inconsistent H3 input/output dimensions")
+    blocks = {int(m.group(1)) for k in entries if (m := re.match(r"^blocks\.(\d+)\.", k))}
+    refiners = {int(m.group(1)) for k in entries if (m := re.match(r"^token_refiner\.blocks\.(\d+)\.", k))}
+    if blocks != set(range(50)) or refiners != {0, 1}:
+        raise ValueError("unsupported H3 topology: expected 50 blocks and two token refiner blocks")
+    head_dim = shape("blocks.0.attn.q_norm.weight", 1)[0]
+    qkv = shape("blocks.0.attn.qkv_proj.weight", 2)
+    ffn = shape("blocks.0.mlp.fc1.weight", 2)
+    if qkv[0] % (3 * head_dim) or qkv[1] != hidden or ffn[0] % 2 or ffn[1] != hidden:
+        raise ValueError("inconsistent H3 attention/MLP dimensions")
+    required = {
+        "video_patch_proj.bias": (hidden,),
+        "audio_patch_proj.bias": (hidden,),
+        "condition_proj.bias": (hidden,),
+        "final_layer.video_out.bias": (video,),
+        "final_layer.audio_out.bias": (audio,),
+        "final_layer.norm.weight": (hidden,),
+        "token_refiner.final_norm.weight": (hidden,),
+    }
+    for prefix in [f"blocks.{i}" for i in range(50)] + [f"token_refiner.blocks.{i}" for i in range(2)]:
+        for suffix, dims in {
+            "attn.q_norm.weight": (head_dim,),
+            "attn.k_norm.weight": (head_dim,),
+            "attn.qkv_proj.weight": qkv,
+            "attn.out_proj.weight": (hidden, qkv[0] // 3),
+            "mlp.fc1.weight": ffn,
+            "mlp.fc2.weight": (hidden, ffn[0] // 2),
+            "norm1.weight": (hidden,),
+            "norm2.weight": (hidden,),
+        }.items():
+            required[f"{prefix}.{suffix}"] = dims
+    for key, dims in required.items():
+        if shape(key, len(dims)) != dims:
+            raise ValueError(f"inconsistent H3 architecture: {key}")
+    derived = {
+        "image_model": "minimax_h3",
+        "hidden_size": hidden,
+        "num_layers": 50,
+        "token_refiner_num_layers": 2,
+        "latents_dim": video // 4,
+        "audio_latents_dim": audio,
+        "attention_head_dim": head_dim,
+        "num_attention_heads": qkv[0] // (3 * head_dim),
+        "ffn_hidden_size": ffn[0] // 2,
+        "text_dim": shape("condition_proj.weight", 2)[1],
+        "rope_inv_freq_len": shape("rope.inv_freq", 1)[0],
+        "gate_compress": "blocks.0.attn.to_gate_compress.weight" in entries,
+    }
+    if "adaln_t_table" in entries:
+        if (
+            shape("adaln_t_table", 2) != (1025, 8)
+            or entries["adaln_t_table"].dtype != "F32"
+            or any(k.startswith("time_embedder.") for k in entries)
+        ):
+            raise ValueError("unsupported pruned H3 curve representation: expected finite F32 [1025, 8] without time embedder")
+        representation, width = "pruned", 8
+        derived.update(adaln_curve_grid=1025, time_embed_dim=8)
+    else:
+        representation = "full"
+        time_hidden, time_input = shape("time_embedder.proj_in.weight", 2)
+        width, time_out_hidden = shape("time_embedder.proj_out.weight", 2)
+        if time_hidden != time_out_hidden:
+            raise ValueError("inconsistent H3 time embedder")
+        if shape("time_embedder.proj_in.bias", 1) != (time_hidden,) or shape("time_embedder.proj_out.bias", 1) != (width,):
+            raise ValueError("inconsistent H3 time embedder bias")
+        derived.update(timestep_input_dim=time_input, time_embed_hidden_size=time_hidden, time_embed_dim=width)
+    for index in range(50):
+        prefix = f"blocks.{index}.adaln_proj.linear"
+        if shape(prefix + ".weight", 2) != (hidden * 18, width) or shape(prefix + ".bias", 1) != (hidden * 18,):
+            raise ValueError(f"inconsistent H3 AdaLN dimensions: {prefix}")
+    if shape("final_layer.adaln_proj.linear.weight", 2) != (hidden * 2, width) or shape("final_layer.adaln_proj.linear.bias", 1) != (
+        hidden * 2,
+    ):
+        raise ValueError("inconsistent H3 final AdaLN dimensions")
+    config = h3_json(dict(metadata).get("config", "{}"))
+    if not isinstance(config, dict) or not isinstance(config.get("transformer", {}), dict):
+        raise ValueError("invalid H3 config.transformer metadata")  # noqa: TRY004 -- malformed serialized metadata.
+    transformer = config.get("transformer", {})
+    for key, value in derived.items():
+        if key in transformer and (type(transformer[key]) is not type(value) or transformer[key] != value):
+            raise ValueError(f"H3 architecture metadata conflicts with tensors: {key}")
+    effective = {
+        "patch_size": [1, 2, 2],
+        "norm_eps": 1e-5,
+        "qk_norm_eps": 1e-5,
+        "final_norm_eps": 1e-5,
+        "sigma_shift_video": 12.0,
+        "sigma_shift_audio": 3.0,
+        "adaln_curve_grid": None,
+        "adaln_out_features": hidden * 18,
+        "final_adaln_out_features": hidden * 2,
+        **derived,
+        **transformer,
+    }
+    if shape("condition_proj.weight", 2)[0] != hidden:
+        raise ValueError("inconsistent H3 text projection")
+    for key in ("norm_eps", "qk_norm_eps", "final_norm_eps", "sigma_shift_video", "sigma_shift_audio"):
+        if type(effective[key]) not in (int, float) or not math.isfinite(effective[key]) or effective[key] <= 0:
+            raise ValueError(f"unsupported H3 configuration: {key}")
+    if (
+        effective["patch_size"] != [1, 2, 2]
+        or effective["adaln_out_features"] != hidden * 18
+        or effective["final_adaln_out_features"] != hidden * 2
+    ):
+        raise ValueError("unsupported H3 patch/AdaLN configuration")
+    if representation == "full" and transformer.get("adaln_curve_grid") is not None:
+        raise ValueError("full H3 cannot declare a pruned curve representation")
+    # Include the complete structural signature: extra heads/gates are behavior, not descriptive metadata.
+    signature = {"config": effective, "shapes": [(t.name, t.shape) for t in tensors if not t.name.endswith(".comfy_quant")]}
+    return representation, json.dumps(signature, sort_keys=True, separators=(",", ":"), allow_nan=False)
+
+
+def h3_selection(mode: Any, weight_dtype: str) -> Tuple[str, int, int, bool]:
+    """Validate only the active branch before resolving any checkpoint names."""
+    if weight_dtype not in H3_WEIGHT_DTYPES:
+        raise ValueError("unsupported weight_dtype")
+    if not isinstance(mode, dict) or mode.get("mode") not in ("native", "hybrid"):
+        raise ValueError("mode must be native or hybrid")
+    if mode["mode"] == "native":
+        return "native", 0, 0, False
+    start, end, final = mode.get("block_start"), mode.get("block_end"), mode.get("include_final_adaln")
+    if type(start) is not int or type(end) is not int or not 0 <= start <= end <= 49:
+        raise ValueError("hybrid block range must be integers satisfying 0 <= block_start <= block_end <= 49 (inclusive)")
+    if type(final) is not bool:
+        raise ValueError("include_final_adaln must be a boolean")
+    return "hybrid", start, end, final
+
+
+def h3_plan(base: H3Source, overlay: H3Source, start: int, end: int, final: bool, weight_dtype: str) -> H3Plan:
+    """Plan complete-family replacement for matching, unquantized H3 layouts."""
+    h3_selection({"mode": "hybrid", "block_start": start, "block_end": end, "include_final_adaln": final}, weight_dtype)
+    for role, source in (("base", base), ("overlay", overlay)):
+        metadata = dict(source.metadata)
+        if metadata.get("minimax_h3_delta") == "baked" or any(k.startswith("h3_delta_") for k in metadata):
+            raise ValueError(f"{role}: declared pre-composed H3 is supported in native only")
+        # No quantized hybrid interpretation has been qualified. Refuse both header
+        # declarations and tensor companions rather than allowing native conversion
+        # to silently overwrite a transplanted declaration.
+        if "_quantization_metadata" in metadata or any(
+            t.dtype not in ("F16", "BF16", "F32")
+            or t.name.endswith(
+                (".comfy_quant", "scaled_fp8", "weight_scale", "input_scale", "weight_scale_2", "scale_weight", "scale_input")
+            )
+            for t in source.tensors
+        ):
+            raise ValueError(f"{role}: quantized hybrid representations are not yet supported; use native")
+        config = h3_json(source.architecture)["config"]
+        allowed_config = {
+            "image_model",
+            "hidden_size",
+            "num_layers",
+            "token_refiner_num_layers",
+            "latents_dim",
+            "audio_latents_dim",
+            "attention_head_dim",
+            "num_attention_heads",
+            "ffn_hidden_size",
+            "text_dim",
+            "rope_inv_freq_len",
+            "gate_compress",
+            "adaln_curve_grid",
+            "time_embed_dim",
+            "timestep_input_dim",
+            "time_embed_hidden_size",
+            "patch_size",
+            "norm_eps",
+            "qk_norm_eps",
+            "final_norm_eps",
+            "sigma_shift_video",
+            "sigma_shift_audio",
+            "adaln_out_features",
+            "final_adaln_out_features",
+        }
+        if set(config) - allowed_config or len(source.tensors) != (532 if source.representation == "pruned" else 535):
+            raise ValueError(f"{role}: unsupported hybrid H3 architecture variant or companion tensors")
+        canonical = {
+            "hidden_size": 5376,
+            "num_attention_heads": 56,
+            "attention_head_dim": 128,
+            "ffn_hidden_size": 14336,
+            "text_dim": 5120,
+            "latents_dim": 24,
+            "audio_latents_dim": 32,
+            "patch_size": [1, 2, 2],
+            "rope_inv_freq_len": 16,
+            "gate_compress": False,
+            "time_embed_dim": 8 if source.representation == "pruned" else 2688,
+        }
+        if source.representation == "full":
+            canonical.update(timestep_input_dim=256, time_embed_hidden_size=5376)
+        for key, value in canonical.items():
+            if config.get(key) != value:
+                raise ValueError(f"{role}: unsupported hybrid H3 architecture: {key}")
+    if base.representation != overlay.representation or base.architecture != overlay.architecture:
+        raise ValueError("base/overlay H3 architecture or full/pruned representation mismatch")
+    prefixes = [f"blocks.{i}.adaln_proj.linear" for i in range(start, end + 1)]
+    if final:
+        prefixes.append("final_layer.adaln_proj.linear")
+    base_entries, overlay_entries = ({t.name: t for t in source.tensors} for source in (base, overlay))
+    families, byte_count = [], 0
+    for prefix in prefixes:
+        keys = tuple(sorted(k for k in base_entries if k.startswith(prefix + ".")))
+        if set(keys) != {prefix + ".weight", prefix + ".bias"}:
+            raise ValueError(f"unsupported or incomplete AdaLN family: {prefix}")
+        for key in keys:
+            a, b = base_entries[key], overlay_entries[key]
+            if a.dtype != b.dtype or a.shape != b.shape:
+                raise ValueError(f"selected family shape/dtype mismatch: {key}")
+            byte_count += b.end - b.start
+        families.append(keys)
+    fingerprint = hashlib.sha256(
+        repr(
+            (
+                base.path,
+                base.identity,
+                base.digest,
+                overlay.path,
+                overlay.identity,
+                overlay.digest,
+                start,
+                end,
+                final,
+                weight_dtype,
+                "raw_adaln_v1",
+            )
+        ).encode()
+    ).hexdigest()
+    return H3Plan(base, overlay, tuple(families), start, end, final, weight_dtype, byte_count, fingerprint)
 
 
 def media_kind(path: str) -> Optional[str]:

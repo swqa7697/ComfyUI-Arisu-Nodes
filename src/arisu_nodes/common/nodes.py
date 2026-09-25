@@ -646,6 +646,7 @@ class ArisuResizeImage(io.ComfyNode):
                     "mask", tooltip="The input mask resized alike, 1 over any padding; ComfyUI's 64x64 empty mask when there is neither."
                 ),
             ],
+            is_output_node=True,
             has_intermediate_output=True,
         )
 
