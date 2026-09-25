@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Make Resize Image an output node so queuing a workflow previews the resized image even when its outputs are unconnected.
 
+### Fixed
+
+- Fix Resource Studio video playback conversion failing with PyAV 18.1.0 after the first frame.
+
 ## [1.2.4] - 2026-09-20
 
 ### Added
