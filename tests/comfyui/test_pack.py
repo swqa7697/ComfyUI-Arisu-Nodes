@@ -8,6 +8,7 @@ Run via ``scripts/test-comfyui.sh``.
 from __future__ import annotations
 
 import asyncio
+import builtins
 import importlib.util
 import inspect
 import json
@@ -15,11 +16,15 @@ import re
 import sys
 from pathlib import Path
 from types import ModuleType
+from typing import Any, Callable, Dict, Optional, Sequence
 from urllib.parse import urljoin, urlsplit
 
 import folder_paths
 import pytest
+import torch
 from comfy_api.latest import ComfyExtension
+
+from tests.support.comfy import StubAudioVae
 
 pytestmark = pytest.mark.comfyui
 
@@ -41,8 +46,7 @@ EXPECTED_NODE_IDS = [
 ]
 
 
-@pytest.fixture(scope="module")
-def pack() -> ModuleType:
+def load_pack(name: str) -> ModuleType:
     """Import the repo root as a package exactly like ComfyUI's ``load_custom_node``.
 
     ComfyUI never puts the pack on ``sys.path``; it builds a spec from the
@@ -50,13 +54,17 @@ def pack() -> ModuleType:
     the entry file's relative imports (``from .src... import``) must work that
     way.
     """
-    name = str(REPO_ROOT).replace(".", "_x_")
     spec = importlib.util.spec_from_file_location(name, REPO_ROOT / "__init__.py")
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     sys.modules[name] = module
     spec.loader.exec_module(module)
     return module
+
+
+@pytest.fixture(scope="module")
+def pack() -> ModuleType:
+    return load_pack(str(REPO_ROOT).replace(".", "_x_"))
 
 
 def test_pack_loads_like_comfyui(pack: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
@@ -123,3 +131,70 @@ def test_pack_loads_like_comfyui(pack: ModuleType, tmp_path: Path, monkeypatch: 
             path = urlsplit(urljoin(served, spec)).path
             local = web_root / path[len(prefix) :] if path.startswith(prefix) else None
             assert path.startswith("/scripts/") or (local is not None and local.is_file()), f"{script.name}: {spec} -> {path}"
+
+    # Fresh pack namespaces exercise provider selection without reloading modules
+    # other tests use. The modern API remains available when torchaudio is absent;
+    # only an absent comfy.audio permits the legacy provider.
+    audio_api = ModuleType("comfy.audio")
+    audio_api.resample = sys.modules[f"{pack.__name__}.src.arisu_nodes.minimax_h3.nodes"]._resample_audio
+    legacy_api = ModuleType("torchaudio.functional")
+
+    def legacy_resample(waveform: torch.Tensor, orig_freq: int, new_freq: int) -> torch.Tensor:
+        return waveform[..., :: orig_freq // new_freq]
+
+    legacy_api.resample = legacy_resample
+    real_import = builtins.__import__
+
+    def audio_importer(failure: Optional[ImportError], allow_legacy: bool) -> Callable[..., ModuleType]:
+        def import_audio(
+            name: str,
+            globals: Optional[Dict[str, Any]] = None,
+            locals: Optional[Dict[str, Any]] = None,
+            fromlist: Sequence[str] = (),
+            level: int = 0,
+        ) -> ModuleType:
+            if name == "comfy.audio":
+                if failure is not None:
+                    raise failure
+                return audio_api
+            if name == "torchaudio.functional" and allow_legacy:
+                return legacy_api
+            if name == "torchaudio" or name.startswith("torchaudio."):
+                raise AssertionError("torchaudio must only be imported for an absent comfy.audio")
+            return real_import(name, globals, locals, fromlist, level)
+
+        return import_audio
+
+    for case, failure in (
+        ("modern", None),
+        ("legacy", ModuleNotFoundError("No module named 'comfy.audio'", name="comfy.audio")),
+        ("dependency", ModuleNotFoundError("No module named 'scipy'", name="scipy")),
+        ("export", ImportError("cannot import name 'resample' from 'comfy.audio'")),
+    ):
+        fresh_name = f"{pack.__name__}_audio_{case}"
+        with monkeypatch.context() as scoped:
+            scoped.setattr(builtins, "__import__", audio_importer(failure, case == "legacy"))
+            try:
+                if case in ("modern", "legacy"):
+                    fresh = load_pack(fresh_name)
+                    fresh_extension = asyncio.run(fresh.comfy_entrypoint())
+                    fresh_nodes = asyncio.run(fresh_extension.get_node_list())
+                    assert [node.GET_SCHEMA().node_id for node in fresh_nodes] == EXPECTED_NODE_IDS
+                    h3 = sys.modules[f"{fresh_name}.src.arisu_nodes.minimax_h3.nodes"]
+                    waveform = torch.arange(128, dtype=torch.float32).reshape(1, 2, 64) / 128
+                    audio_vae = StubAudioVae()
+                    latent, latent_t = h3.encode_ref_audio(audio_vae, {"waveform": waveform, "sample_rate": 64000})
+                    assert tuple(latent.shape) == (1, 32, 2, 40) and latent_t == 40
+                    assert tuple(audio_vae.encoded[0].shape) == (1, 32, 2)
+                    assert torch.isfinite(audio_vae.encoded[0]).all()
+                    if case == "legacy":
+                        assert torch.equal(audio_vae.encoded[0], waveform[:, :, ::2].movedim(1, -1))
+                else:
+                    assert failure is not None
+                    with pytest.raises(type(failure)) as raised:
+                        load_pack(fresh_name)
+                    assert raised.value is failure
+            finally:
+                for name in tuple(sys.modules):
+                    if name == fresh_name or name.startswith(f"{fresh_name}."):
+                        del sys.modules[name]

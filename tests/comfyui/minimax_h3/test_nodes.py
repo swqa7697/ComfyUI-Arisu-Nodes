@@ -8,6 +8,7 @@ without loading any model. Run via ``scripts/test-comfyui.sh``.
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 from typing import Any, Dict, Tuple
 
@@ -130,25 +131,45 @@ def test_frame_picture_tags_order_frames_around_references():
 
 
 def test_ref_video_with_soundtrack_and_standalone_audio():
+    # Mixed sample rates must preserve duration and stereo channels, using only
+    # the first waveform in each batch. The second waveform is a distinct signal.
+    audios = []
+    for sample_rate in (44100, 48000, 32000):
+        time = torch.arange(sample_rate, dtype=torch.float32) / sample_rate
+        stereo = torch.stack((0.25 * torch.sin(2 * math.pi * 440 * time), 0.5 * torch.cos(2 * math.pi * 220 * time)))
+        audios.append({"waveform": torch.stack((stereo, torch.full_like(stereo, 0.875))), "sample_rate": sample_rate})
+    audio_vae = StubAudioVae()
     clip, result = _run(
-        audio_vae=StubAudioVae(),
+        audio_vae=audio_vae,
         ref_videos={"ref_video_0": torch.rand(30, 360, 640, 3)},
-        ref_video_audios={"ref_video_audio_0": audio_input()},
-        ref_audios={"ref_audio_0": audio_input()},
+        ref_video_audios={"ref_video_audio_0": audios[0]},
+        ref_audios={"ref_audio_0": audios[1], "ref_audio_1": audios[2]},
     )
 
     items = clip.tokenize_kwargs["minimax_ref_items"]
     # soundtrack label before its video, standalone audio last
-    assert [item["type"] for item in items] == ["audio", "video", "audio"]
+    assert [item["type"] for item in items] == ["audio", "video", "audio", "audio"]
     assert tuple(items[1]["data"].shape) == (2, 352, 640, 3)
     assert items[1]["timestamps"] == [0.0, 0.5]
 
     refs = _cond_values(result)["minimax_refs"]
-    assert [ref["kind"] for ref in refs] == ["video_audio", "audio"]
+    assert [ref["kind"] for ref in refs] == ["video_audio", "audio", "audio"]
     assert refs[0]["latent_t"] == video_latent_t(22)
     assert (refs[0]["latent_h"], refs[0]["latent_w"], refs[0]["ref_audio_t"]) == (22, 40, 40)
-    assert "latent" not in refs[1]
-    assert refs[1]["ref_audio_t"] == 40
+    for ref in refs[1:]:
+        assert "latent" not in ref
+        assert ref["ref_audio_t"] == 40
+
+    expected = audios[2]["waveform"][:1].movedim(1, -1)
+    assert len(audio_vae.encoded) == len(audios)
+    for source, encoded in zip(audios, audio_vae.encoded):
+        assert tuple(encoded.shape) == (1, 32000, 2), f"sample_rate={source['sample_rate']}"
+        assert encoded.dtype == source["waveform"].dtype and encoded.device == source["waveform"].device
+        assert torch.isfinite(encoded).all()
+        # Compare away from filter edges: the two tones keep their timing,
+        # channel order and amplitude after the duration-preserving conversion.
+        assert torch.allclose(encoded[:, 32:-32], expected[:, 32:-32], atol=1e-3, rtol=1e-3)
+    assert torch.equal(audio_vae.encoded[2], expected)
 
 
 def test_hybrid_rejects_missing_audio_vae_and_short_reference_videos():
