@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.1] - 2026-10-10
+
 ### Fixed
 
 - Restore pack loading and MiniMax H3 reference-audio processing on current ComfyUI releases without torchaudio, while preserving older-release support.
