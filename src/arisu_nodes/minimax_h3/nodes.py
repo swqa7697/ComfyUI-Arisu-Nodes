@@ -30,7 +30,6 @@ import comfy.utils
 import folder_paths
 import node_helpers
 import torch
-import torchaudio
 from comfy_api.latest import io
 from nodes import MAX_RESOLUTION
 from PIL import Image
@@ -82,6 +81,14 @@ from .core import (
 from .media import build_bundle, read_audio, read_image, read_video, source_fingerprint, validate_source
 from .workbench import motion_key
 from .workbench import service as workbench_service
+
+# ComfyUI's public audio API replaces torchaudio; older releases still need it.
+try:
+    from comfy.audio import resample as _resample_audio
+except ModuleNotFoundError as error:
+    if error.name != "comfy.audio":
+        raise
+    from torchaudio.functional import resample as _resample_audio
 
 RefItem = Dict[str, Any]
 RefBlock = Dict[str, Any]
@@ -370,7 +377,7 @@ def encode_ref_audio(audio_vae: comfy.sd.VAE, audio: Dict[str, Any]) -> Tuple[to
     sample_rate = audio["sample_rate"]
     vae_sample_rate = getattr(audio_vae, "audio_sample_rate", 32000)
     if sample_rate != vae_sample_rate:
-        waveform = torchaudio.functional.resample(waveform, sample_rate, vae_sample_rate)
+        waveform = _resample_audio(waveform, sample_rate, vae_sample_rate)
     z = audio_vae.encode(waveform[:1].movedim(1, -1))
     return z, z.shape[-1]
 

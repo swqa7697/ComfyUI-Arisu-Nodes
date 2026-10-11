@@ -42,11 +42,15 @@ class StubVae:
 
 
 class StubAudioVae:
-    """Encodes any waveform to a fixed ``[1, 32, 2, 40]`` audio latent."""
+    """Records waveforms and encodes them to a fixed ``[1, 32, 2, 40]`` audio latent."""
 
     audio_sample_rate = 32000
 
+    def __init__(self):
+        self.encoded: List[torch.Tensor] = []
+
     def encode(self, waveform: torch.Tensor) -> torch.Tensor:
+        self.encoded.append(waveform)
         return torch.zeros(1, 32, 2, 40)
 
 
