@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.2] - 2026-10-12
+
+### Added
+
+- Add an Anima example workflow and preview using Path Builder and Preview & Save Image (Upscale).
+
+### Changed
+
+- Match the optional Agents shortcut to ComfyUI's compact toolbar buttons with a borderless style, smaller icon, and subtle keyboard focus.
+
+### Fixed
+
+- Fix Grok Prompt Workbench image activation when the CLI reports the approved policy hook from multiple configuration sources, and show candidate-validation progress and failures in build logs.
+
 ## [1.3.1] - 2026-10-10
 
 ### Fixed

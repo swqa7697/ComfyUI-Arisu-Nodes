@@ -143,9 +143,65 @@ def test_agent_update_preserves_working_image_and_settings_reject_unavailable_mo
     with pytest.raises(ValueError):
         agents.manage("codex", "update")
     assert not tagged and not agents.guard.locked() and agents.operation["state"] == "failed"
+    assert any("Candidate image validation failed" in line for line in agents.read_logs()["lines"])
     monkeypatch.setattr(agents, "invoke", lambda *args, **kwargs: {"policy_ready": True, "policy_revision": 6})
     agents.manage("codex", "update")
     assert tagged == [agents.image("codex")] and agents.operation["state"] == "complete"
+
+    # Grok reports the immutable hook once per configuration source. Validate every
+    # entry before activation, including unexpected hooks after a valid first entry.
+    assets = Path(__file__).resolve().parents[3] / "assets" / "prompt_workbench"
+    monkeypatch.syspath_prepend(str(assets))
+    grok_provider = importlib.import_module("agents.grok.adapter")
+    hook = {
+        "event": "pre_tool_use",
+        "hookType": "command",
+        "target": "/usr/local/bin/python /opt/workbench/agents/grok/hook.py",
+        "matcher": ".*",
+        "source": {"type": "requirements", "path": "/etc/grok/requirements.toml"},
+    }
+    configured = {"mcpServers": [{"name": "workbench", "target": "/usr/local/bin/python"}]}
+
+    def discover(args: List[str], **kwargs: Any) -> subprocess.CompletedProcess:
+        if args[-1] == "--version":
+            return subprocess.CompletedProcess(args, 0, "grok 1.0.52")
+        if args[-1] == "--help":
+            return subprocess.CompletedProcess(
+                args, 0, "--tools --disable-web-search --system-prompt-override --prompt-file --include-partial-messages"
+            )
+        if args[-1] == "--json":
+            return subprocess.CompletedProcess(args, 0, json.dumps(configured))
+        if args[-1] == "models":
+            return subprocess.CompletedProcess(args, 1, "Login required")
+        raise AssertionError(f"unexpected discovery command: {args!r}")
+
+    with monkeypatch.context() as discovery:
+        discovery.setattr(grok_provider, "run", discover)
+        discovery.setattr(agents, "invoke", lambda *args, **kwargs: grok_provider.inspect())
+        for hooks in (
+            [hook],
+            [hook, {**hook, "source": {"type": "configToml", "path": "/home/agent/.grok/config.toml"}}],
+        ):
+            configured["hooks"] = hooks
+            agents.manage("grok", "build")
+            assert tagged[-1] == agents.image("grok") and agents.operation["state"] == "complete"
+        activated = list(tagged)
+        for hooks in (
+            None,
+            {},
+            [],
+            [None],
+            [hook, {}],
+            [hook, {**hook, "target": "/tmp/unapproved-hook.py"}],
+            [hook, {**hook, "hookType": "http"}],
+            [hook, {**hook, "event": "post_tool_use"}],
+            [hook, {**hook, "matcher": "bash"}],
+        ):
+            configured["hooks"] = hooks
+            with pytest.raises(ValueError, match="Grok managed hook"):
+                agents.manage("grok", "update")
+            assert tagged == activated and not agents.guard.locked() and agents.operation["state"] == "failed", hooks
+
     monkeypatch.setattr(
         agents, "status", lambda: {"agents": {"codex": {"models": [{"id": "available", "efforts": ["low", "medium", "high"]}]}}}
     )

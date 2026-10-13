@@ -311,17 +311,20 @@ app.registerExtension({
         onclick: () => openAgentSettings(),
       },
       [
-        el('img', { src: new URL('../../assets/icon.svg', import.meta.url).href, alt: '', width: 20, height: 20 }),
+        el('img', { src: new URL('../../assets/icon.svg', import.meta.url).href, alt: '', width: 16, height: 16 }),
         el('span', { textContent: 'Agents' }),
       ],
     );
     document.body.append(
       el('style', {
         textContent: `
-      .arisu-agents-shortcut{display:inline-flex;align-items:center;gap:6px;white-space:nowrap;
-        min-height:32px;padding:6px 10px;border-radius:6px;font:inherit;cursor:pointer;}
-      .arisu-agents-shortcut img{display:block;width:20px;height:20px;flex-shrink:0;}
-      .arisu-agents-shortcut:focus-visible{outline:2px solid var(--fg-color);outline-offset:2px;}
+      .arisu-agents-shortcut{display:inline-flex;align-items:center;justify-content:center;gap:6px;white-space:nowrap;
+        box-sizing:border-box;height:32px;min-height:0;flex-shrink:0;margin:0;padding:0 10px;border:0;border-radius:8px;
+        background:var(--secondary-background,var(--comfy-input-bg,#222));color:var(--base-foreground,var(--input-text,#ddd));
+        font:inherit;font-size:14px;font-weight:500;line-height:20px;cursor:pointer;transition:background-color 120ms ease;}
+      .arisu-agents-shortcut img{display:block;width:16px;height:16px;flex-shrink:0;}
+      .arisu-agents-shortcut:focus-visible{outline:1px solid color-mix(in srgb,var(--base-foreground,var(--fg-color,#ddd)) 40%,transparent);outline-offset:-1px;}
+      @media(prefers-reduced-motion:reduce){.arisu-agents-shortcut{transition:none;}}
     `,
       }),
     );

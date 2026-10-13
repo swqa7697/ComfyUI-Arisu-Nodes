@@ -367,9 +367,16 @@ class DockerAgents:
                     if self.volume(agent) in existing.splitlines():
                         raise ValueError("authentication volume name is already in use")
                     self.command(["volume", "create", "--label", LABEL + "=" + self.namespace, self.volume(agent)])
-                self.invoke(agent, "check", image=candidate)
+                self.log("Docker build completed. Validating candidate image policy...")
+                try:
+                    self.invoke(agent, "check", image=candidate)
+                except (ValueError, OSError, subprocess.SubprocessError):
+                    self.log("Candidate image validation failed; see the server log for details.")
+                    raise
+                self.log("Candidate image policy verified. Activating image...")
                 self.command(["tag", candidate, self.image(agent)])
                 self.command(["image", "rm", candidate])
+                self.log("Agent image activated.")
             elif action == "remove":
                 # Include retired image IDs after updates, never Docker-wide prune.
                 filters = ["--filter", "label=" + LABEL + "=" + self.namespace, "--filter", "label=" + PROVIDER_LABEL + "=" + agent]

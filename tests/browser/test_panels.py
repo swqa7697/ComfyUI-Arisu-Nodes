@@ -845,22 +845,41 @@ def test_prompt_workbench():
                     # Rebuild the shared toolbar groups as other extensions do during startup.
                     page.evaluate("""async () => {
                         const { app } = await import('/scripts/app.js');
-                        const manager = document.createElement('button');
-                        manager.textContent = 'Manager';
-                        manager.className = 'comfy-btn';
-                        app.menu.settingsGroup.append(manager);
+                        const { ComfyButton } = await import('/scripts/ui/components/button.js');
+                        const manager = new ComfyButton({icon:'puzzle', content:'Manager', tooltip:'ComfyUI Manager',
+                            classList:'comfyui-button comfyui-menu-mobile-collapse primary', action:() => {}});
+                        app.menu.settingsGroup.append(manager.element);
                         app.menu.actionsGroup.update();
                     }""")
                     expect(shortcut).to_be_visible()
-                    manager = page.get_by_role("button", name="Manager", exact=True)
+                    manager = page.get_by_role("button", name="ComfyUI Manager", exact=True)
                     shortcut_box = shortcut.bounding_box()
                     manager_box = manager.bounding_box()
                     assert shortcut_box["x"] + shortcut_box["width"] <= manager_box["x"]
+                    # Keep the optional shortcut within the native toolbar button height.
+                    native_box = page.get_by_role("button", name="Cancel current run", exact=True).bounding_box()
+                    assert shortcut_box["height"] <= native_box["height"]
+                    assert abs(shortcut_box["y"] + shortcut_box["height"] / 2 - native_box["y"] - native_box["height"] / 2) <= 1
                     expect(shortcut.locator("img")).to_be_visible()
                     assert shortcut.locator("img").evaluate("image => image.complete && image.naturalWidth > 0")
                     screenshot(page, name, "agents-shortcut")
                     hover_button(page, shortcut, name, "shortcut-hover")
+                    manager.focus()
+                    page.keyboard.press("Tab")
+                    page.keyboard.press("Shift+Tab")
+                    expect(manager).to_be_focused()
+                    manager_focus_width = manager.evaluate("button => parseFloat(getComputedStyle(button).outlineWidth)")
                     shortcut.focus()
+                    page.keyboard.press("Tab")
+                    page.keyboard.press("Shift+Tab")
+                    expect(shortcut).to_be_focused()
+                    focus = shortcut.evaluate("""button => {
+                        const css = getComputedStyle(button);
+                        return {width:parseFloat(css.outlineWidth), color:css.outlineColor, text:css.color};
+                    }""")
+                    assert 0 < focus["width"] <= manager_focus_width
+                    assert focus["color"] != focus["text"]
+                    screenshot(page, name, "shortcut-focus")
                     page.keyboard.press("Enter")
                     expect(agents).to_be_visible()
                     screenshot(page, name, "shortcut-modal")
