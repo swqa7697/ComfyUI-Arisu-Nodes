@@ -73,8 +73,8 @@ ${PANELS} button.danger{--arisu-action:var(--arisu-red);}
 
 .arisu-settings-entry button{font:inherit;padding:6px 12px;min-height:32px;border:1px solid var(--border-color,#444);border-radius:4px;
  background:var(--comfy-input-bg,#222);color:var(--input-text,#ddd);cursor:pointer;}
-.arisu-agents-shortcut:enabled:hover{background:color-mix(in srgb,var(--comfy-input-bg,#222),var(--fg-color,#ddd) 8%);}
-.arisu-agents-shortcut:enabled:active{background:color-mix(in srgb,var(--comfy-input-bg,#222),var(--fg-color,#ddd) 16%);}
+.arisu-agents-shortcut:enabled:hover{background:var(--secondary-background-hover,color-mix(in srgb,var(--comfy-input-bg,#222),var(--fg-color,#ddd) 8%));}
+.arisu-agents-shortcut:enabled:active{background:var(--secondary-background-selected,color-mix(in srgb,var(--comfy-input-bg,#222),var(--fg-color,#ddd) 16%));}
 @media(prefers-reduced-motion:reduce){${PANELS} *{transition:none!important;}}
 `;
 
