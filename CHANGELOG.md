@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Add an Anima example workflow and preview using Path Builder and Preview & Save Image (Upscale).
+
 ### Changed
 
 - Match the optional Agents shortcut to ComfyUI's compact toolbar buttons with a borderless style, smaller icon, and subtle keyboard focus.
