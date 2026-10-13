@@ -40,9 +40,20 @@ def inspect() -> Dict[str, Any]:
     if len(servers) != 1 or servers[0].get("name") != "workbench" or servers[0].get("target") != "/usr/local/bin/python":
         raise ValueError("Grok MCP configuration mismatch")
     hooks = configured.get("hooks", [])
-    if len(hooks) != 1 or hooks[0].get("target") != "/usr/local/bin/python /opt/workbench/agents/grok/hook.py":
+    # Requirements and the fresh user config can each report the same hook.
+    # Every discovered entry must still be the immutable Workbench command.
+    if (
+        not isinstance(hooks, list)
+        or not hooks
+        or any(
+            not isinstance(hook, dict)
+            or hook.get("hookType") != "command"
+            or hook.get("target") != "/usr/local/bin/python /opt/workbench/agents/grok/hook.py"
+            for hook in hooks
+        )
+    ):
         raise ValueError("Grok managed hook mismatch")
-    if hooks[0].get("event") != "pre_tool_use" or hooks[0].get("matcher") != ".*":
+    if any(hook.get("event") != "pre_tool_use" or hook.get("matcher") != ".*" for hook in hooks):
         raise ValueError("Grok managed hook coverage mismatch")
     listed = run(["grok", "--no-auto-update", "models"])
     authenticated = listed.returncode == 0 and ("You are logged in with " in listed.stdout or "You are using XAI_API_KEY." in listed.stdout)

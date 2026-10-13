@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Fix Grok Prompt Workbench image activation when the CLI reports the approved policy hook from multiple configuration sources, and show candidate-validation progress and failures in build logs.
+
 ## [1.3.1] - 2026-10-10
 
 ### Fixed
