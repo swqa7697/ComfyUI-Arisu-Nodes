@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.2] - 2026-10-12
+
 ### Added
 
 - Add an Anima example workflow and preview using Path Builder and Preview & Save Image (Upscale).
