@@ -99,6 +99,8 @@ def inspect_native_nodes(page: Page, name: str):
         screenshot(page, name, node_type)
         if node_type == "ArisuMiniMaxH3ModelLoader":
             inspect_loader(page, node_id, name)
+        if node_type == "ArisuMiniMaxH3SelfLiftProgressiveSampler":
+            inspect_selflift(page, node_id)
         # Canvas buttons have no DOM :hover. Sample their actual fill pixels
         # before/after pointer entry and exit, including both Path Builder cells.
         points = page.evaluate(
@@ -145,6 +147,60 @@ def inspect_native_nodes(page: Page, name: str):
             screenshot(page, name, node_type + "-settings")
             page.keyboard.press("Escape")
             expect(page.locator(".arisu-settings[open]")).to_have_count(0)
+
+
+def inspect_selflift(page: Page, node_id: str):
+    """Open a position-only workflow and verify its wires and values survive another save."""
+    page.evaluate(
+        """async id => {
+        const app = window.comfyAPI.app.app, graph = app.graph;
+        const ports = ['model','model_hires','positive','negative','vae','latent','context_latent','trim_frames','sampler','sigmas'];
+        const widgets = ['seed','control_after_generate','cfg','lowres_scale','transition_step','rho','w_min','w_max',
+            'upscaler_model','upscaler_unload','highres_tiling'];
+        const check = (actual, expected) => {
+            if (JSON.stringify(actual) !== JSON.stringify(expected)) throw Error(JSON.stringify({actual,expected}));
+        };
+        const layout = node => {
+            check(node.inputs.filter(i => !i.widget).map(i => i.label || i.localized_name || i.name), ports);
+            check(node.widgets.map(w => w.name), widgets);
+        };
+        const target = graph.getNodeById(id);
+        layout(target);
+        const source = LiteGraph.createNode('ArisuMiniMaxH3HybridToVideo');
+        graph.add(source);
+        const wires = ['positive','context_latent','latent_image'].map((name, index) => {
+            const slot = index === 0 ? 0 : 1;
+            const link = source.connect(slot,target,target.findInputSlot(name));
+            return {name,slot,id:link.id};
+        });
+        let workflow = JSON.parse(JSON.stringify(graph.serialize()));
+        const saved = workflow.nodes.find(n => String(n.id) === id);
+        const oldPorts = ['model','positive','negative','vae','latent_image','sampler','sigmas','model_hires','context_latent','trim_frames'];
+        const oldWidgets = ['seed','cfg','transition_step','lowres_scale','rho','w_min','w_max','upscaler_model','highres_tiling','upscaler_unload'];
+        saved.inputs = [...oldPorts,...oldWidgets].map(name => saved.inputs.find(input => input.name === name));
+        const oldLatent = saved.inputs.find(i => i.name === 'latent_image');
+        delete oldLatent.label;
+        oldLatent.localized_name = 'latent_image';
+        saved.properties = {'Node name for S&R': saved.type};
+        delete saved.widgets_values_named;
+        saved.widgets_values = [42,'fixed',3.5,7,0.7,0.2,0.3,0.9,'none',true,false];
+        for (const wire of wires) workflow.links.find(link => link[0] === wire.id)[4] = oldPorts.indexOf(wire.name);
+        for (let pass = 0; pass < 2; pass++) {
+            await app.loadGraphData(workflow);
+            const node = app.graph.getNodeById(id);
+            layout(node);
+            check(node.widgets.map(w => w.value), [42,'fixed',3.5,0.7,7,0.2,0.3,0.9,'none',false,true]);
+            const prompt = (await app.graphToPrompt()).output[id].inputs;
+            for (const wire of wires) {
+                const slot = node.findInputSlot(wire.name), link = node.getInputLink(slot);
+                check([link.id, link.target_slot], [wire.id,slot]);
+                check(prompt[wire.name], [String(source.id),wire.slot]);
+            }
+            workflow = app.graph.serialize();
+        }
+        }""",
+        node_id,
+    )
 
 
 def inspect_loader(page: Page, node_id: str, name: str):

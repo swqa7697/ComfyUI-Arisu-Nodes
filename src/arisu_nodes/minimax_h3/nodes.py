@@ -1482,23 +1482,44 @@ class ArisuMiniMaxH3SelfLiftProgressiveSampler(io.ComfyNode):
             description="Run early Euler steps at low resolution, lift the video latent, and finish at the target size while continuing the audio.",
             inputs=[
                 io.Model.Input("model"),
+                io.Model.Input(
+                    "model_hires", optional=True, tooltip="Optional high-resolution model with the same architecture and latent format."
+                ),
                 io.Conditioning.Input("positive"),
                 io.Conditioning.Input("negative"),
                 io.Vae.Input("vae", tooltip="H3 video VAE for low-resolution guides and optional pixel-anchor correction."),
-                io.Latent.Input("latent_image", tooltip="Target-resolution H3 latent. Its video stream sets the canvas and duration."),
+                io.Latent.Input(
+                    "latent_image",
+                    display_name="latent",
+                    tooltip="Target-resolution H3 latent. Its video stream sets the canvas and duration.",
+                ),
+                io.Latent.Input(
+                    "context_latent",
+                    optional=True,
+                    lazy=True,
+                    tooltip="Previous clip used by Motion Context. Connect its trim_frames output too.",
+                ),
+                io.Int.Input(
+                    "trim_frames",
+                    default=0,
+                    min=0,
+                    optional=True,
+                    force_input=True,
+                    tooltip="Connect Motion Context's trim_frames output to encode the pinned run together at the low resolution.",
+                ),
                 io.Sampler.Input("sampler", tooltip="Use the standard Euler sampler with s_churn=0."),
                 io.Sigmas.Input("sigmas"),
                 io.Int.Input("seed", default=0, min=0, max=0xFFFFFFFFFFFFFFFF, control_after_generate=True),
                 io.Float.Input("cfg", default=5.0, min=0.0, max=100.0, step=0.1, round=0.01),
+                io.Float.Input(
+                    "lowres_scale", default=0.5, min=0.25, max=1.0, step=0.05, tooltip="Spatial scale of the low-resolution steps."
+                ),
                 io.Int.Input(
                     "transition_step",
                     default=6,
                     min=1,
                     max=10000,
                     tooltip="Number of low-resolution steps. Leave at least one full-resolution step.",
-                ),
-                io.Float.Input(
-                    "lowres_scale", default=0.5, min=0.25, max=1.0, step=0.05, tooltip="Spatial scale of the low-resolution steps."
                 ),
                 io.Float.Input(
                     "rho",
@@ -1520,8 +1541,8 @@ class ArisuMiniMaxH3SelfLiftProgressiveSampler(io.ComfyNode):
                     default=next((name for name in upscalers if "h3" in name.lower()), "none"),
                     tooltip="H3 checkpoint from models/latent_upscale_models. Choose none with rho > 0 for SelfLift-zero.",
                 ),
-                io.Model.Input(
-                    "model_hires", optional=True, tooltip="Optional high-resolution model with the same architecture and latent format."
+                io.Boolean.Input(
+                    "upscaler_unload", default=True, optional=True, tooltip="Unload the learned upscaler from VRAM after the lift."
                 ),
                 io.Boolean.Input(
                     "highres_tiling",
@@ -1532,23 +1553,6 @@ class ArisuMiniMaxH3SelfLiftProgressiveSampler(io.ComfyNode):
                         "Using multiple tiles can change the final video even with the same seed. "
                         "Audio can also change throughout the clip because each tile predicts sound from a different part of the picture."
                     ),
-                ),
-                io.Boolean.Input(
-                    "upscaler_unload", default=True, optional=True, tooltip="Unload the learned upscaler from VRAM after the lift."
-                ),
-                io.Latent.Input(
-                    "context_latent",
-                    optional=True,
-                    lazy=True,
-                    tooltip="Previous clip used by Motion Context. Connect its trim_frames output too.",
-                ),
-                io.Int.Input(
-                    "trim_frames",
-                    default=0,
-                    min=0,
-                    optional=True,
-                    force_input=True,
-                    tooltip="Connect Motion Context's trim_frames output to encode the pinned run together at the low resolution.",
                 ),
             ],
             outputs=[io.Latent.Output("latent")],

@@ -2012,7 +2012,8 @@
         "latent_image": [
           "LATENT",
           {
-            "tooltip": "Target-resolution H3 latent. Its video stream sets the canvas and duration."
+            "tooltip": "Target-resolution H3 latent. Its video stream sets the canvas and duration.",
+            "display_name": "latent"
           }
         ],
         "sampler": [
@@ -2044,15 +2045,6 @@
             "round": 0.01
           }
         ],
-        "transition_step": [
-          "INT",
-          {
-            "tooltip": "Number of low-resolution steps. Leave at least one full-resolution step.",
-            "default": 6,
-            "min": 1,
-            "max": 10000
-          }
-        ],
         "lowres_scale": [
           "FLOAT",
           {
@@ -2061,6 +2053,15 @@
             "min": 0.25,
             "max": 1.0,
             "step": 0.05
+          }
+        ],
+        "transition_step": [
+          "INT",
+          {
+            "tooltip": "Number of low-resolution steps. Leave at least one full-resolution step.",
+            "default": 6,
+            "min": 1,
+            "max": 10000
           }
         ],
         "rho": [
@@ -2112,20 +2113,6 @@
             "tooltip": "Optional high-resolution model with the same architecture and latent format."
           }
         ],
-        "highres_tiling": [
-          "BOOLEAN",
-          {
-            "tooltip": "Experimental. Off by default. Selects 1–8 tiles based on available memory. Using multiple tiles can change the final video even with the same seed. Audio can also change throughout the clip because each tile predicts sound from a different part of the picture.",
-            "default": false
-          }
-        ],
-        "upscaler_unload": [
-          "BOOLEAN",
-          {
-            "tooltip": "Unload the learned upscaler from VRAM after the lift.",
-            "default": true
-          }
-        ],
         "context_latent": [
           "LATENT",
           {
@@ -2141,6 +2128,20 @@
             "forceInput": true,
             "min": 0
           }
+        ],
+        "upscaler_unload": [
+          "BOOLEAN",
+          {
+            "tooltip": "Unload the learned upscaler from VRAM after the lift.",
+            "default": true
+          }
+        ],
+        "highres_tiling": [
+          "BOOLEAN",
+          {
+            "tooltip": "Experimental. Off by default. Selects 1–8 tiles based on available memory. Using multiple tiles can change the final video even with the same seed. Audio can also change throughout the clip because each tile predicts sound from a different part of the picture.",
+            "default": false
+          }
         ]
       }
     },
@@ -2155,8 +2156,8 @@
         "sigmas",
         "seed",
         "cfg",
-        "transition_step",
         "lowres_scale",
+        "transition_step",
         "rho",
         "w_min",
         "w_max",
@@ -2164,10 +2165,10 @@
       ],
       "optional": [
         "model_hires",
-        "highres_tiling",
-        "upscaler_unload",
         "context_latent",
-        "trim_frames"
+        "trim_frames",
+        "upscaler_unload",
+        "highres_tiling"
       ]
     },
     "is_input_list": false,
