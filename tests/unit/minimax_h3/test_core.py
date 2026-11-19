@@ -1,7 +1,7 @@
 """Tests for the ComfyUI-free layer of the MiniMax H3 node family.
 
 The execute-level tests under ``tests/comfyui`` are the regression trunk; this
-file keeps only the boundaries and branches they cannot reach (see CLAUDE.md,
+file keeps only the boundaries and branches they cannot reach (see AGENTS.md,
 Test growth rules).
 """
 

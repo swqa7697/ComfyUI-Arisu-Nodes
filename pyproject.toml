@@ -44,7 +44,7 @@ src = [".", "scripts", "src", "tests"]
 
 [tool.ruff.lint]
 extend-select = [
-    "I",    # isort: sorted top-level imports (see CLAUDE.md, Import conventions)
+    "I",    # isort: sorted top-level imports (see AGENTS.md, Import conventions)
     "S307", # suspicious-eval-usage: flag any eval() call; not in ruff's default set
 ]
 ignore = [

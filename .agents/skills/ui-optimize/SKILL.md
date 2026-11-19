@@ -5,10 +5,10 @@ description: Improve ComfyUI-Arisu-Nodes frontend appearance and usability throu
 
 # Optimize the ComfyUI frontend
 
-Work from this development checkout. Claude Code invokes `/ui-optimize`; Codex invokes
-`$ui-optimize` through the shared `.agents/skills/ui-optimize` symlink.
+Work from this development checkout. Use `/ui-optimize` in Claude Code or
+`$ui-optimize` in Codex.
 
-Read the repository's `AGENTS.md` / `CLAUDE.md` and the README's **Local browser inspection**
+Read the repository's `AGENTS.md` and the README's **Local browser inspection**
 section. Use the existing browser lane rather than inventing a preview page or duplicating
 extension markup. The goal is a visible, usable improvement in the real ComfyUI frontend.
 

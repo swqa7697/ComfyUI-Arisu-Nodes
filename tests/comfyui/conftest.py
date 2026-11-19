@@ -20,7 +20,7 @@ import importlib.util
 # fnmatch "*" spans "/", so the second pattern covers per-family subdirectories.
 collect_ignore_glob = [] if importlib.util.find_spec("comfy_api") else ["test_*.py", "*/test_*.py"]
 
-# Feature-gated imports (CLAUDE.md, Import conventions): this file must stay
+# Feature-gated imports (AGENTS.md, Import conventions): this file must stay
 # importable with neither ComfyUI nor torch installed.
 if importlib.util.find_spec("comfy_api"):
     import comfy.cli_args

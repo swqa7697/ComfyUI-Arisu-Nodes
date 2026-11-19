@@ -86,13 +86,13 @@ Write the body to a scratch file (`--body-file`), following this template. Skip 
 
 ## Node changes
 - New or changed node ids (from `__init__.py` / `src/arisu_nodes`) and their `web/docs/<node_id>/en.md` pages, or "none".
-- Runtime dependency changes in `pyproject.toml` `dependencies` (each needs the human-only `uv pip install` into the ComfyUI venv per CLAUDE.md), or "none".
+- Runtime dependency changes in `pyproject.toml` `dependencies` (each needs the human-only `uv pip install` into the ComfyUI venv per AGENTS.md), or "none".
 
 ## Release checklist
 - [ ] Merge this PR (CI must be green).
 - [ ] `git switch main && git pull && make tag` — pushes `vX.Y.Z`, which triggers `publish_node.yml`.
 - [ ] `REGISTRY_ACCESS_TOKEN` secret present; the publish run is green.
-- [ ] Manual E2E in the live ComfyUI (human-only, see CLAUDE.md).
+- [ ] Manual E2E in the live ComfyUI (human-only, see AGENTS.md).
 
 ## Commits
 

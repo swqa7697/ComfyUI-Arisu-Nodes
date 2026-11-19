@@ -113,7 +113,7 @@ node.zip
 .vscode/*
 !.vscode/settings.example.jsonc
 .claude/*
-!.claude/skills/
+!.claude/skills
 !.claude/comfyui-env.example.md
 .agents/*
 !.agents/skills/

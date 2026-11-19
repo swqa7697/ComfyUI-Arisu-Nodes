@@ -3,7 +3,7 @@ SHELL := /bin/bash
 .DEFAULT_GOAL := help
 .PHONY: browser-install test-browser inspect-browser help install uninstall clean build test test-unit test-web test-comfyui test-count comfyui-path lint format tidy upgrade bump-major bump-minor bump-patch release-commit tag
 
-# Hard boundary (CLAUDE.md): never run project commands inside the live ComfyUI
+# Hard boundary (AGENTS.md): never run project commands inside the live ComfyUI
 # install, including a clone of this repo under its custom_nodes/.
 # The default here is the single source of truth; `make comfyui-path` prints what
 # it resolves to. The $(if ...) treats COMFYUI_PATH= (set but empty) as unset,
@@ -11,7 +11,7 @@ SHELL := /bin/bash
 COMFYUI_PATH := $(if $(strip $(COMFYUI_PATH)),$(COMFYUI_PATH),$(HOME)/apps/comfyui)
 COMFYUI_ABS := $(abspath $(COMFYUI_PATH))
 ifneq ($(filter $(COMFYUI_ABS)/%,$(CURDIR)/),)
-$(error refusing to run inside the live ComfyUI install at $(COMFYUI_ABS); see CLAUDE.md)
+$(error refusing to run inside the live ComfyUI install at $(COMFYUI_ABS); see AGENTS.md)
 endif
 
 # Exported per target, not globally: tests/conftest.py puts COMFYUI_PATH on
@@ -61,13 +61,13 @@ test-web: ## Run the web lane (tests/web) alone on Node's built-in runner (ARGS=
 test-comfyui: ## Run the ComfyUI lane on ComfyUI's interpreter, read-only (ARGS="-v -k name")
 	@bash scripts/test-comfyui.sh $(ARGS)
 
-test-count: ## Selected cases per lane; compare with the budgets in CLAUDE.md
+test-count: ## Selected cases per lane; compare with the budgets in AGENTS.md
 	@printf 'unit lane:    '; uv run pytest --collect-only -q | $(_SELECTED)
 	@printf 'comfyui lane: '; bash scripts/test-comfyui.sh --collect-only -q 2>/dev/null | $(_SELECTED) || $(INFO) "skipped (no ComfyUI install)"
 	@printf 'web lane:     '; $(_NODE_TEST) --test-reporter=tap $(_WEB_TESTS) | awk '/^# tests/ {print $$3}'
 	@if [[ -x .misc/browser/env/bin/python ]]; then printf 'browser lane: '; bash scripts/browser.sh test --collect-only -q | $(_SELECTED); else $(INFO) "browser lane not installed (make browser-install)"; fi
 
-comfyui-path: ## Print the resolved ComfyUI install root (the CLAUDE.md hard boundary)
+comfyui-path: ## Print the resolved ComfyUI install root (the AGENTS.md hard boundary)
 	@printf '%s\n' '$(COMFYUI_ABS)'
 
 lint: ## Check only: ruff check, ruff format --check, biome ci
