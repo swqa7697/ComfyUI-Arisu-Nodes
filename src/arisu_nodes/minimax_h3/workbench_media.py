@@ -98,7 +98,6 @@ def stage(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
                             "reference_video_frame",
                             sequence_index=sequence,
                             timestamp=max(0.0, left - start),
-                            source_timestamp=left,
                         )
                         sequence += 1
 

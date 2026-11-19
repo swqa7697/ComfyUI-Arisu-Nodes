@@ -159,7 +159,6 @@ def fixture(directory: Path, requirements: str, images: bool = False) -> Path:
                 "kind": "video",
                 "name": "clip",
                 "note": "slow motion",
-                "selected_clip": {"start": 0, "end": 1},
                 "include_audio": False,
                 "inspect": {"type": "stills", "frames": [{"asset_id": "video", "timestamp": 0}]},
             },

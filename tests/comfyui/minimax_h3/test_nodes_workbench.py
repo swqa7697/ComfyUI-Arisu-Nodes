@@ -165,7 +165,7 @@ def test_workbench_stages_crops_refuses_escapes_and_cancellation_retains_guard(t
             assert still.getpixel((0, 0))[0] == 12
         with Image.open(destination / stills[-1]["file"]) as still:
             assert still.getpixel((0, 0))[0] == 35
-        assert stills[0]["timestamp"] == 0 and stills[-1]["source_timestamp"] < 1.5
+        assert stills[0]["timestamp"] == 0 and stills[-1]["timestamp"] < 1.0
         assert [asset["sequence_index"] for asset in stills] == list(range(8))
 
     # Presentation timestamps, short intervals and exclusive endpoints determine samples.
@@ -176,9 +176,11 @@ def test_workbench_stages_crops_refuses_escapes_and_cancellation_retains_guard(t
         destination.mkdir()
         selected = replace(video, path=variable.name, clip=clip, revision=revision_for(variable.stat()))
         sampled = stage({**payload, "directory": str(destination), "resources": [{"role": "reference", "item": selected.__dict__}]})
-        stamps = [asset["source_timestamp"] for asset in sampled]
+        stamps = [asset["timestamp"] for asset in sampled]
         assert stamps == sorted(set(stamps)) and len(stamps) <= 8
-        assert stamps[0] == 0.1 and stamps[-1] == (1.6 if number == 0 else 0.1)
+        assert stamps[0] == 0 and stamps[-1] == (1.5 if number == 0 else 0)
+        with Image.open(destination / sampled[0]["file"]) as first:
+            assert first.getpixel((0, 0))[0] == 1
 
     # Cap only oversized pixels, preserve alpha, and retain lossless small pixels.
     for number, size in enumerate(((39, 17), (4000, 20), (5000, 100))):
@@ -308,6 +310,7 @@ def test_workbench_stages_crops_refuses_escapes_and_cancellation_retains_guard(t
         assert context["assets"][0]["note"] == context["references"][0]["note"]
         assert context["assets"][0]["attachment_index"] == 1
         assert context["references"][0]["inspect"]["type"] == "image"
+        assert "selected_crop" not in context["references"][0]
         assert context["assets"][0]["id"] in context["references"][0]["inspect"]["asset_ids"]
         with Image.open(directory / context["assets"][0]["file"]) as prepared:
             assert prepared.size == (8, 6)
@@ -418,13 +421,17 @@ def test_workbench_stages_crops_refuses_escapes_and_cancellation_retains_guard(t
         "studio:second-video:input:clip.mkv": "fast camera",
     }
     grouped = job_context(
-        grouped_job, mixed_assets + grouped_job.motion, ResourceBundle(first=first_image, images=(image,), videos=(video, second_video))
+        grouped_job,
+        mixed_assets + grouped_job.motion,
+        ResourceBundle(first=first_image, images=(image,), videos=(video, second_video), audios=(sound,)),
     )
     (mixed / "context.json").write_text(json.dumps(grouped))
     monkeypatch.syspath_prepend(str(workbench.ASSETS))
     validated = importlib.import_module("contract").context(mixed)
     assert len(validated["assets"]) == 22 and len({a["id"] for a in validated["assets"]}) == 22
+    assert all("selected_clip" not in ref for ref in validated["references"])
     for asset in validated["assets"]:
+        assert "source_timestamp" not in asset
         assert asset["file"] == asset["id"] + ".webp"
         assert (
             asset["note"]

@@ -140,10 +140,6 @@ def job_context(job: Generation, assets: List[Dict[str, Any]], resources: Resour
             "note": job.options["reference_notes"].get(key, ""),
             "inspect": _inspect(item, assets),
         }
-        if item.kind == "image" and item.crop:
-            entry["selected_crop"] = item.crop
-        if item.kind != "image":
-            entry["selected_clip"] = item.clip
         if item.kind == "video":
             entry["include_audio"] = item.include_audio
         references.append(entry)

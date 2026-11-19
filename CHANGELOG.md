@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Omit image crop coordinates, video and audio trim ranges, and source timestamps from Prompt Workbench agent context.
+
 ### Fixed
 
 - Use ComfyUI’s Load Diffusion Model for MiniMax H3 native loading so checkpoints with stacked PDD output heads pass through to the installed loader.

@@ -7,9 +7,9 @@ This job is one-shot. User inputs are attached images and Workbench MCP metadata
 1. `get_context` — no arguments. Returns the job JSON below.
 2. `read_skill` — `{"path": "SKILL.md"}` or a relative `.md`/`.txt` reference path. Skill text only.
 
-MCP never transfers image bytes. Images are attached to the initial prompt in `assets[]` order. Each lossless WebP filename matches its asset ID; pixels are cropped and capped at a 4000-pixel longer edge without upscaling. The `path` is identity metadata, not an instruction to open a file.
+MCP never transfers image bytes. Images are attached to the initial prompt in `assets[]` order. Each lossless WebP filename matches its asset ID. The longer edge is capped at 4000 pixels without upscaling. The `path` is identity metadata, not an instruction to open a file.
 
-Video references contain at most eight distinct ordered frames spanning the complete selected clip. Use the frames and their parent reference's `note` together. Audio is notes only; no audio or video files are prepared or attached.
+Video references contain at most eight distinct ordered frames. Use the frames and their parent reference's `note` together. Audio is notes only; no audio or video files are prepared or attached.
 
 ## JSON fields
 
@@ -20,11 +20,11 @@ Video references contain at most eight distinct ordered frames spanning the comp
   - True: read `motion-context.md`. Inspect the attached image for every `motion.stills[].asset_id` in order. `motion.notes` may be empty; infer from stills. `sample_duration_seconds` is the clock for `At MM:SS.mmm` (Video Settings length, including the pinned head). `delivered_duration_seconds` is after Trim. Do not add `context_length` on top of Video Settings length.
 - `keyframes.first` / `keyframes.last`: `{asset_id, name, resource_id}` or null. These are locks, never members of `references`. When `motion.present` is true, ignore `keyframes.first` even if it is listed or attached (the pin owns 0.00); `keyframes.last` is unchanged.
 - `references[]`: every active Studio card the local model will receive.
-  - image: `inspect.type` is `image` — inspect the attached image for `asset_ids[0]` (already cropped).
-  - video: `inspect.type` is `stills` — Inspect the attached image for each `frames[].asset_id` in order; `timestamp` is seconds on the selected clip. Reconstruct motion from stills; do not claim to have watched a file.
-  - audio: `inspect.type` is `none` — use `note`, `selected_clip`, and `requirements` only; never claim to have listened.
+  - image: `inspect.type` is `image` — inspect the attached image for `asset_ids[0]`.
+  - video: `inspect.type` is `stills` — Inspect the attached image for each `frames[].asset_id` in order; `timestamp` is seconds from the start of that reference. Reconstruct motion from stills; do not claim to have watched a file.
+  - audio: `inspect.type` is `none` — use `note` and `requirements` only; never claim to have listened.
   - video `include_audio`: the local model also receives that soundtrack.
-- `assets[]`: one row per attachment, including `id`, matching WebP `file`, `attachment_index`, `role`, `resource_id`, dimensions, and current `note`. Sequence rows include `sequence_index` and clip-relative `timestamp`; video frames also carry `source_timestamp`. Image pixels and notes must be interpreted together.
+- `assets[]`: one row per attachment, including `id`, matching WebP `file`, `attachment_index`, `role`, `resource_id`, dimensions, and current `note`. Video frames include `sequence_index` and `timestamp`. Image pixels and notes must be interpreted together.
 
 Motion stills are not references and not a first-frame lock. Do not invent `<Picture N>`, `<Video N>`, `<Audio N>`, or `<Subject N>` for the pinned head.
 
