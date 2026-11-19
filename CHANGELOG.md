@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Add MiniMax H3 SelfLift Progressive Sampler with SelfLift-zero correction, optional learned latent upscaling, and high-resolution tiling.
+- Add MiniMax H3 SelfLift Progressive Sampler with SelfLift-zero correction and optional learned latent upscaling. The sampler fixes high-resolution tiling failures in Motion Context workflows that use audio anchors or combine video anchors with references. The `highres_tiling` option is marked experimental and defaults to off because using multiple tiles can change the picture and soundtrack even with the same seed.
 
 ### Changed
 

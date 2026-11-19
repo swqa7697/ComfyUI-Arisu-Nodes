@@ -28,10 +28,14 @@ Place optional H3 upscaler weights under `models/latent_upscale_models/`. The se
 | `rho` | 0.0 | Fraction of spatiotemporal locations selected for correction, per batch item. |
 | `w_min`, `w_max` | 0.5, 1.0 | Smallest and largest correction weights at selected locations. Use `0 ≤ w_min ≤ w_max ≤ 1`. |
 | `model_hires` | Uses `model` | Optional model for the full-resolution stage. Use the same architecture and latent format. |
-| `highres_tiling` | Off | Selects 1–8 spatial tiles according to available memory. Each tile sees the full audio and references. The sampler blends video overlaps and keeps the first tile's audio prediction. Tiling can change quality and speed. Multi-tile sampling does not support ControlNet. |
+| `highres_tiling` | Off | **Experimental.** Selects 1–8 spatial tiles according to available memory. One tile uses the full frame. With multiple tiles, the final picture and sound can change even with the same seed. Each tile sees the full audio timeline and all references, but only part of the picture. The sampler blends video overlaps and weights each tile's audio prediction by its share of the picture. With Motion Context, this can affect the soundtrack you keep after trimming the pinned frames. Multi-tile sampling does not support ControlNet. |
 | `upscaler_unload` | On | Releases the learned upscaler from VRAM after the lift, before the full-resolution stage. |
 
 An initialized latent can carry a noise mask. A value of 1 generates content and 0 preserves the input. The sampler resizes the mask to the latent grid and accepts one mask shared across frames. Disable tiling for masked sampling. For masked VAE correction, keep `rho` or `w_min` below 1. The upstream pure-anchor shortcut requires an unmasked latent.
+
+### Continuing a clip with H3 Motion Context
+
+Connect the previous clip's **Load Latent** output to Motion Context's `context_latent`. Feed the current clip's target latent to both Motion Context and SelfLift, then connect Motion Context's conditioning output to SelfLift's `positive`. Both sampling stages keep the pinned video and audio at their original times, including audio that starts before frame zero. Send `trim_frames` to Motion Context Trim as usual. If you use the suite's optional single-step refine pass, keep SelfLift on the main sampling branch and use the ordinary sampler for refinement.
 
 ## Diagnostics
 

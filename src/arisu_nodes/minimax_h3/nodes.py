@@ -1525,7 +1525,11 @@ class ArisuMiniMaxH3SelfLiftProgressiveSampler(io.ComfyNode):
                     "highres_tiling",
                     default=False,
                     optional=True,
-                    tooltip="Choose 1–8 spatial tiles by available memory. Keep audio from the first tile.",
+                    tooltip=(
+                        "Experimental. Off by default. Selects 1–8 tiles based on available memory. "
+                        "Using multiple tiles can change the final video even with the same seed. "
+                        "Audio can also change throughout the clip because each tile predicts sound from a different part of the picture."
+                    ),
                 ),
                 io.Boolean.Input(
                     "upscaler_unload", default=True, optional=True, tooltip="Unload the learned upscaler from VRAM after the lift."

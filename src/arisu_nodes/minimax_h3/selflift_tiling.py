@@ -52,14 +52,19 @@ def _tile_payload(
     if payload.get("keyframes"):
         keyframes = []
         for keyframe in payload["keyframes"]:
-            latent = keyframe["latent"]
+            latent = keyframe.get("latent")
+            if latent is None:
+                keyframes.append(keyframe)
+                continue
             if latent.shape[-2:] != (height, width):
                 raise ValueError("SelfLift: tiled H3 keyframes must match the target latent height and width")
             region = latent.narrow(axis, start, end - start)
             keyframes.append({**keyframe, "latent": comfy.ldm.common_dit.pad_to_patch_size(region, (1, 2, 2)).contiguous()})
         tiled["keyframes"] = keyframes
-        if not payload.get("refs"):
-            tiled["cond_video_latents"] = [keyframe["latent"] for keyframe in keyframes]
+        # H3 packs visual rows from keyframes first, then full reference images/videos.
+        # The separate cond_audio_latents list already contains the full timeline windows.
+        tiled["cond_video_latents"] = [kf["latent"] for kf in keyframes if kf.get("latent") is not None]
+        tiled["cond_video_latents"].extend(ref["latent"] for ref in payload.get("refs") or [] if ref.get("latent") is not None)
     tile_height = end - start if axis == 3 else height
     tile_width = end - start if axis == 4 else width
     layout = _packed_layout(
@@ -73,6 +78,25 @@ def _tile_payload(
         layout.position_ids[target_start:target_end].copy_(positions)
     tiled["layout"] = layout
     return tiled
+
+
+def _tile_windows(regions: Sequence[Tuple[int, int]], length: int) -> List[torch.Tensor]:
+    """Give each spatial cell a total blend weight of one across its overlapping tiles."""
+    coverage = torch.zeros(length, dtype=torch.float32, device="cpu")
+    windows = []
+    for index, (start, end) in enumerate(regions):
+        window = torch.ones(end - start, dtype=torch.float32, device="cpu")
+        if index > 0:
+            overlap = min(end, regions[index - 1][1]) - start
+            window[:overlap] *= (torch.arange(overlap, dtype=torch.float32, device="cpu") + 0.5) / overlap
+        if index + 1 < len(regions):
+            overlap = end - regions[index + 1][0]
+            window[-overlap:] *= 1.0 - (torch.arange(overlap, dtype=torch.float32, device="cpu") + 0.5) / overlap
+        coverage[start:end].add_(window)
+        windows.append(window)
+    for (start, end), window in zip(regions, windows):
+        window.div_(coverage[start:end])
+    return windows
 
 
 def _tiled_forward(
@@ -97,41 +121,33 @@ def _tiled_forward(
     # Keep the stitched accumulator on CPU so previous tiles do not remain on
     # the accelerator while the next tile is evaluated.
     video_output = torch.zeros(video.shape, dtype=torch.float32, device="cpu")
-    audio_output = None
-    weights = torch.zeros(length, dtype=torch.float32, device="cpu")
-    for index, (start, end) in enumerate(regions):
+    audio_output = torch.zeros(audio.shape, dtype=torch.float32, device="cpu")
+    for (start, end), window in zip(regions, _tile_windows(regions, length)):
         tile = video.narrow(axis, start, end - start).contiguous()
         payload = _tile_payload(minimax_payload or {}, context, video, audio, axis, start, end)
         predicted_video, predicted_audio = executor(
             [tile, audio], timestep, context, transformer_options.copy(), minimax_payload=payload, **kwargs
         )
-        window = torch.ones(end - start, device=video.device, dtype=torch.float32)
-        if index > 0:
-            overlap = min(end, regions[index - 1][1]) - start
-            window[:overlap] *= (torch.arange(overlap, device=video.device, dtype=torch.float32) + 0.5) / overlap
-        if index + 1 < len(regions):
-            overlap = end - regions[index + 1][0]
-            window[-overlap:] *= 1.0 - (torch.arange(overlap, device=video.device, dtype=torch.float32) + 0.5) / overlap
-        predicted_video = predicted_video.float().cpu()
-        window = window.cpu()
-        weights[start:end].add_(window)
         window_shape = [1] * video.ndim
         window_shape[axis] = end - start
-        video_output.narrow(axis, start, end - start).addcmul_(predicted_video.float(), window.view(window_shape))
-        if audio_output is None:
-            audio_output = predicted_audio.float().clone()
-        del tile, payload, predicted_video, predicted_audio, window
-    window_shape[axis] = length
-    video_output.div_(weights.view(window_shape))
-    return [video_output.to(device=video.device, dtype=video.dtype), audio_output.to(audio.dtype)]
+        video_output.narrow(axis, start, end - start).addcmul_(predicted_video.to(video_output), window.view(window_shape))
+        # Every tile predicts the same audio timeline. Average its denoiser predictions
+        # by each tile's share of the stitched picture before the single Euler update.
+        audio_output.add_(predicted_audio.to(audio_output), alpha=window.sum().item() / length)
+        del tile, payload, predicted_video, predicted_audio
+    return [video_output.to(video), audio_output.to(audio)]
 
 
 def _condition_elements(condition: Dict[str, Any], tile_height: int, tile_width: int, channels: int) -> int:
     text = condition.get("cross_attn")
     elements = text.shape[-2] * channels * 4 if text is not None else 0
     for keyframe in condition.get("minimax_keyframes") or []:
-        shape = keyframe["latent"].shape
-        elements += shape[1] * shape[2] * tile_height * tile_width
+        latent = keyframe.get("latent")
+        if latent is not None:
+            elements += latent.shape[1] * latent.shape[2] * tile_height * tile_width
+        audio = keyframe.get("audio_latent")
+        if audio is not None:
+            elements += math.prod(audio.shape[1:])
     for reference in condition.get("minimax_refs") or []:
         latent = reference.get("latent")
         if latent is not None:
