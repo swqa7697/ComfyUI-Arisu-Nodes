@@ -1,0 +1,5 @@
+[formatter]
+ensure_final_newline = true
+auto_insert_phony_declarations = false
+group_phony_declarations = false
+phony_at_top = false

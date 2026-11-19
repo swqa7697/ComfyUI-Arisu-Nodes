@@ -11,6 +11,7 @@
 # CHANGELOG.md, LICENSE, example_workflows/.
 
 # Dev tooling and CI
+.bake.toml
 .comfyignore
 .github/
 .claude/

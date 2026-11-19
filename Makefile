@@ -81,10 +81,10 @@ tidy: ## Rewrite in place: ruff format, ruff check --fix, uv-sort, beautysh, mba
 format: tidy ## Alias for tidy
 
 upgrade: ## Upgrade deps to latest and raise pyproject.toml minimums
-	@$(INFO) "re-resolving uv.lock at latest versions and raising pyproject.toml minimums..."
-	@uvx uv-bump --verbose
-	@$(INFO) "re-syncing so uv.lock records the new requirements..."
-	@uv sync --all-groups
+	@$(INFO) "raising dependency minimums across supported Python versions..."
+	@UV_FORK_STRATEGY=fewest uvx uv-bump --verbose
+	@$(INFO) "upgrading all groups to the latest compatible versions for each Python..."
+	@uv sync --upgrade --all-groups
 	@$(INFO) "done. review the pyproject.toml / uv.lock diff, then run: make lint test"
 
 # Stdlib-only release CLIs (scripts/release_*.py). --no-project runs them on the
