@@ -70,7 +70,10 @@ with Runtime(agent):
     assert {t['name'] for t in messages[1]['result']['tools']} == {'get_context','read_skill'}
     assert messages[4]['result']['isError']
     assert all(block['type'] == 'text' for message in messages[2:] for block in message['result']['content'])
-    assert json.loads(messages[2]['result']['content'][0]['text'])['assets'][0]['path'] == '/inputs/pixel.webp'
+    metadata = json.loads(messages[2]['result']['content'][0]['text'])
+    assert metadata['assets'][0]['path'] == '/inputs/pixel.webp'
+    assert metadata['motion']['audio_notes'] == 'wind and a quiet piano score'
+    assert metadata['assets'][-1]['note'] == metadata['motion']['notes'] == 'continue a slow dolly'
     assert contained_file(pathlib.Path('/inputs'), 'pixel.webp').read_bytes() == pathlib.Path('/inputs/pixel.webp').read_bytes()
     names = ('mcp__workbench__get_context','mcp__workbench__read_skill','view_image','apply_patch','Bash') if agent == 'codex' else ('workbench__get_context','workbench__read_skill','read_file','edit_file','bash')
     cases = [(names[0],{},True),(names[1],{'path':'SKILL.md'},True),(names[2],{'path':'/inputs/pixel.webp'},False),
@@ -125,7 +128,7 @@ def fixture(directory: Path, requirements: str, images: bool = False) -> Path:
         "assets": [asset] if images else [],
         "keyframes": {"first": None, "last": None},
         "references": [],
-        "motion": {"present": False, "stills": [], "notes": ""},
+        "motion": {"present": False, "stills": [], "notes": "", "audio_notes": ""},
     }
     if images:
         for identifier, role in (
@@ -168,7 +171,10 @@ def fixture(directory: Path, requirements: str, images: bool = False) -> Path:
             "present": True,
             "stills": [{"asset_id": "motion", "timestamp": 0}],
             "notes": "continue a slow dolly",
+            "audio_notes": "wind and a quiet piano score",
+            "audio_continuity": "Continue the described sounds and score unless the requirements explicitly change them.",
             "context_length": 5,
+            "audio_context_length": 0,
             "sample_duration_seconds": 6,
             "delivered_duration_seconds": 6 - 5 / 24,
         }

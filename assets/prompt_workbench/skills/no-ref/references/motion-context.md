@@ -12,7 +12,6 @@ Read this file only when `get_context` has `motion.present` true. Do not infer c
 **Off** when it is false. Write the prompt exactly as the parent skill already specifies.
 
 - First clip of a chain (Load 0): `present` is false.
-- This job is one-shot. Never ask a question. If `motion.notes` is empty, infer unfinished motion and sound from `motion.stills`.
 - When Off: no airlock, no dropped first-frame alignment, no rewritten opening to match a previous tail, no Motion Context mention in the emitted prompt.
 
 ## What the node does (prompt-relevant)
@@ -52,17 +51,17 @@ State neither clock math nor node names in the emitted prompt. Only the timestam
 
 The previous tail is a description aid for Shot 1, not a new first-frame / `<Picture N>` / `<Audio N>` / Hybrid `first_frame`.
 
-`motion.stills` are ordered VAE stills of the pinned tail (2, 4, 6 or 8 for windows 5, 22, 39 or 56), including both endpoints. Inspect the attached image for each `asset_id`. `motion.notes` covers unfinished motion direction, whether the camera is still moving, and what sound or line was in progress.
+Read `motion.stills` from oldest to newest, matching each `asset_id` to its attached image. They sample the final five seconds of the previous clip at half-second intervals, up to ten images. A shorter clip supplies fewer images. Use the sequence to track action and camera movement, and continue from the closing state in the newest image. `motion.notes` supplies any visual details the user added.
 
-Use stills and notes together. If notes are empty, infer from stills only.
+The observation window is independent of the pinned head. Only `motion.context_length` sets the video pin and Trim offset. Keep observation timestamps out of the new shot timeline.
 
 ## Airlock (when present)
 
 Do not ask for continuation and change at the same instant.
 
-1. `[Shot 1]` (no timestamp) restates the **exact closing state**: same people, wardrobe, props-in-hand, stance, lens height, framing, unfinished motion vector, and continuing sound. No new characters. No dialogue.
+1. `[Shot 1]` (no timestamp) restates the **exact closing state**: same people, wardrobe, props-in-hand, stance, lens height, framing, and unfinished motion vector. Apply the audio continuity rule below. Keep new characters out of the opening.
 2. Keep that framing about **2.0 s on the sample clock** (about 1.5 s is the minimum past a 22-frame pin). Then cut or move.
-3. Put the first new setup, new beat, and first spoken line **after** the airlock. Unfinished motion keeps its current speed and contact through this window — do not pause, idle, or slow it to wait for the join.
+3. Put the first new setup, new beat, and first new spoken line **after** the airlock. Unfinished motion keeps its current speed and contact through this window — do not pause, idle, or slow it to wait for the join.
 4. Add life on top of that vector (breath, weight shift, eyeline, fabric, inertia). Micro-motion is extra, not a replacement for the unfinished motion. A frozen or slowed actor reads as a stalled file.
 5. After Trim the audience sees a shorter matched head (`2.0 − C/fps`). If the user wants a full 2 s matched head **in the file**, extend the sample-side airlock to `2.0 + C/fps`.
 
@@ -72,9 +71,9 @@ The pinned head is not a suggestion. Shot 1 must not describe a different headco
 
 ## Audio on continuation clips
 
-- `overall_soundscape` continues the previous tail; it does not restart a new bed at 0.00.
-- First spoken line after the airlock.
-- Do not start a new `non_diegetic_music` bed that would stack on a pinned score. Keep `N/A` unless the user wants a new score **after** the airlock and describes a diegetic break.
+- Read `motion.audio_notes` for the previous clip’s sound. Continue the described ambience, voices, ongoing effects, and background music across the join unless `requirements` explicitly changes them. Change only the requested elements. This writing rule also applies when `motion.audio_context_length` is zero.
+- Carry ambient sound into `overall_soundscape` and any continuing score into `non_diegetic_music`. For example, if the notes describe rain over a slow piano score and the brief changes only the camera, keep both the rain and the same piano score.
+- New spoken lines start after the airlock. If audio notes are empty, use the brief and the usual music default. Stills only supply visual evidence.
 - Do not cite the previous clip's generated soundtrack as a reference audio asset.
 
 ## Mode notes

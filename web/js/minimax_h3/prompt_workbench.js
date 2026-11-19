@@ -23,6 +23,7 @@ const FIELDS = [
   'finalized_prompt',
   'prepare_job',
   'motion_enabled',
+  'motion_audio_notes',
 ];
 
 const STYLE = `
@@ -54,9 +55,8 @@ const STYLE = `
 .arisu-workbench .context summary{cursor:pointer;color:var(--label);padding:2px 0 6px;}
 .arisu-workbench .context summary:focus-visible{outline-offset:-2px;}
 .arisu-workbench .motion{border:1px solid var(--line);margin:0;padding:8px;border-radius:4px;background:color-mix(in srgb,var(--surface) 65%,var(--panel));
- display:flex;flex-direction:column;gap:6px;}.arisu-workbench .motion label{display:grid;grid-template-columns:1fr 90px;gap:8px;align-items:center;}
+ display:flex;flex-direction:column;gap:6px;}.arisu-workbench .motion label:not(.field){display:grid;grid-template-columns:1fr 90px;gap:8px;align-items:center;}
 .arisu-workbench .motion textarea{min-height:64px;}
-.arisu-workbench .motion .motion_notes{display:flex;align-items:stretch;}.arisu-workbench .motion_notes>.label{display:none;}
 .arisu-workbench .generation-fields{border:0;margin:0;display:flex;flex:1;min-height:0;flex-direction:column;gap:10px;overflow:auto;padding:2px 4px 4px;scrollbar-width:thin;}
 .arisu-workbench .footer{flex-shrink:0;}.arisu-workbench fieldset:disabled{opacity:.6;}
 .arisu-workbench .references{border:1px solid var(--line);padding:8px;border-radius:4px;background:var(--surface);display:flex;flex-direction:column;gap:6px;max-height:210px;overflow:auto;}
@@ -360,9 +360,17 @@ async function generate(node) {
     const snapshot = sourceSnapshot(node);
     const prompt = captureWorkbenchPrompt(node);
     const options = Object.fromEntries(
-      ['agent', 'skill', 'context_length', 'audio_context_length', 'motion_notes', 'trigger_words', 'requirements', 'motion_enabled'].map(
-        (name) => [name, value(node, name)],
-      ),
+      [
+        'agent',
+        'skill',
+        'context_length',
+        'audio_context_length',
+        'motion_notes',
+        'motion_audio_notes',
+        'trigger_words',
+        'requirements',
+        'motion_enabled',
+      ].map((name) => [name, value(node, name)]),
     );
     options.reference_notes = notes(node);
     options.source_id = snapshot.sourceId;
@@ -485,7 +493,8 @@ function render(node) {
       ]),
       el('label', {}, [el('span', { textContent: 'Audio Frames' }), audio]),
       el('div', { className: 'hint', textContent: 'Frames at 24 fps · audio 0 follows video' }),
-      textField('motion_notes', 'Notes', true, 'Notes on motion continuity…'),
+      textField('motion_notes', 'Visual Notes', true, 'Describe the previous action and camera movement…'),
+      textField('motion_audio_notes', 'Audio Notes', true, 'Describe the music, voices, and ambience to continue…'),
     ],
   );
   const motionToggle = el('input', {
@@ -714,6 +723,10 @@ app.registerExtension({
       const enabled = widget(this, 'motion_enabled');
       if (enabled && Array.isArray(info?.widgets_values) && typeof info.widgets_values[this.widgets.indexOf(enabled)] !== 'boolean') {
         enabled.value = true;
+      }
+      const audioNotes = widget(this, 'motion_audio_notes');
+      if (audioNotes && Array.isArray(info?.widgets_values) && typeof info.widgets_values[this.widgets.indexOf(audioNotes)] !== 'string') {
+        audioNotes.value = '';
       }
       const state = nodes.get(this);
       if (!state) return;

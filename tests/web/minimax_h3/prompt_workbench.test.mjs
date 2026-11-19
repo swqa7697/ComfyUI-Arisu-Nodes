@@ -38,13 +38,14 @@ test('Workbench keeps finalized text independent of setup, source notes and revi
       skill: 'bundled:with-ref',
       context_length: '22',
       audio_context_length: 24,
-      motion_notes: '',
+      motion_notes: 'The camera is turning',
       reference_notes: '{}',
       trigger_words: '',
       requirements: '',
       finalized_prompt: 'keep',
       prepare_job: 'stale',
       motion_enabled: true,
+      motion_audio_notes: '',
     }).map(([name, value]) => ({ name, value })),
     inputs: ['video_settings', 'resources', 'context_latent', 'vae'].map((name) => ({ name })),
   });
@@ -94,12 +95,17 @@ test('Workbench keeps finalized text independent of setup, source notes and revi
     assert.equal(motionContext().open, false);
     const toggle = find(panel(node), 'Enable motion context');
     assert.equal(toggle.disabled, false);
+    assert.equal(find(panel(node), 'Visual Notes').value, 'The camera is turning');
+    const audioNotes = find(panel(node), 'Audio Notes');
+    audioNotes.value = 'Soft piano over footsteps';
+    audioNotes.oninput();
     toggle.checked = false;
     toggle.onchange();
     assert.equal(descendants(panel(node)).find((item) => item.className === 'motion').disabled, true);
     assert.equal(latentInput.link, 990);
     assert.equal(vaeInput.link, 991);
     assert.equal(widget(node, 'context_length').value, '22');
+    assert.equal(widget(node, 'motion_audio_notes').value, 'Soft piano over footsteps');
     const noMotion = captureWorkbenchPrompt(node);
     assert.equal(noMotion.output['1'].inputs.context_latent, undefined);
     assert.equal(noMotion.output['1'].inputs.vae, undefined);
@@ -352,6 +358,8 @@ test('Workbench keeps finalized text independent of setup, source notes and revi
     assert.equal(releases(), beforeEdits);
     assert(find(panel(node), 'Generate Prompt').disabled);
     assert.equal(captured.options.motion_enabled, true);
+    assert.equal(captured.options.motion_notes, 'The camera is turning');
+    assert.equal(captured.options.motion_audio_notes, 'Soft piano over footsteps');
     const motionSwitch = find(panel(node), 'Enable motion context');
     motionSwitch.checked = false;
     motionSwitch.onchange();

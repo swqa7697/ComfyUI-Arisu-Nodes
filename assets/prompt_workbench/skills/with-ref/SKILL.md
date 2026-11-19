@@ -41,7 +41,7 @@ Duration typically 5–15 s. If MCP duration/aspect are null, use 6 seconds and 
    - Optionally place a short base-style alignment instruction as the very first line before the six sections when a first-frame lock remains (Motion Context Off).
 4. **Reference list is not 1:1 with files.** Apply the decision tree below. Character / identity / costume / style / object images are cited inline inside `<Subject N>` and do not get an independent `<Picture N>` item. Standalone `<Picture N>` only when that image is itself a frame, composition, or storyboard anchor.
 5. **Character count hard limit ≤ 7000.** Soft target for `detailed_description`: 350–500 English words for generation tasks.
-6. **Background music off by default.** Set `non_diegetic_music: N/A` unless `requirements` explicitly requests score or BGM. Diegetic music stays inside `detailed_description`.
+6. **Background music.** When `motion.present` is true, continue any score described in `motion.audio_notes` unless `requirements` explicitly changes or removes it. Otherwise use `non_diegetic_music: N/A` unless the brief requests music. Diegetic music stays inside `detailed_description`.
 7. Output the finished prompt inside the single markdown fence required by `mcp.md`.
 
 ## Motion Context gate
@@ -106,7 +106,7 @@ List every `references[]` row the local model will receive, including pure video
    - Design 1–N shots that fill the full sample duration with concrete change.
    - Decide retention strength (fully_preserved, partially_preserved, attribute_transfer, weak_reference, fully_copy, etc.).
    - For motion-reference videos, extract useful action or camera path from the stills; do not copy the entire source timeline unless the task is video editing / continuation.
-   - If Motion Context is On, Shot 1 continues the previous closing state, including unfinished motion and sound at the same speed. New plot and dialogue start after the airlock. Write times on the sample clock. Do not plan a first-frame lock.
+   - If Motion Context is On, Shot 1 continues the previous closing state, including the direction and speed of unfinished motion. Carry the described audio across the join unless the brief explicitly changes it. New plot and dialogue start after the airlock. Write times on the sample clock. Do not plan a first-frame lock.
 
 3. **Write the sections**
 
@@ -134,7 +134,7 @@ List every `references[]` row the local model will receive, including pure video
 
    **overall_soundscape** — 1–4 continuous sentences of ambient + physical + non-verbal human sound. Cite `<Audio N>` if an ambience layer is copied. Do not claim to have listened.
 
-   **non_diegetic_music** — N/A or a concrete instrumental description. Cite `<Audio N>` if a score is reused.
+   **non_diegetic_music** — N/A or a concrete instrumental description. Cite `<Audio N>` only when the score comes from a Studio audio reference.
 
 4. **Final checks**
    - All standalone labels appear consistently later.

@@ -21,7 +21,16 @@ from PIL import Image
 
 from ..worker import worker_command, worker_environment
 from .agent_docker import ASSETS, AgentBusy, DockerAgents
-from .core import ResourceBundle, VideoSettings, finalized_markdown, motion_samples, validate_bundle, workbench_options
+from .core import (
+    FPS,
+    MOTION_SAMPLE_LIMIT,
+    MOTION_SAMPLE_STRIDE,
+    ResourceBundle,
+    VideoSettings,
+    finalized_markdown,
+    validate_bundle,
+    workbench_options,
+)
 from .media import validate_workbench_source
 from .workbench_context import context_inputs
 from .workbench_images import IMAGE_LIMIT, PROCESSING, encode_image
@@ -127,6 +136,7 @@ def job_context(job: Generation, assets: List[Dict[str, Any]], resources: Resour
     settings = job.settings
     duration = settings.length / 24 if settings else None
     present = bool(job.motion)
+    audio_notes = job.options["motion_audio_notes"] if present else ""
     delivered = (settings.length - job.options["context_length"]) / 24 if settings and present else duration
     references = []
     for item in resources.images + resources.videos + resources.audios:
@@ -148,6 +158,20 @@ def job_context(job: Generation, assets: List[Dict[str, Any]], resources: Resour
     for index, asset in enumerate(assets):
         note = job.options["motion_notes"] if asset["role"] == "motion" else notes.get(asset.get("resource_id"), "")
         attached.append({**asset, "path": "/inputs/" + asset["file"], "attachment_index": index + 1, "note": note})
+    motion = {
+        "present": present,
+        "context_length": job.options["context_length"],
+        "audio_context_length": job.options["audio_context_length"],
+        "sample_duration_seconds": duration,
+        "delivered_duration_seconds": delivered,
+        "notes": job.options["motion_notes"] if present else "",
+        "audio_notes": audio_notes,
+        "stills": [{"asset_id": asset["id"], "timestamp": asset.get("timestamp")} for asset in job.motion],
+    }
+    if audio_notes.strip():
+        motion["audio_continuity"] = (
+            "Continue the previous segment's described sound, including background music, unless the requirements explicitly request a change."
+        )
     return {
         "version": 3,
         "duration_seconds": duration,
@@ -155,15 +179,7 @@ def job_context(job: Generation, assets: List[Dict[str, Any]], resources: Resour
         "aspect_ratio": settings.aspect_ratio if settings else None,
         "trigger_words": job.options["trigger_words"],
         "requirements": job.options["requirements"],
-        "motion": {
-            "present": present,
-            "context_length": job.options["context_length"],
-            "audio_context_length": job.options["audio_context_length"],
-            "sample_duration_seconds": duration,
-            "delivered_duration_seconds": delivered,
-            "notes": job.options["motion_notes"] if present else "",
-            "stills": [{"asset_id": asset["id"], "timestamp": asset.get("timestamp")} for asset in job.motion],
-        },
+        "motion": motion,
         "keyframes": {"first": _keyframe(assets, "first_keyframe"), "last": _keyframe(assets, "last_keyframe")},
         "assets": attached,
         "references": references,
@@ -286,16 +302,15 @@ class Workbench:
             self.cache[key] = {"path": destination, "used": time.monotonic(), "workflows": {job.workflow}, "assets": assets}
 
     def cache_motion(self, job: Generation, key: str, frames: Optional[List[Image.Image]] = None) -> bool:
-        """Cache only bounded stills, with timestamps matching sampled frame indices."""
+        """Cache ordered stills with timestamps in seconds from the first observation."""
         if frames is None:
             assets = self.restore_assets(job, key)
             if assets is None:
                 return False
             job.motion = assets
             return True
-        times = motion_samples(job.options["context_length"])
-        if len(frames) != len(times):
-            raise ValueError("motion frame count mismatch")
+        if not 1 <= len(frames) <= MOTION_SAMPLE_LIMIT:
+            raise ValueError("invalid motion frame count")
         for index, frame in enumerate(frames):
             target = job.directory / (uuid.uuid4().hex + ".webp")
             encoded = io.BytesIO()
@@ -309,7 +324,7 @@ class Workbench:
                     "mime": "image/webp",
                     "role": "motion",
                     "resource_id": "motion",
-                    "timestamp": times[index] / 24,
+                    "timestamp": index * MOTION_SAMPLE_STRIDE / FPS,
                     "sequence_index": index,
                     **dimensions,
                 }
@@ -397,8 +412,8 @@ class Workbench:
                         validate_workbench_source(job.roots, item)
                         sources.append({"role": role, "item": asdict(item)})
             used = self.used_bytes()
-            # Reserve eight maximum-size motion stills and their cache links while GPU work is outstanding.
-            motion_reserve = 16 * IMAGE_LIMIT if job.queue_finished and not job.prepared.is_set() else 0
+            # Account for both each pending motion still and its cache link.
+            motion_reserve = 2 * MOTION_SAMPLE_LIMIT * IMAGE_LIMIT if job.queue_finished and not job.prepared.is_set() else 0
             payload = {
                 "directory": str(job.directory),
                 "roots": job.roots,
@@ -516,8 +531,6 @@ def service() -> Workbench:
 
 
 def motion_key(job: Generation, shape: Any, identity: str) -> str:
-    """Key stills by preparation graph revisions, VAE identity and context window."""
+    """Key observations by their source graph, decoded tail and VAE identity."""
     inputs = {key: {k: v for k, v in entry.items() if k != "_meta"} for key, entry in job.graph.items() if key != job.node_id}
-    return hashlib.sha256(
-        json.dumps([inputs, list(shape), identity, job.options["context_length"], PROCESSING], sort_keys=True, default=str).encode()
-    ).hexdigest()
+    return hashlib.sha256(json.dumps([inputs, list(shape), identity, PROCESSING], sort_keys=True, default=str).encode()).hexdigest()

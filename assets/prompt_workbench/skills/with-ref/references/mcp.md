@@ -17,7 +17,8 @@ Video references contain at most eight distinct ordered frames. Use the frames a
 - `trigger_words`, `requirements`: LoRA tokens and the user's brief (Chinese or English).
 - `motion.present`: the only continuation switch.
   - False: ignore stills and notes. No airlock. Do not mention Motion Context in the prompt.
-  - True: read `motion-context.md`. Inspect the attached image for every `motion.stills[].asset_id` in order. `motion.notes` may be empty; infer from stills. `sample_duration_seconds` is the clock for `At MM:SS.mmm` (Video Settings length, including the pinned head). `delivered_duration_seconds` is after Trim. Do not add `context_length` on top of Video Settings length.
+  - When true, read `motion-context.md`. Inspect each `motion.stills[].asset_id` in chronological order. These half-second samples cover up to five seconds of the previous clip. Each `timestamp` is in seconds from the earliest attached motion still. `motion.notes` describes the picture and `motion.audio_notes` describes the sound. Follow `motion.audio_continuity` when supplied.
+  - Write shot times on `motion.sample_duration_seconds` (Video Settings length, including the pinned head). `motion.context_length` sets the video pin in frames. `motion.delivered_duration_seconds` is the duration after Trim.
 - `keyframes.first` / `keyframes.last`: `{asset_id, name, resource_id}` or null. These are locks, never members of `references`. When `motion.present` is true, ignore `keyframes.first` even if it is listed or attached (the pin owns 0.00); `keyframes.last` is unchanged.
 - `references[]`: every active Studio card the local model will receive.
   - image: `inspect.type` is `image` — inspect the attached image for `asset_ids[0]`.

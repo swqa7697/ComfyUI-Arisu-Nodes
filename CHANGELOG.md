@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Omit image crop coordinates, video and audio trim ranges, and source timestamps from Prompt Workbench agent context.
+- Sample the previous clip’s final five seconds at half-second intervals for Prompt Workbench while keeping prompt timing tied to the selected H3 context length. Provide separate visual and audio notes and carry described sounds, including background music, into the next clip unless Requirements explicitly change them.
 
 ### Fixed
 

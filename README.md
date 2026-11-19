@@ -78,9 +78,13 @@ Open **Generation results**, review the **Output Prompt** tab, and click **Apply
 to replace the finalized prompt. Use Undo to restore the previous text. Workflow edits and
 switching between open tabs preserve the running job and its result.
 
-Generation uses your selected skill, context notes, and cropped images. Videos contribute
-up to eight stills from the selected clip; audio contributes notes only. Agents are restricted
-to prompt generation, with web search, commands, and file editing disabled.
+Reference videos contribute up to eight stills from the selected clip. With **Motion Context**
+enabled, the agent also sees up to ten stills from the previous clip’s final five seconds,
+in chronological order. The selected context length sets the H3 prompt timing. Use
+**Visual Notes** for details such as camera movement and **Audio Notes** for sounds to carry
+forward, including background music. To change those sounds, say so in **Requirements**.
+Agents receive audio descriptions as text and are restricted to prompt generation, with
+web search, commands, and file editing disabled.
 
 ## Nodes
 

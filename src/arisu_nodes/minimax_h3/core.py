@@ -971,6 +971,8 @@ def validate_bundle(bundle: ResourceBundle):
 # Prompt Workbench contracts contain descriptions only; authorization and I/O stay in services.
 WORKBENCH_ID = "ArisuMiniMaxH3PromptWorkbench"
 MOTION_WINDOWS = ("22", "5", "39", "56")
+MOTION_SAMPLE_LIMIT = 10
+MOTION_SAMPLE_STRIDE = FPS // 2
 AGENT_IDS = ("codex", "grok")
 BASIC_EFFORTS = ("low", "medium", "high")
 
@@ -979,30 +981,20 @@ class PreparationError(ValueError):
     """A safe, actionable preparation error that may be displayed to the user."""
 
 
-def motion_tail(total_steps: int, length: int) -> Tuple[int, int]:
-    """Return a phase-aligned H3 tail slice, refusing incomplete windows."""
-    if str(length) not in MOTION_WINDOWS:
-        raise PreparationError("unsupported context length")
-    steps = 2 + ((length - 5) // 17) * 5
-    start = total_steps - steps
-    if start < 0 or start % 5:
-        raise PreparationError("context latent is too short or its temporal phase is invalid")
-    return start, total_steps
-
-
-def workbench_samples(count: int, limit: int = 8) -> List[int]:
-    """Keep evenly spaced ordered frames, including both endpoints."""
-    if count < 1 or limit < 1:
-        raise ValueError("empty frame sequence")
-    kept = min(count, limit)
-    return [round(i * (count - 1) / (kept - 1)) for i in range(kept)] if kept > 1 else [0]
+def motion_tail(total_steps: int) -> Tuple[int, int]:
+    """Return the starting latent step and decoded frame count for the observation tail."""
+    try:
+        total_frames = video_frame_count(total_steps)
+    except ValueError as error:
+        raise PreparationError("context latent has an invalid temporal phase") from error
+    decoded_frames = min(total_frames, align_frame_count(MOTION_SAMPLE_LIMIT * MOTION_SAMPLE_STRIDE))
+    return total_steps - video_latent_t(decoded_frames), decoded_frames
 
 
 def motion_samples(length: int) -> List[int]:
-    """Select two, four, six or eight frames from the supported decoded windows."""
-    if length not in (5, 22, 39, 56):
-        raise ValueError("unsupported context length")
-    return workbench_samples(length, 2 + 2 * ((length - 5) // 17))
+    """Select half-second observations, oldest first, anchored to the final frame."""
+    stop = max(-1, length - 1 - MOTION_SAMPLE_LIMIT * MOTION_SAMPLE_STRIDE)
+    return list(reversed(range(length - 1, stop, -MOTION_SAMPLE_STRIDE)))
 
 
 def finalized_markdown(text: str) -> str:
@@ -1024,11 +1016,14 @@ def workbench_options(value: Any) -> Dict[str, Any]:
     enabled = value.get("motion_enabled", True)
     if type(enabled) is not bool:
         raise ValueError("invalid motion_enabled")
+    if not enabled:
+        value = {**value, "motion_notes": "", "motion_audio_notes": ""}
     result = {"motion_enabled": enabled}
     for key, default, limit in (
         ("agent", "codex", 16),
         ("skill", "bundled:with-ref", 160),
         ("motion_notes", "", 16384),
+        ("motion_audio_notes", "", 16384),
         ("trigger_words", "", 16384),
         ("requirements", "", 32768),
         ("source_id", "", 256),
@@ -1115,6 +1110,8 @@ def preparation_graph(prompt: Any, node_id: str, motion_enabled: bool = True) ->
     if not motion_enabled or not all(name in inputs for name in ("context_latent", "vae")):
         inputs.pop("context_latent", None)
         inputs.pop("vae", None)
+        inputs.pop("motion_notes", None)
+        inputs.pop("motion_audio_notes", None)
     for name, types in expected.items():
         if name in inputs and follow(inputs[name]) not in types:
             raise ValueError("unsupported source for " + name)

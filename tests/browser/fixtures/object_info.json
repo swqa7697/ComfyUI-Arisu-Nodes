@@ -240,6 +240,14 @@
             "default": true,
             "socketless": true
           }
+        ],
+        "motion_audio_notes": [
+          "STRING",
+          {
+            "default": "",
+            "socketless": true,
+            "multiline": true
+          }
         ]
       },
       "hidden": {
@@ -272,7 +280,8 @@
         "context_latent",
         "vae",
         "prepare_job",
-        "motion_enabled"
+        "motion_enabled",
+        "motion_audio_notes"
       ],
       "hidden": [
         "unique_id",

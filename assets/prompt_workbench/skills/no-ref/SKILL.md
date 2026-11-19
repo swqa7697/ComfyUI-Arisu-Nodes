@@ -23,7 +23,7 @@ This skill writes T2VA / I2VA / FL2VA / L2VA only. Keep that field order even if
    - `non_diegetic_music:`
 3. Read `references/base-en.txt` and follow its shot notation, camera vocabulary, speaker IDs, `<d>` dialogue format, and examples exactly.
 4. **Character count hard limit ≤ 7000.** Soft target: keep tight; when keyframe images carry visual load the prompt can be shorter.
-5. **Background music off by default.** Set `non_diegetic_music: N/A` unless `requirements` explicitly requests score, BGM, or music. Diegetic music belongs inside the multimodal description.
+5. **Background music.** When `motion.present` is true, continue any score described in `motion.audio_notes` unless `requirements` explicitly changes or removes it. Otherwise use `non_diegetic_music: N/A` unless the brief requests music. Diegetic music belongs inside the multimodal description.
 6. Output the finished prompt inside the single markdown fence required by `mcp.md`.
 
 ## Motion Context gate
@@ -57,7 +57,7 @@ Duration and aspect come from MCP; if null, use 6 seconds and 16:9.
    - Break into 1–4 shots with precise cut times that land inside that length.
    - Decide camera language using the official motion-type + amplitude + speed vocabulary.
    - Design diegetic sound timeline and any spoken lines.
-   - If Motion Context is On, Shot 1 continues the previous closing state, including unfinished motion and sound at the same speed. New plot and dialogue start after the airlock. Write times on the sample clock.
+   - If Motion Context is On, Shot 1 continues the previous closing state, including the direction and speed of unfinished motion. Carry the described audio across the join unless the brief explicitly changes it. New plot and dialogue start after the airlock. Write times on the sample clock.
 
 3. **Write the three core fields**
    - Start `[Shot 1]` with style + composition (derive style from a still-active keyframe when present, never a dropped first frame; otherwise from `requirements`). Common anchors: `Live-action, cinematic`, `2D-animated`, `3D CG`, etc.

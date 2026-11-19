@@ -25,7 +25,6 @@ from src.arisu_nodes.minimax_h3.core import (
     motion_tail,
     preparation_graph,
     workbench_options,
-    workbench_samples,
 )
 
 
@@ -39,8 +38,13 @@ def test_generation_contract_prunes_side_effects_and_parses_only_final_markdown(
         "v": {"class_type": "VAELoader", "inputs": {"vae_name": "video.safetensors"}},
         "s": {"class_type": "KSampler", "inputs": {"prompt": ["w", 0]}},
     }
-    assert set(preparation_graph(prompt, "w", False)) == {"w"}
+    prompt["w"]["inputs"].update(motion_notes="camera turns", motion_audio_notes=["s", 0])
+    disabled_graph = preparation_graph(prompt, "w", False)
+    assert set(disabled_graph) == {"w"} and disabled_graph["w"]["inputs"] == {"finalized_prompt": "keep"}
+    prompt["w"]["inputs"]["motion_audio_notes"] = "distant piano"
     assert workbench_options({})["motion_enabled"] is True
+    disabled = workbench_options({"motion_enabled": False, "motion_notes": 123, "motion_audio_notes": 123})
+    assert disabled["motion_notes"] == disabled["motion_audio_notes"] == ""
     for invalid in ("false", 0, None):
         with pytest.raises(ValueError, match="motion_enabled"):
             workbench_options({"motion_enabled": invalid})
@@ -73,15 +77,11 @@ def test_generation_contract_prunes_side_effects_and_parses_only_final_markdown(
     # One motion wire stays inert and cannot execute its producer.
     del prompt["w"]["inputs"]["vae"]
     assert set(preparation_graph(prompt, "w")) == {"w"}
-    for frames, steps in ((5, 2), (22, 7), (39, 12), (56, 17)):
-        assert motion_tail(22, frames) == (22 - steps, 22)
-        retained = workbench_samples(frames)
-        assert len(retained) == min(frames, 8) and retained[0] == 0 and retained[-1] == frames - 1
-        motion = motion_samples(frames)
-        assert len(motion) == {5: 2, 22: 4, 39: 6, 56: 8}[frames] and motion[0] == 0 and motion[-1] == frames - 1
-    for total, length in ((2, 22), (23, 22), (22, 1)):
-        with pytest.raises(ValueError):
-            motion_tail(total, length)
+    for steps in (0, 1, 23):
+        with pytest.raises(ValueError, match="temporal phase"):
+            motion_tail(steps)
+    assert motion_tail(37) == (0, 124)
+    assert motion_samples(124) == list(range(15, 124, 12))
     for label in ("markdown", "text", ""):
         assert finalized_markdown("```" + label + "\nA quiet dolly shot.\n```") == "A quiet dolly shot."
     for text in (
@@ -94,7 +94,13 @@ def test_generation_contract_prunes_side_effects_and_parses_only_final_markdown(
         with pytest.raises(ValueError):
             finalized_markdown(text)
     assert workbench_options({"audio_context_length": 0})["audio_context_length"] == 0
-    for invalid in ({"agent": "shell"}, {"audio_context_length": True}, {"reference_notes": {"x": 2}}, {"requirements": "\x00"}):
+    for invalid in (
+        {"agent": "shell"},
+        {"audio_context_length": True},
+        {"reference_notes": {"x": 2}},
+        {"requirements": "\x00"},
+        {"motion_audio_notes": 123},
+    ):
         with pytest.raises(ValueError):
             workbench_options(invalid)
 

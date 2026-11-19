@@ -48,17 +48,22 @@ def test_workbench_plain_string_first_clip_and_phase_aligned_tail(tmp_path: Path
 
     class Vae:
         calls = 0
-        length = 22
 
         def decode(self, latent: torch.Tensor) -> torch.Tensor:
             self.calls += 1
-            steps = 2 + ((self.length - 5) // 17) * 5
-            assert latent.shape == (1, 1, steps, 2, 2)
-            assert latent[0, 0, 0, 0, 0] == 22 - steps
-            return torch.linspace(0, 1, self.length)[:, None, None, None].expand(self.length, 4, 4, 3).unsqueeze(0)
+            steps = latent.shape[2]
+            start = int(latent[0, 0, 0, 0, 0])
+            assert steps <= 37 and start % 5 == 0
+            length = (steps - 2) // 5 * 17 + 5
+            # Encode the position in the previous clip as a grayscale pixel.
+            pixels = (torch.arange(length) + start // 5 * 17) / 255
+            return pixels[:, None, None, None].expand(length, 4, 4, 3).unsqueeze(0)
+
+    def source(steps: int) -> Dict[str, Any]:
+        return {"samples": [torch.arange(steps).view(1, 1, steps, 1, 1).expand(1, 1, steps, 2, 2), object()]}
 
     vae = Vae()
-    latent = {"samples": [torch.arange(22).view(1, 1, 22, 1, 1).expand(1, 1, 22, 2, 2), object()]}
+    latent = source(57)  # 192 decoded frames.
     # Ordinary execution never asks for dependencies or decodes even supplied tensors.
     assert node.check_lazy_status() == []
     assert node.execute(**inputs(context_latent=latent, vae=vae)).result == ("original prompt",)
@@ -88,28 +93,30 @@ def test_workbench_plain_string_first_clip_and_phase_aligned_tail(tmp_path: Path
     continued = job("continued")
     assert "vae" in node.check_lazy_status(prepare_job="continued", context_latent=latent)
     node.execute(**inputs(prepare_job="continued", context_latent=latent, vae=vae))
-    assert vae.calls == 1 and len(continued.motion) == 4
-    with Image.open(continued.directory / continued.motion[0]["file"]) as image:
-        assert image.getpixel((0, 0)) == (0, 0, 0)
-    with Image.open(continued.directory / continued.motion[-1]["file"]) as image:
-        assert image.getpixel((0, 0)) == (255, 255, 255)
-    repeated = job("repeated")
+    assert vae.calls == 1 and len(continued.motion) == 10
+    for index, asset in enumerate(continued.motion):
+        with Image.open(continued.directory / asset["file"]) as image:
+            assert image.getpixel((0, 0)) == (83 + 12 * index,) * 3
+        assert asset["sequence_index"] == index and asset["timestamp"] == index / 2
+    repeated = job("repeated", 5)
     fresh_vae = Vae()
     node.execute(**inputs(prepare_job="repeated", context_latent=latent, vae=fresh_vae))
-    assert len(repeated.motion) == 4 and fresh_vae.calls == 0 and vae.calls == 1
+    assert repeated.motion == continued.motion and fresh_vae.calls == 0 and vae.calls == 1
     revised = job("revised-weights")
     revised.vae_revision = "updated-model"
     node.execute(**inputs(prepare_job=revised.id, context_latent=latent, vae=fresh_vae))
     assert fresh_vae.calls == 1
-    for length, count in ((5, 2), (39, 6), (56, 8)):
-        vae.length = length
-        selected = job("motion-" + str(length), length)
-        node.execute(**inputs(prepare_job=selected.id, context_latent=latent, vae=vae))
-        assert len(selected.motion) == count
-        assert selected.motion[0]["timestamp"] == 0 and selected.motion[-1]["timestamp"] == (length - 1) / 24
+    for steps, expected in ((2, [4]), (7, [9, 21]), (32, list(range(10, 107, 12)))):
+        selected = job("motion-" + str(steps), 56)
+        node.execute(**inputs(prepare_job=selected.id, context_latent=source(steps), vae=vae))
+        assert len(selected.motion) == len(expected)
+        for index, asset in enumerate(selected.motion):
+            with Image.open(selected.directory / asset["file"]) as image:
+                assert image.getpixel((0, 0)) == (expected[index],) * 3
+            assert asset["timestamp"] == index / 2
     malformed = job("malformed")
-    with pytest.raises(ValueError, match="short|phase"):
-        node.execute(**inputs(prepare_job="malformed", context_latent={"samples": [torch.zeros(1, 1, 2, 2, 2)]}, vae=vae))
+    with pytest.raises(ValueError, match="phase"):
+        node.execute(**inputs(prepare_job="malformed", context_latent=source(3), vae=vae))
     assert malformed.error and malformed.preparation_done.is_set()
     owner.release("workflow")
     assert all(value.cancelled.is_set() for value in owner.jobs.values()) and not owner.cache
@@ -306,6 +313,7 @@ def test_workbench_stages_crops_refuses_escapes_and_cancellation_retains_guard(t
         context = json.loads((directory / "context.json").read_text())
         assert context["version"] == 3 and context["keyframes"] == {"first": None, "last": None}
         assert context["motion"]["present"] is False and context["motion"]["stills"] == []
+        assert context["motion"]["notes"] == context["motion"]["audio_notes"] == "" and "audio_continuity" not in context["motion"]
         assert context["references"][0]["note"] == ("red coat" if index == 0 else "blue coat")
         assert context["assets"][0]["note"] == context["references"][0]["note"]
         assert context["assets"][0]["attachment_index"] == 1
@@ -320,7 +328,12 @@ def test_workbench_stages_crops_refuses_escapes_and_cancellation_retains_guard(t
     monkeypatch.setattr(owner.agents, "generate", generated)
     for index in range(4):
         options = workbench_options(
-            {"source_id": "studio", "reference_notes": {"studio:ref:input:reference.png": "red coat" if index == 0 else "blue coat"}}
+            {
+                "source_id": "studio",
+                "reference_notes": {"studio:ref:input:reference.png": "red coat" if index == 0 else "blue coat"},
+                "motion_notes": "unused movement",
+                "motion_audio_notes": "unused soundtrack",
+            }
         )
         prepared_job = owner.create("w", "active", options, {"w": {"inputs": {}}})
         clock[0] += 90
@@ -391,7 +404,7 @@ def test_workbench_stages_crops_refuses_escapes_and_cancellation_retains_guard(t
         "grouped",
         "w",
         "active",
-        workbench_options({"source_id": "studio", "motion_notes": "camera still pushing"}),
+        workbench_options({"source_id": "studio", "motion_notes": "camera still pushing", "motion_audio_notes": "steady background piano"}),
         {},
         owner.temp,
         {},
@@ -428,6 +441,8 @@ def test_workbench_stages_crops_refuses_escapes_and_cancellation_retains_guard(t
     (mixed / "context.json").write_text(json.dumps(grouped))
     monkeypatch.syspath_prepend(str(workbench.ASSETS))
     validated = importlib.import_module("contract").context(mixed)
+    assert validated["motion"]["notes"] == "camera still pushing" and validated["motion"]["audio_notes"] == "steady background piano"
+    assert "background music" in validated["motion"]["audio_continuity"]
     assert len(validated["assets"]) == 22 and len({a["id"] for a in validated["assets"]}) == 22
     assert all("selected_clip" not in ref for ref in validated["references"])
     for asset in validated["assets"]:

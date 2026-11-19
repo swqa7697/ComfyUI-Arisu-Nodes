@@ -49,12 +49,20 @@ video cache entries. Memory pressure, model offloading, and changes to the video
 can still cause reloads or recomputation.
 
 - Load index **0** returns no previous context: the first clip needs no VAE decode.
-- Windows **5, 22, 39, 56** are video frames at 24 fps. Respectively **2, 4, 6, 8** ordered stills
-  describe the decoded tail to the agent, including both endpoints.
-- Audio context length is descriptive only. **0** follows video length; no
-  audio latent is decoded by this node.
-- Short or incompatible saved latents require corrected inputs; arbitrary
-  latent producers and upstream samplers are not accepted.
+- The agent sees the previous clip’s final frame and one still every half second going
+  back through its last five seconds. Workbench sends the stills from earliest to latest,
+  up to ten in total. Shorter clips supply fewer stills.
+- **Video Frames** sets the H3 overlap to **5, 22, 39, or 56** frames at 24 fps.
+  Prompt timestamps include that overlap regardless of how many stills the agent sees.
+  For example, at 22 frames, a beat one second after the join is about 1.92 seconds
+  into the prompt timeline.
+- **Visual Notes** describe the previous picture, such as where a subject is heading
+  or how the camera is moving. Existing workflows open their saved motion notes here.
+- **Audio Notes** describe the previous soundtrack. The agent carries the described sounds,
+  including background music, into the next clip unless **Requirements** explicitly request
+  a change. For example, ask to fade out the piano while keeping the street ambience.
+- **Audio Frames** describes the audio overlap. **0** follows video length. Workbench uses
+  the written notes for sound and decodes only the video latent.
 
 ## Agent setup
 

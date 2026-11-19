@@ -1367,6 +1367,7 @@ class ArisuMiniMaxH3PromptWorkbench(io.ComfyNode):
                 io.String.Input("finalized_prompt", default="", multiline=True, socketless=True),
                 io.String.Input("prepare_job", default="", optional=True, socketless=True),
                 io.Boolean.Input("motion_enabled", default=True, optional=True, socketless=True),
+                io.String.Input("motion_audio_notes", default="", optional=True, multiline=True, socketless=True),
             ],
             outputs=[io.String.Output("prompt")],
         )
@@ -1401,6 +1402,7 @@ class ArisuMiniMaxH3PromptWorkbench(io.ComfyNode):
         vae: Optional[comfy.sd.VAE] = None,
         prepare_job: str = "",
         motion_enabled: bool = True,
+        motion_audio_notes: str = "",
     ) -> io.NodeOutput:
         """Return finalized text; an authorized queue request may prepare context only."""
         if not prepare_job:
@@ -1423,8 +1425,8 @@ class ArisuMiniMaxH3PromptWorkbench(io.ComfyNode):
                     video = video.unsqueeze(0)
                 if video.shape[0] != 1:
                     raise PreparationError("motion context requires one video")
-                start, end = motion_tail(video.shape[2], job.options["context_length"])
-                tail = video[:, :, start:end].detach().cpu().contiguous()
+                start, frame_count = motion_tail(video.shape[2])
+                tail = video[:, :, start:].detach().cpu().contiguous()
                 if not all(tail.shape) or not torch.isfinite(tail).all():
                     raise PreparationError("motion context contains empty dimensions or non-finite values")
                 digest = hashlib.sha256(tail.detach().float().cpu().contiguous().numpy().tobytes()).hexdigest()
@@ -1442,7 +1444,7 @@ class ArisuMiniMaxH3PromptWorkbench(io.ComfyNode):
                         raise PreparationError("video VAE changed during decoding; generate again")
                     if decoded.ndim == 5 and decoded.shape[0] == 1:
                         decoded = decoded[0]
-                    if decoded.ndim != 4 or decoded.shape[0] != job.options["context_length"] or decoded.shape[-1] != 3:
+                    if decoded.ndim != 4 or decoded.shape[0] != frame_count or decoded.shape[-1] != 3:
                         raise PreparationError("video VAE returned an unexpected motion shape")
                     decoded = decoded.detach().cpu()
                     indices = motion_samples(decoded.shape[0])

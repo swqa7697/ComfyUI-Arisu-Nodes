@@ -322,6 +322,8 @@ def inspect_set_get(page: Page):
                 equal((await app.graphToPrompt()).output[sink.id].inputs.value, [String(node.id), slot]);
                 app.graph.remove(sink); app.graph.remove(getter); app.graph.remove(setter);
             }
+            // ComfyUI updates disconnected autogrow inputs on the next frame while the node still has a graph.
+            await new Promise(requestAnimationFrame);
         }
         app.graph.clear();
         const studio = create('ArisuMiniMaxH3ResourceStudio'), workbench = create('ArisuMiniMaxH3PromptWorkbench');
@@ -478,13 +480,17 @@ def test_prompt_workbench():
                         const old = node.serialize();
                         const index = node.widgets.findIndex(widget => widget.name === 'motion_enabled');
                         old.widgets_values = old.widgets_values.slice(0, index);
+                        old.widgets_values[node.widgets.findIndex(widget => widget.name === 'motion_notes')] = 'Slow pan across the pond';
                         node.widgets[index].value = false;
+                        node.widgets.find(widget => widget.name === 'motion_audio_notes').value = 'Stale audio';
                         node.configure(old);
                         if (node.size[0] !== old.size[0] || node.size[1] !== old.size[1]) throw Error('Restoring workflow changed Workbench size');
                     }""",
                         node_id,
                     )
                     assert widget_value(page, node_id, "motion_enabled") is True
+                    assert widget_value(page, node_id, "motion_notes") == "Slow pan across the pond"
+                    assert widget_value(page, node_id, "motion_audio_notes") == ""
                     assert widget_value(page, node_id, "finalized_prompt") == "Original prompt"
                     screenshot(page, name, "editing")
                     generate = page.get_by_role("button", name="Generate Prompt", exact=True)
@@ -550,6 +556,8 @@ def test_prompt_workbench():
                     )
                     expect(toggle).to_be_enabled()
                     expect(page.get_by_label("Audio Context Length in Frames")).to_be_enabled()
+                    expect(page.get_by_label("Visual Notes", exact=True)).to_have_value("Slow pan across the pond")
+                    page.get_by_label("Audio Notes", exact=True).fill("Distant piano and splashing water")
                     page.evaluate("window.comfyAPI.app.app.extensionManager.workflow.activeWorkflow.changeTracker.captureCanvasState()")
                     page.locator(".motion-switch span").click()
                     expect(toggle).not_to_be_checked()
@@ -568,6 +576,8 @@ def test_prompt_workbench():
                     screenshot(page, name, "motion-disabled")
                     toggle.check()
                     assert widget_value(page, node_id, "motion_enabled") is True
+                    expect(page.get_by_label("Audio Notes", exact=True)).to_have_value("Distant piano and splashing water")
+                    page.get_by_label("Audio Notes", exact=True).scroll_into_view_if_needed()
                     screenshot(page, name, "motion-expanded")
                     page.locator(".arisu-workbench summary > span").click()
                     assert not page.locator(".arisu-workbench .context").evaluate("element => element.open")
