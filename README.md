@@ -112,6 +112,9 @@ Click a node name for its full reference, also available through the node's righ
 | [MiniMax H3 Hybrid to Video (Advanced)](web/docs/ArisuMiniMaxH3HybridToVideoAdvanced/en.md) | Add upscaled conditioning for two-pass workflows.                             |
 | [MiniMax H3 Video Settings](web/docs/ArisuMiniMaxH3VideoSettings/en.md)                     | Set canvas size, aspect ratio, and duration in one bundle.                    |
 | [MiniMax H3 Video Settings (Upscale)](web/docs/ArisuMiniMaxH3VideoSettingsUpscale/en.md)    | Include a target size for latent upscaling.                                   |
+| [MiniMax H3 SelfLift Progressive Sampler](web/docs/ArisuMiniMaxH3SelfLiftProgressiveSampler/en.md) | Run early Euler steps at low resolution, lift the video, and continue sampling video and audio at the target size. |
+
+The **MiniMax H3 SelfLift Progressive Sampler** is a port of the original H3 sampler from [facok/comfyui-SelfLift](https://github.com/facok/comfyui-SelfLift). We thank the upstream contributors for adapting SelfLift to MiniMax H3 audio-video sampling.
 
 See [example workflows](example_workflows) for ready-made graphs and the [changelog](CHANGELOG.md) for release notes.
 

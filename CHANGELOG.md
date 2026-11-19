@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Add MiniMax H3 SelfLift Progressive Sampler with SelfLift-zero correction, optional learned latent upscaling, and high-resolution tiling.
+
 ### Changed
 
 - Omit image crop coordinates, video and audio trim ranges, and source timestamps from Prompt Workbench agent context.

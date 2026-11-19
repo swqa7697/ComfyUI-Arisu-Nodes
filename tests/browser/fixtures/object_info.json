@@ -1987,5 +1987,198 @@
     ],
     "essentials_category": null,
     "has_intermediate_output": true
+  },
+  "ArisuMiniMaxH3SelfLiftProgressiveSampler": {
+    "input": {
+      "required": {
+        "model": [
+          "MODEL",
+          {}
+        ],
+        "positive": [
+          "CONDITIONING",
+          {}
+        ],
+        "negative": [
+          "CONDITIONING",
+          {}
+        ],
+        "vae": [
+          "VAE",
+          {
+            "tooltip": "Video VAE used to decode and re-encode the pixel anchor."
+          }
+        ],
+        "latent_image": [
+          "LATENT",
+          {
+            "tooltip": "Target-resolution H3 latent. Its video stream sets the canvas and duration."
+          }
+        ],
+        "sampler": [
+          "SAMPLER",
+          {
+            "tooltip": "Use the standard Euler sampler with s_churn=0."
+          }
+        ],
+        "sigmas": [
+          "SIGMAS",
+          {}
+        ],
+        "seed": [
+          "INT",
+          {
+            "default": 0,
+            "min": 0,
+            "max": 18446744073709551615,
+            "control_after_generate": true
+          }
+        ],
+        "cfg": [
+          "FLOAT",
+          {
+            "default": 5.0,
+            "min": 0.0,
+            "max": 100.0,
+            "step": 0.1,
+            "round": 0.01
+          }
+        ],
+        "transition_step": [
+          "INT",
+          {
+            "tooltip": "Number of low-resolution steps. Leave at least one full-resolution step.",
+            "default": 6,
+            "min": 1,
+            "max": 10000
+          }
+        ],
+        "lowres_scale": [
+          "FLOAT",
+          {
+            "tooltip": "Spatial scale of the low-resolution steps.",
+            "default": 0.5,
+            "min": 0.25,
+            "max": 1.0,
+            "step": 0.05
+          }
+        ],
+        "rho": [
+          "FLOAT",
+          {
+            "tooltip": "Fraction of highest-risk locations to correct toward the pixel anchor. Zero requires an external upscaler.",
+            "default": 0.0,
+            "min": 0.0,
+            "max": 1.0,
+            "step": 0.05
+          }
+        ],
+        "w_min": [
+          "FLOAT",
+          {
+            "tooltip": "Minimum correction strength at selected locations.",
+            "default": 0.5,
+            "min": 0.0,
+            "max": 1.0,
+            "step": 0.05
+          }
+        ],
+        "w_max": [
+          "FLOAT",
+          {
+            "tooltip": "Maximum correction strength at selected locations.",
+            "default": 1.0,
+            "min": 0.0,
+            "max": 1.0,
+            "step": 0.05
+          }
+        ],
+        "upscaler_model": [
+          "COMBO",
+          {
+            "tooltip": "H3 checkpoint from models/latent_upscale_models. Choose none with rho > 0 for SelfLift-zero.",
+            "default": "none",
+            "multiselect": false,
+            "options": [
+              "none"
+            ]
+          }
+        ]
+      },
+      "optional": {
+        "model_hires": [
+          "MODEL",
+          {
+            "tooltip": "Optional high-resolution model with the same architecture and latent format."
+          }
+        ],
+        "highres_tiling": [
+          "BOOLEAN",
+          {
+            "tooltip": "Choose 1–8 spatial tiles by available memory. Keep audio from the first tile.",
+            "default": false
+          }
+        ],
+        "upscaler_unload": [
+          "BOOLEAN",
+          {
+            "tooltip": "Unload the learned upscaler from VRAM after the lift.",
+            "default": true
+          }
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "model",
+        "positive",
+        "negative",
+        "vae",
+        "latent_image",
+        "sampler",
+        "sigmas",
+        "seed",
+        "cfg",
+        "transition_step",
+        "lowres_scale",
+        "rho",
+        "w_min",
+        "w_max",
+        "upscaler_model"
+      ],
+      "optional": [
+        "model_hires",
+        "highres_tiling",
+        "upscaler_unload"
+      ]
+    },
+    "is_input_list": false,
+    "output": [
+      "LATENT"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "output_name": [
+      "latent"
+    ],
+    "output_tooltips": [
+      null
+    ],
+    "output_matchtypes": null,
+    "name": "ArisuMiniMaxH3SelfLiftProgressiveSampler",
+    "display_name": "MiniMax H3 SelfLift Progressive Sampler",
+    "description": "Run early Euler steps at low resolution, lift the video latent, and finish at the target size while continuing the audio.",
+    "python_module": "custom_nodes.arisu",
+    "category": "Arisu Nodes/MiniMax H3",
+    "output_node": false,
+    "deprecated": false,
+    "experimental": false,
+    "dev_only": false,
+    "api_node": false,
+    "price_badge": null,
+    "search_aliases": null,
+    "essentials_category": null,
+    "has_intermediate_output": false
   }
 }

@@ -19,6 +19,7 @@ import os
 import stat
 import struct
 from dataclasses import asdict
+from functools import partial
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Type, Union
 
 import comfy.memory_management
@@ -79,6 +80,8 @@ from .core import (
     validate_bundle,
 )
 from .media import build_bundle, read_audio, read_image, read_video, source_fingerprint, validate_source
+from .selflift_sampling import progressive_sample
+from .selflift_upscaler import learned_latent_lift, list_upscaler_models
 from .workbench import motion_key
 from .workbench import service as workbench_service
 
@@ -1464,6 +1467,127 @@ class ArisuMiniMaxH3PromptWorkbench(io.ComfyNode):
         return io.NodeOutput(finalized_prompt)
 
 
+class ArisuMiniMaxH3SelfLiftProgressiveSampler(io.ComfyNode):
+    """Run the SelfLift H3 low-resolution prefix, resolution transition, and full-resolution suffix."""
+
+    @classmethod
+    def define_schema(cls) -> io.Schema:
+        upscalers = list_upscaler_models()
+        return io.Schema(
+            node_id="ArisuMiniMaxH3SelfLiftProgressiveSampler",
+            display_name="MiniMax H3 SelfLift Progressive Sampler",
+            category="Arisu Nodes/MiniMax H3",
+            description="Run early Euler steps at low resolution, lift the video latent, and finish at the target size while continuing the audio.",
+            inputs=[
+                io.Model.Input("model"),
+                io.Conditioning.Input("positive"),
+                io.Conditioning.Input("negative"),
+                io.Vae.Input("vae", tooltip="Video VAE used to decode and re-encode the pixel anchor."),
+                io.Latent.Input("latent_image", tooltip="Target-resolution H3 latent. Its video stream sets the canvas and duration."),
+                io.Sampler.Input("sampler", tooltip="Use the standard Euler sampler with s_churn=0."),
+                io.Sigmas.Input("sigmas"),
+                io.Int.Input("seed", default=0, min=0, max=0xFFFFFFFFFFFFFFFF, control_after_generate=True),
+                io.Float.Input("cfg", default=5.0, min=0.0, max=100.0, step=0.1, round=0.01),
+                io.Int.Input(
+                    "transition_step",
+                    default=6,
+                    min=1,
+                    max=10000,
+                    tooltip="Number of low-resolution steps. Leave at least one full-resolution step.",
+                ),
+                io.Float.Input(
+                    "lowres_scale", default=0.5, min=0.25, max=1.0, step=0.05, tooltip="Spatial scale of the low-resolution steps."
+                ),
+                io.Float.Input(
+                    "rho",
+                    default=0.0,
+                    min=0.0,
+                    max=1.0,
+                    step=0.05,
+                    tooltip="Fraction of highest-risk locations to correct toward the pixel anchor. Zero requires an external upscaler.",
+                ),
+                io.Float.Input(
+                    "w_min", default=0.5, min=0.0, max=1.0, step=0.05, tooltip="Minimum correction strength at selected locations."
+                ),
+                io.Float.Input(
+                    "w_max", default=1.0, min=0.0, max=1.0, step=0.05, tooltip="Maximum correction strength at selected locations."
+                ),
+                io.Combo.Input(
+                    "upscaler_model",
+                    options=["none", *upscalers],
+                    default=next((name for name in upscalers if "h3" in name.lower()), "none"),
+                    tooltip="H3 checkpoint from models/latent_upscale_models. Choose none with rho > 0 for SelfLift-zero.",
+                ),
+                io.Model.Input(
+                    "model_hires", optional=True, tooltip="Optional high-resolution model with the same architecture and latent format."
+                ),
+                io.Boolean.Input(
+                    "highres_tiling",
+                    default=False,
+                    optional=True,
+                    tooltip="Choose 1–8 spatial tiles by available memory. Keep audio from the first tile.",
+                ),
+                io.Boolean.Input(
+                    "upscaler_unload", default=True, optional=True, tooltip="Unload the learned upscaler from VRAM after the lift."
+                ),
+            ],
+            outputs=[io.Latent.Output("latent")],
+        )
+
+    @classmethod
+    def execute(
+        cls,
+        model: io.Model.Type,
+        positive: io.Conditioning.Type,
+        negative: io.Conditioning.Type,
+        vae: io.Vae.Type,
+        latent_image: io.Latent.Type,
+        sampler: io.Sampler.Type,
+        sigmas: torch.Tensor,
+        seed: int,
+        cfg: float,
+        transition_step: int,
+        lowres_scale: float,
+        rho: float,
+        w_min: float,
+        w_max: float,
+        upscaler_model: str,
+        model_hires: Optional[io.Model.Type] = None,
+        highres_tiling: bool = False,
+        upscaler_unload: bool = True,
+    ) -> io.NodeOutput:
+        """Sample one target-resolution latent using the selected direct lift and correction."""
+        if rho == 0.0 and upscaler_model == "none":
+            raise ValueError("SelfLift H3: choose rho > 0 for SelfLift-zero or select an external H3 upscaler.")
+        lifter = None
+        if upscaler_model != "none":
+            if rho > 0.0 and w_max > 0.0:
+                _LOGGER.warning("SelfLift H3: using an external upscaler with pixel-anchor correction is experimental.")
+            lifter = partial(learned_latent_lift, model_name=upscaler_model, force_unload=upscaler_unload)
+        return io.NodeOutput(
+            progressive_sample(
+                model,
+                positive,
+                negative,
+                vae,
+                latent_image,
+                sampler,
+                sigmas,
+                seed,
+                cfg,
+                transition_step,
+                lowres_scale,
+                rho,
+                w_min,
+                w_max,
+                "nearest",
+                latent_lifter=lifter,
+                highres_tiling=highres_tiling,
+                model_hires=model_hires,
+            )
+        )
+
+
 NODES: List[Type[io.ComfyNode]] = [
     ArisuMiniMaxH3ModelLoader,
     ArisuMiniMaxH3PromptWorkbench,
@@ -1472,4 +1596,5 @@ NODES: List[Type[io.ComfyNode]] = [
     ArisuMiniMaxH3HybridToVideoAdvanced,
     ArisuMiniMaxH3VideoSettings,
     ArisuMiniMaxH3VideoSettingsUpscale,
+    ArisuMiniMaxH3SelfLiftProgressiveSampler,
 ]

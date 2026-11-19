@@ -16,7 +16,7 @@ import math
 import mimetypes
 import re
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Sequence, Set, Tuple, TypeVar, Union
+from typing import Any, Dict, Iterator, List, Optional, Sequence, Set, Tuple, TypeVar, Union
 
 from ..common.core import image_content_type, relative_path
 
@@ -1136,3 +1136,27 @@ def preparation_graph(prompt: Any, node_id: str, motion_enabled: bool = True) ->
 
     visit(node_id)
     return selected
+
+
+def selflift_tile_regions(length: int, tile_count: int = 2) -> List[Tuple[int, int]]:
+    """Split a latent axis into overlapping regions aligned to two-cell H3 patches."""
+    patches = (length + 1) // 2
+    tile_count = max(1, min(tile_count, max(1, patches // 2)))
+    if patches < 4 or tile_count <= 1:
+        return [(0, length)]
+    overlap = min(4, max(1, patches // 8))
+    regions = []
+    for index in range(tile_count):
+        start = max(0, index * patches // tile_count - overlap) * 2
+        end = min(patches, (index + 1) * patches // tile_count + overlap) * 2
+        end = min(end, length)
+        regions.append((start, end))
+    regions[-1] = (regions[-1][0], length)
+    return regions
+
+
+def selflift_temporal_windows(length: int, chunk: int, overlap: int) -> Iterator[Tuple[int, int, int, int]]:
+    """Yield each temporal chunk and its expanded interval for overlap blending."""
+    for start in range(0, length, chunk):
+        end = min(length, start + chunk)
+        yield start, end, max(0, start - overlap), min(length, end + overlap)
