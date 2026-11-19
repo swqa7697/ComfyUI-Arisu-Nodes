@@ -1,113 +1,141 @@
 ---
 name: release-pr
-description: Open the release PR from `release/X.Y.Z` into `main` for ComfyUI-Arisu-Nodes — validates the release commit on the current branch's origin ref, writes a body from the CHANGELOG section and the diff, and opens it with gh. Use when the user says "release PR", "open the release", or "PR for the bump".
+description: Prepare a ComfyUI-Arisu-Nodes release PR into main from dev or a release branch. Open or resume the PR, verify and repair hosted CI, prepare the pack version and release notes, and verify the final pushed release. Use for release preparation or a PR for an existing bump.
 ---
 
-You are opening the release PR for ComfyUI-Arisu-Nodes: `main <- <current branch>`. Work only against `origin/*` refs — local branches may be stale. Never commit, push, checkout, or tag anything in this skill.
+# Prepare the pack's release PR
 
-Run from the repository root with `git` and an authenticated `gh` available.
-Claude Code invokes this skill as `/release-pr`; Codex invokes the same skill as
-`$release-pr` through `.agents/skills/release-pr`.
+Run from the development checkout with Git and authenticated `gh`. Codex invokes
+`$release-pr` and Claude Code invokes `/release-pr`. Read the
+[repository rules](../../../AGENTS.md), [release targets](../../../Makefile) and
+[PR workflow](../../../.github/workflows/build-pipeline.yml). A request to carry out
+`release-pr` authorizes the workflow's scoped staging, commits and normal pushes,
+including CI repairs. Preserve unrelated changes, including anything already staged.
+Merge, tag, Registry publication and live-install E2E are subsequent maintainer actions.
 
-## Steps
+## Open or resume the PR
 
-### 1. Sync remote state
+1. Select the requested source. Otherwise use the current release branch for a prepared
+   release, or `dev` for release preparation. The base is `main`. Verify that `gh`
+   targets the repository at `origin` and inspect the worktree and index before writes.
+2. Fetch and resolve the remote tips. Use their SHAs when inspecting the range.
 
-```bash
-git fetch origin --prune
-BRANCH=$(git rev-parse --abbrev-ref HEAD)
-```
+   ```bash
+   git fetch origin --prune
+   base_sha=$(git rev-parse --verify 'refs/remotes/origin/main^{commit}')
+   head_sha=$(git rev-parse --verify "refs/remotes/origin/${release_branch}^{commit}")
+   git log "${base_sha}..${head_sha}" --no-merges --format='%h %s'
+   git diff --stat "${base_sha}...${head_sha}"
+   gh pr list --base main --head "$release_branch" --state open --json number,url,headRefOid
+   ```
 
-`BRANCH` is `main` or `HEAD` (detached) → **stop**: release PRs come from a release branch (`git switch -c release/X.Y.Z`, then `make bump-*` and `make release-commit`).
+   A PR needs a pushed source distinct from `main` and a nonempty release range. Check the
+   PR's head repository as well as its branch. Inspect the full diff, including node IDs,
+   workflows, help pages, dependencies, lockfile and changelog. Read version metadata at
+   both SHAs. Before a repair or bump, work from the selected source at its remote tip in
+   a clean checkout. Isolate unrelated work when necessary. Inspect any local release
+   commit left by a failed push before creating another commit.
+3. Reuse the matching open PR and continue. For a new PR, use a provisional English
+   title such as `chore(release): prepare Arisu Nodes release`, summarize the range,
+   record both SHAs and identify pending checks. If already bumped, use the release
+   subject and dated changelog section immediately. Follow the repository's PR template
+   when present. Write the body with actual newlines in a disposable file at the
+   session's scratch location. Recheck for an open PR before creation and after any
+   ambiguous failure.
 
-### 2. Validate the release commit
+   ```bash
+   gh pr create --base main --head "$release_branch" --title "$release_title" --body-file "$body_file"
+   ```
 
-```bash
-git log -1 --format='%s' origin/$BRANCH
-```
+## Verify hosted CI and repair failures
 
-The subject must match exactly (`RELEASE_SUBJECT_RE` in `scripts/release_common.py`):
-
-```
-^release arisu_nodes: \d+\.\d+\.\d+$
-```
-
-If `origin/$BRANCH` does not exist or the subject does not match, **stop** and tell the user the tip of `origin/$BRANCH` is not a release commit; they should run `make bump-patch|minor|major` then `make release-commit`.
-
-### 3. Validate there is something to release
-
-```bash
-git rev-list --count origin/main..origin/$BRANCH
-gh pr list --base main --head $BRANCH --state open --json number,url
-```
-
-- Count `0` → **stop**: `main` already contains this branch.
-- An open PR already exists → **stop** and print its URL instead of opening a second one.
-
-### 4. Gather the release contents
-
-```bash
-git show origin/main:pyproject.toml | grep -E '^version = '
-git show origin/$BRANCH:pyproject.toml | grep -E '^version = '
-git show origin/$BRANCH:CHANGELOG.md
-git log origin/main..origin/$BRANCH --no-merges --format='%h %s'
-git diff --stat origin/main origin/$BRANCH
-git diff origin/main origin/$BRANCH -- pyproject.toml
-git diff --name-status origin/main origin/$BRANCH -- __init__.py src/arisu_nodes web/docs
-```
-
-The `## [X.Y.Z] - YYYY-MM-DD` section of the branch's `CHANGELOG.md`, where `X.Y.Z` is the version from the release commit subject, is the source of truth for the Added / Changed / Fixed bullets. Commit subjects fill gaps only.
-
-### 5. Write the body
-
-Title = the release commit subject from step 2, verbatim.
-
-Write the body to a scratch file (`--body-file`), following this template. Skip empty sections. Summarize in your own words for Highlights; copy the changelog bullets as they are.
-
-```markdown
-## Version
-
-| | main | this branch |
-|---|---|---|
-| `arisu_nodes` | 0.1.0 | 0.2.0 |
-
-## Highlights
-
-2–4 sentences: what this release delivers for ComfyUI users and why it matters.
-
-## Added
-- …
-
-## Changed
-- …
-
-## Fixed
-- …
-
-## Node changes
-- New or changed node ids (from `__init__.py` / `src/arisu_nodes`) and their `web/docs/<node_id>/en.md` pages, or "none".
-- Runtime dependency changes in `pyproject.toml` `dependencies` (each needs the human-only `uv pip install` into the ComfyUI venv per AGENTS.md), or "none".
-
-## Release checklist
-- [ ] Merge this PR (CI must be green).
-- [ ] `git switch main && git pull && make tag` — pushes `vX.Y.Z`, which triggers `publish_node.yml`.
-- [ ] `REGISTRY_ACCESS_TOKEN` secret present; the publish run is green.
-- [ ] Manual E2E in the live ComfyUI (human-only, see AGENTS.md).
-
-## Commits
-
-<details><summary>N commits</summary>
-
-- `abc1234` feat(nodes): …
-- …
-
-</details>
-```
-
-### 6. Open the PR
+For a new bump, obtain green CI on the unbumped PR first. For an existing pushed bump,
+verify the release metadata below and proceed directly to the final CI gate. Record which
+snapshots actually ran. Use the same gate after every push, including a metadata-only bump.
 
 ```bash
-gh pr create --base main --head $BRANCH --title "<release commit subject>" --body-file <scratch-file>
+gh pr view "$pr_number" --json url,state,headRefName,headRefOid,headRepositoryOwner,baseRefName,baseRefOid
+gh pr checks "$pr_number" --json name,state,bucket,workflow,event,link
+gh run view "$run_id" --json event,status,conclusion,attempt,jobs,url
 ```
 
-Report the PR URL to the user, plus the version table and the release checklist inline so they can act without opening the PR.
+Match the open PR, source/base SHAs and latest applicable PR run. A pull request run can
+test a synthetic merge commit. Verify its parents against the reviewed tips when needed.
+Require both **CI build** matrix jobs (Ubuntu, Python 3.10 and 3.13) to pass locked install,
+tidy with a clean diff, lint, unit/web tests and build. The scheduled/manual ComfyUI lane
+and tag-triggered publish workflow have separate triggers. Local checks or a previous
+green head cannot satisfy the hosted gate.
+
+- Monitor queued/running jobs in short waits. Inspect triggers, runner availability and
+  permissions when checks are missing, skipped or cancelled. If the base moved, obtain a
+  run that tests the new pair before claiming success.
+- Read failed step logs (`gh run view "$run_id" --log-failed`). Identify independent
+  causes and reproduce the smallest failing command with the runner's versions, locked
+  dependencies and relevant inputs. Trace the expected behavior to the node contract,
+  repository rules and existing regression. Fix product defects in shipped code. Correct
+  a fixture or workflow only when independent evidence identifies that layer as faulty.
+  Preserve valid assertions, timeouts, coverage and failure exits. Rerun a demonstrated
+  transient runner failure and verify the result.
+- Verify the fix against the original failure, then run `make tidy`, `make lint test`
+  and `make build`, plus the owning lane where relevant. Respect the live-install
+  boundary. Review the diff and `git diff --check`, stage only reviewed paths, commit
+  with the project's English commit style and push the selected branch without force.
+  On an uncertain push, compare local and remote SHAs before retrying. Use a normal fix
+  commit for CI repairs.
+- Confirm the new PR head and repeat the gate. Continue while a viable diagnosis or
+  repair remains. For a concrete external blocker, report the PR/run link, failed step,
+  evidence and outstanding action. Once green, fetch both tips again and use the verified
+  range, including repairs, for the release notes and version decision.
+
+## Prepare or verify the release metadata
+
+Use the single `arisu_nodes` version in `pyproject.toml`. Compare the final behavior with
+`origin/main` and the previous published release if they differ. Honor a requested version.
+Otherwise recommend a patch for compatible fixes, minor for added capabilities, or major
+for incompatible changes to a shipped contract. Explain the choice using the diff.
+
+- For a fresh bump, inspect `[Unreleased]` and its coverage of shipped user-visible
+  changes. The [bump helper](../../../scripts/release_bump.py) requires an entry and
+  clean release files. Resolve any genuine missing notes before running the selected
+  `make bump-patch`, `make bump-minor` or `make bump-major`. It updates
+  `pyproject.toml`, rolls the heading to `## [X.Y.Z] - YYYY-MM-DD`, opens an empty
+  `[Unreleased]` and refreshes `uv.lock`. If release notes need their own pre-bump
+  commit, verify hosted CI on that head too.
+- If release files are already prepared locally or pushed, inspect the complete diff
+  and reuse the matching version. Check that it advances the base, agrees with the lock
+  and dated notes, and that the release commit has the exact subject
+  `release arisu_nodes: X.Y.Z`. Locate that commit in the PR range if a later CI repair
+  is at the tip. Resolve inconsistent or partial metadata before proceeding.
+- Review the three-file diff including lockfile churn, run `git diff --check` and the
+  repository's tidy, lint/test and build sequence on the prepared tree. Attribute local
+  results to that tree and hosted results to their actual SHAs.
+- Present the version and rationale, release-file diff, proposed title/body, source/base
+  SHAs, validation and push destination. If the version choice still needs the user's
+  decision, obtain confirmation of the concrete bump here. Reuse an already approved
+  version and scope. Workflow Git actions are covered by the original PR request.
+- Recheck the branch, fetched tips and reviewed files before running
+  `make release-commit YES=1`. The [commit helper](../../../scripts/release_commit.py)
+  accepts only the three release files and commits and pushes the selected branch.
+  After a push failure, verify the existing local commit and retry just the outstanding
+  normal push if the remote still permits it. Skip the helper for an already pushed bump.
+
+## Update the same PR and finish
+
+Fetch and verify the release subject, files and source SHA on origin. Use the exact
+release subject as the final PR title. Write the final English body from the remote diff:
+
+- Version table for `arisu_nodes` on `main` and the release branch, followed by the rationale.
+- Highlights for ComfyUI users and the populated sections from the dated changelog.
+- Affected node IDs and help pages, workflow compatibility and runtime dependency changes.
+  Identify any human-only live environment steps from AGENTS.md.
+- Actual local checks, pre-bump CI when observed, final CI links, tested SHAs and any
+  repair or outstanding verification. Include the non-merge commit list in collapsed details.
+- Maintainer checklist for a green merge, manual live ComfyUI E2E, and `make tag` on
+  up-to-date `main`. Pushing `vX.Y.Z` triggers `publish_node.yml`, which needs
+  `REGISTRY_ACCESS_TOKEN`. Mark publication complete only when independently observed.
+
+Update with `gh pr edit "$pr_number" --title "$release_title" --body-file "$body_file"`
+and remove the disposable file after use. Verify the final hosted gate on the current
+head/base. Carry the selected version through any repairs, refresh release notes if
+behavior changes, and update the same PR with the successful run links. Report the URL,
+version change, release commit and final head SHAs, checks and remaining maintainer steps.

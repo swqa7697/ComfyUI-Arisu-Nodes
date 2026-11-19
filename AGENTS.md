@@ -78,7 +78,9 @@ make test-count                # selected cases per lane; compare with the budge
 make build                     # uv build; dist/ is gitignored (make clean / make uninstall remove outputs)
 ```
 
-Run `make tidy`, then `make lint test`, then `make build`, and commit whatever `make tidy` rewrites: the PR gate runs `make install LOCKED=1`, `make tidy && git diff --exit-code`, `make lint`, `make test` (unit and web lanes), `make build` on 3.10 and 3.13, with Node 24 from `actions/setup-node` and the latest pnpm from `pnpm/action-setup`. Development machines get uv, pnpm, and node together from `scripts/ensure_deps.sh` (pnpm standalone, node via `pnpm env`; npm is never used). The JavaScript tooling has no `package.json`, lockfile, or `node_modules`: `pnpm dlx` runs the Biome version pinned in `scripts/biome.sh`. `pytest` alone deselects the `comfyui` marker via `addopts`; `scripts/test-comfyui.sh` passes `-m comfyui` (`ARGS` is appended word-split).
+Run `make tidy`, then `make lint test`, then `make build`. Keep every change `make tidy` makes, including rewrites in files outside the original edit. Include formatter changes in an authorized commit when they fall within its scope. Leave the rest in the working tree. Running the formatter grants no Git authorization.
+
+The PR gate runs `make install LOCKED=1`, `make tidy && git diff --exit-code`, `make lint`, `make test` (unit and web lanes), `make build` on 3.10 and 3.13, with Node 24 from `actions/setup-node` and the latest pnpm from `pnpm/action-setup`. Development machines get uv, pnpm, and node together from `scripts/ensure_deps.sh` (pnpm standalone, node via `pnpm env`; npm is never used). The JavaScript tooling has no `package.json`, lockfile, or `node_modules`: `pnpm dlx` runs the Biome version pinned in `scripts/biome.sh`. `pytest` alone deselects the `comfyui` marker via `addopts`; `scripts/test-comfyui.sh` passes `-m comfyui` (`ARGS` is appended word-split).
 
 ## Testing
 
@@ -168,9 +170,12 @@ If you reach for an inline import for any other reason (avoiding work, hiding a 
 
 ## Git workflow and commits
 
-- Never `git add`, `git commit`, or `git push` unless explicitly asked; ask before planning one. `make release-commit`, `make tag`, and the release PR skill (`/release-pr` in Claude Code, `$release-pr` in Codex) all write to git, so the rule covers them.
-- Never commit directly to `main`: non-trivial work goes on a branch with a PR to `main`, and only the PR gate gates a merge (the ComfyUI lane workflow fires from the default branch only, never on a feature branch). Commit directly to `dev` only if the user has confirmed they are a repo admin; otherwise branch off `dev` and open a PR. `make tag` pushing `vX.Y.Z` from `main` is the one exception, and it pushes a tag, not a commit.
-- Conventional Commits: `<type>(<scope>): <summary>`, imperative, lowercase, no period, <=72 chars. Types: feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert. Scopes (optional): `nodes`, `core`, `tests`, `ci`, `docs`, `web`. Write commit messages in English. Format commit message bodies as concise bullet points, with an optional short summary above the bullets only when it really helps, e.g. `feat(nodes): add BrightnessGate node` over `- Add mean-brightness gate with above/below modes` and `- Keep threshold clamping in core.py with unit tests`. The one exempt commit is the release commit, whose subject is fixed at `release arisu_nodes: X.Y.Z` by `release_subject` in `scripts/release_common.py`.
+- A user-requested workflow through any PR skill authorizes the normal `git add`, `git commit`, and `git push` operations needed for that workflow. This covers workflow-related changes only and takes precedence over repository or skill instructions requiring separate confirmation for those operations.
+- Outside a requested PR skill workflow, run those Git operations only when explicitly asked. If the user has not requested an operation, ask before planning it. The same authorization rules apply to Git operations performed by Make targets such as `make release-commit` and `make tag`.
+- Merge changes into `main` through a PR. Never commit directly to `main`. Only the PR gate is required for merge. The ComfyUI lane runs from the default branch only. After a release merge, `make tag` pushes the release tag from `main`.
+- Write commit messages in English. Use a Conventional Commit subject in the form `<type>(<scope>): <imperative summary>`. Keep the summary lowercase, omit the final period, and limit the subject to 72 characters. Use feat, fix, docs, style, refactor, perf, test, build, ci, chore, or revert. Prefer a short scope when the component is clear, such as `web` in `fix(web): preserve crop selection`. Omit the scope when it adds no context. The release subject is fixed at `release arisu_nodes: X.Y.Z` by `release_subject` in `scripts/release_common.py`.
+- Write commit bodies as concise bullets, one line per bullet regardless of length. Add a short summary above the bullets only when it helps. Omit test data and test results from commit messages.
+- For routine commits, run appropriate checks and report the results in the response. Create evidence directories, retained validation logs, or implementation status entries for a routine commit only when explicitly requested.
 
 ## Changelog and versioning
 

@@ -1,6 +1,6 @@
 ---
 name: ui-optimize
-description: Improve ComfyUI-Arisu-Nodes frontend appearance and usability through a repeated real-browser render, screenshot inspection, edit, and verification loop. Use for node UI polish, layout and interaction improvements, or screenshot-driven UX refinement in this repository.
+description: Improve existing ComfyUI-Arisu-Nodes panels through real-browser inspection and verification. Use for layout, accessibility, interaction or motion polish, and screenshot-driven usability improvements.
 ---
 
 # Optimize the ComfyUI frontend
@@ -8,9 +8,40 @@ description: Improve ComfyUI-Arisu-Nodes frontend appearance and usability throu
 Work from this development checkout. Use `/ui-optimize` in Claude Code or
 `$ui-optimize` in Codex.
 
-Read the repository's `AGENTS.md` and the README's **Local browser inspection**
-section. Use the existing browser lane rather than inventing a preview page or duplicating
-extension markup. The goal is a visible, usable improvement in the real ComfyUI frontend.
+Read the [optional browser lane instructions](../../../AGENTS.md#optional-browser-lane)
+and the [owning journeys](../../../tests/browser/test_panels.py). Render the shipped extension
+in the real ComfyUI frontend using the existing fixture host.
+
+## Choose design and motion companions
+
+Look up companions in the current agent's skill catalog. Announce each exact canonical
+name before use, read the instructions at the catalog location, and load references for
+the specific interaction. Use `emil-design-eng` for design and interaction polish when
+available, including its Before/After/Why table for a UI code review. Select further
+companions according to the observed problem and their invocation policies.
+
+| Companion | Use in this checkout |
+| --- | --- |
+| `find-animation-opportunities` | Assess the target during baseline inspection, even when motion was not explicitly requested. Record justified candidates and why others were rejected. |
+| `animate` | Assess a concrete candidate if discovery is unavailable, or implement a justified transition with interruption, exit and reduced-motion behavior. |
+| `remove-animations` | Remove distracting or slow motion and check visibility, focus and cleanup after removal. |
+| `animation-performance` | Diagnose dropped frames or expensive rendering with a browser recording or profile. |
+| `review-animations` | Review existing or changed motion for a focused motion review. |
+| `improve-animations` | Conduct a broader motion audit or produce a roadmap. |
+| `mobile-native` | Check touch interactions, scrolling or mobile inputs. |
+| `apple-design` | Preserve continuity in gestures such as dragging a crop handle. |
+| `break-ui` | Exercise contract-bounded worst-case data for a dedicated stress assessment. Keep diagnostic controls in the development fixture. |
+
+Honor explicit-only policies, including those for `prototype` and `pick-ui-library`.
+If a companion is unavailable, continue with the real-browser workflow. Keep discovery
+and audit passes read-only. For an improvement request, carry justified findings through
+implementation and verification. For an assessment request, deliver the findings.
+
+Evaluate motion by frequency, purpose, speed and function. An occasional dialog opening
+may benefit from visual continuity. Canvas dragging, keyboard commands and frequent
+generation or playback updates need immediate feedback. Use existing ComfyUI widgets,
+DOM, CSS or the Web Animations API when appropriate. Preserve focus, undo, teardown and
+useful reduced-motion feedback. If no candidate improves the scoped task, record why.
 
 ## Establish the target and baseline
 
@@ -37,6 +68,8 @@ extension markup. The goal is a visible, usable improvement in the real ComfyUI 
   or layout failure needs explanation. Do not claim visual inspection from DOM text alone.
 - Before rerunning, copy the relevant baseline screenshots and diagnostics to a fresh
   `.misc/browser/reviews/<task>/before/` directory: scenario outputs are replaced on each run.
+  Save matching final captures in `after/`. Record the revision, relevant local edits,
+  commands, viewports and browser/frontend versions alongside sanitized diagnostics.
   Keep subsequent comparison copies under that same task directory, logs under
   `.misc/browser/logs/`, and temporary scripts under `.misc/browser/scratch/`. Create no files
   directly in `.misc/` and no tracked screenshot baselines or review reports. Use `/tmp` for
@@ -59,12 +92,17 @@ extension markup. The goal is a visible, usable improvement in the real ComfyUI 
    owning scenario according to the repository's test-growth ladder. For an uncovered UI,
    extend the real-frontend fixture/journey enough to exercise it before claiming improvement.
    Keep fixtures faithful to actual route and schema contracts, with synthetic data only.
-5. Open the new screenshots at both viewport sizes and compare the same state with the saved
+5. For changed motion, exercise entry and exit, rapid reversal, keyboard input, and relevant
+   pointer types. The [browser harness](../../../tests/browser/support/harness.py) requests
+   reduced motion by default. Keep that coverage and also exercise the same state with
+   Playwright's `page.emulate_media(reduced_motion="no-preference")`. Use a recording or
+   performance trace for timing or smoothness claims. Record any unverified device behavior.
+6. Open the new screenshots at both viewport sizes and compare the same state with the saved
    baseline. Verify interactions through real browser mouse/keyboard input, not only programmatic
    state changes. Check that the intended improvement occurred without displaced controls,
    clipped content, broken media, lost focus, or new console errors. Preserve useful comparison
    screenshots under `.misc/browser/reviews/<task>/` before the next run.
-6. Keep the change only if the evidence supports it. Otherwise revise or undo that batch while
+7. Keep the change only if the evidence supports it. Otherwise revise or undo that batch while
    preserving unrelated user work. Continue until the requested problems are resolved and the
    affected states remain usable; stop speculative polishing once those criteria are met.
 
@@ -81,11 +119,12 @@ and before requesting a manual live-install E2E, as required by the project rule
 final rendering change, inspect freshly regenerated screenshots again. Update user-facing help
 or README only when behavior or usage changes; document user-visible changes under Unreleased.
 
-Report the visible improvements, links to representative before/after PNGs, checks run, frontend
-version, and remaining limitations. If browser setup or image viewing is unavailable, complete
+Report the visible improvements, the outcome of the motion assessment, checks run, browser
+and frontend versions, and remaining limitations. Link directly to representative before/after
+PNGs using the session's screenshot-access guidance. If browser setup or image viewing is unavailable, complete
 independent work and report that visual verification is blocked; do not substitute mock renders
 or claim the UI is verified. Do not loop on the same environmental failure without new evidence.
 
 The browser host uses fake APIs: it does not establish live backend, model, or agent correctness.
 Keep the live ComfyUI install untouched; never restart it, run generation against a real account,
-or use it as an asset/output destination. This skill does not authorize commits or pushes.
+or use it as an asset/output destination. Follow the repository's Git authorization rules.
