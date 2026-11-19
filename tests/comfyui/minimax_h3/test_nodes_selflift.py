@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, Callable, Dict, List, Sequence
 
 import comfy.latent_formats
 import comfy.model_management
 import comfy.model_patcher
 import comfy.model_sampling
+import comfy.ops
 import comfy.sample
 import comfy.samplers
 import comfy.utils
+import folder_paths
 import latent_preview
 import pytest
 import torch
@@ -18,7 +21,9 @@ from comfy.ldm.minimax.model import PackedLayout
 from comfy.nested_tensor import NestedTensor
 
 from src.arisu_nodes.minimax_h3 import nodes as h3
-from src.arisu_nodes.minimax_h3 import selflift_tiling
+from src.arisu_nodes.minimax_h3 import selflift_tiling, selflift_upscaler
+from src.arisu_nodes.minimax_h3.core import video_frame_count
+from src.arisu_nodes.minimax_h3.selflift_guides import prepare_keyframes
 
 pytestmark = pytest.mark.comfyui
 
@@ -28,6 +33,9 @@ class VideoVae:
 
     device = torch.device("cpu")
     vae_dtype = torch.float32
+
+    def spacial_compression_encode(self) -> int:
+        return 1
 
     def decode(self, latent: torch.Tensor) -> torch.Tensor:
         return latent.movedim(1, -1)
@@ -46,15 +54,16 @@ def patcher(offset: float) -> comfy.model_patcher.ModelPatcher:
     return comfy.model_patcher.ModelPatcher(model, VideoVae.device, VideoVae.device)
 
 
-def test_progressive_euler_lifts_video_and_continues_audio(monkeypatch: pytest.MonkeyPatch):
-    video = torch.linspace(-1, 1, 2 * 2 * 4 * 8).reshape(1, 2, 2, 4, 8)
+def test_progressive_euler_lifts_video_and_continues_audio(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    video = torch.linspace(-1, 1, 3 * 2 * 4 * 8).reshape(1, 3, 2, 4, 8)
     audio = torch.linspace(0, 1, 10).reshape(1, 1, 2, 5)
     mask = torch.ones(1, 4, 8)
     mask[:, :, :2] = 0
     keep = (mask == 0).expand_as(video)
     latent = {"samples": NestedTensor([video, audio]), "noise_mask": mask, "batch_index": [0]}
     keyframe = video[:, :, :1].clone()
-    cond = [(None, {"minimax_keyframes": [{"latent": keyframe}]})]
+    source_pixels = torch.full((1, 4, 8, 3), 0.5)
+    cond = [(None, {"minimax_keyframes": [{"latent": keyframe}], "arisu_keyframe_pixels": [(keyframe, source_pixels)]})]
     sigmas = torch.tensor([1.0, 0.75, 0.5, 0.25, 0.0])
     evaluations = []
     progress = []
@@ -76,7 +85,11 @@ def test_progressive_euler_lifts_video_and_continues_audio(monkeypatch: pytest.M
         model = guider.model_patcher.model
         key = guider.conds["positive"][0]["minimax_keyframes"][0]["latent"]
         assert key.shape[-2:] == latent_shapes[0][-2:]
-        torch.testing.assert_close(key.mean(dim=(-2, -1)), keyframe.mean(dim=(-2, -1)))
+        if key.shape == keyframe.shape:
+            torch.testing.assert_close(key, keyframe)
+        else:
+            # Encode the original fitted pixels at the low resolution, independently of the high latent.
+            torch.testing.assert_close(key, torch.full_like(key, 0.6))
 
         def denoise(state: torch.Tensor, _sigma: torch.Tensor) -> torch.Tensor:
             prediction = state * 0.5 + model.offset
@@ -126,7 +139,7 @@ def test_progressive_euler_lifts_video_and_continues_audio(monkeypatch: pytest.M
     assert [offset for offset, _, _ in evaluations] == [0.1, 0.1, 0.2, 0.2]
     _, (_, low_audio), (low_x0, audio_x0) = evaluations[1]
     _, (video_resume, audio_resume), _ = evaluations[2]
-    assert low_x0.shape == (1, 2, 2, 2, 4)
+    assert low_x0.shape == (1, 3, 2, 2, 4)
 
     # Reconstruct the expected transition independently. The most inconsistent half of
     # the generate region receives the pixel anchor and the keep region keeps its source.
@@ -154,6 +167,64 @@ def test_progressive_euler_lifts_video_and_continues_audio(monkeypatch: pytest.M
     # The outer-sampler double above exercises the transition. Drive the high-resolution
     # diffusion wrapper separately to inspect the conditioning actually seen by each tile.
     check_motion_context_tiles()
+    check_motion_guides()
+    check_native_learned_lift(tmp_path, monkeypatch)
+
+
+def check_motion_guides():
+    class MotionVae(VideoVae):
+        def __init__(self):
+            self.encoded_frames = []
+
+        def decode(self, latent: torch.Tensor) -> torch.Tensor:
+            frames = video_frame_count(latent.shape[2])
+            pixels = torch.arange(frames, dtype=latent.dtype).view(-1, 1, 1, 1)
+            return pixels.expand(frames, *latent.shape[-2:], 3)
+
+        def encode(self, pixels: torch.Tensor) -> torch.Tensor:
+            self.encoded_frames.append(pixels)
+            # Select the first pixel frame of each H3 token in a 22-frame guide.
+            return pixels[[0, 1, 5, 9, 13, 17, 18]].movedim(-1, 0).unsqueeze(0)
+
+    vae = MotionVae()
+    previous = torch.randn(1, 3, 12, 4, 8)
+    audio = torch.ones(1, 1, 2)
+    offsets = [0, 1, 5, 9, 13, 17, 18]
+    tail = previous[:, :, -7:].split(1, dim=2)
+    keys = [{"resolved_frame_index": offset, "latent": token.clone()} for offset, token in zip(offsets, tail)]
+    keys[0]["audio_latent"] = audio
+    sound = {"resolved_frame_index": -2.4, "audio_latent": audio}
+    keys.insert(0, sound)
+    cond = [(None, {"minimax_keyframes": keys})]
+    context = {"samples": [previous[0], audio]}
+    pos, neg = prepare_keyframes(cond, cond, vae, 2, 4, context, 22)
+    assert len(vae.encoded_frames) == 1
+    pixels = vae.encoded_frames[0]
+    assert pixels.shape == (22, 2, 4, 3)
+    torch.testing.assert_close(pixels[:, 0, 0, 0], torch.arange(17, 39).float())
+    low_keys = pos[0][1]["minimax_keyframes"]
+    assert low_keys[0] is sound and low_keys[1]["audio_latent"] is audio
+    for i, offset in enumerate(offsets, start=1):
+        assert low_keys[i]["resolved_frame_index"] == offset
+        assert low_keys[i]["latent"] is neg[0][1]["minimax_keyframes"][i]["latent"]
+        torch.testing.assert_close(low_keys[i]["latent"], torch.full((1, 3, 1, 2, 4), 17.0 + offset))
+        torch.testing.assert_close(keys[i]["latent"], tail[i - 1])
+
+    with pytest.raises(ValueError, match="does not match"):
+        prepare_keyframes(cond, cond, vae, 2, 4, {"samples": [previous + 1, audio]}, 22)
+    prepare_keyframes(cond, cond, vae, 2, 4, None, 22)
+    torch.testing.assert_close(vae.encoded_frames[-1][:, 0, 0, 0], torch.arange(22).float())
+
+    # A replacement from an external node can reuse the position of an Arisu still.
+    # Only the surviving guide's own pixels may replace the latent resize.
+    orphan_pixels = [(previous[:, :, :1], torch.zeros(1, 4, 8, 3))]
+    legacy = [(None, {"minimax_keyframes": [keys[1]], "arisu_keyframe_pixels": orphan_pixels})]
+    low, _ = prepare_keyframes(legacy, [(None, {"minimax_keyframes": None})], vae, 2, 4, None, 0)
+    torch.testing.assert_close(low[0][1]["minimax_keyframes"][0]["latent"].mean((-1, -2)), tail[0].mean((-1, -2)))
+    assert len(vae.encoded_frames) == 2
+    lazy = h3.ArisuMiniMaxH3SelfLiftProgressiveSampler.check_lazy_status
+    assert lazy(trim_frames=22) == lazy(trim_frames=0, context_latent=None) == []
+    assert lazy(trim_frames=22, context_latent=None) == ["context_latent"]
 
 
 def check_motion_context_tiles():
@@ -230,3 +301,37 @@ def check_motion_context_tiles():
     offset = torch.tensor([0, 0, 0, 0, 0.5, 1.5, 2.5, 3.5, 4, 4, 4, 4, 4])
     torch.testing.assert_close(joined_video, video + offset)
     torch.testing.assert_close(joined_audio, audio + offset.mean())
+
+
+@torch.inference_mode()
+def check_native_learned_lift(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """A saved H3 checkpoint produces the native result over the old 32-latent boundary."""
+    name = "tiny-h3.pth"
+    device = torch.device("cpu")
+    generator = torch.Generator().manual_seed(17)
+    video = torch.randn(1, 24, 37, 2, 2, generator=generator)
+    with monkeypatch.context() as patch:
+        patch.setitem(folder_paths.folder_names_and_paths, "latent_upscale_models", ([str(tmp_path)], {".pth"}))
+        patch.setattr(folder_paths, "filename_list_cache", {})
+        patch.setattr(selflift_upscaler, "_model_cache", {})
+        # Older H3 installations still load the pack and run the pixel lift.
+        try:
+            from comfy.ldm.minimax.latent_upscaler import MiniMaxH3LatentUpscaler
+        except ImportError:
+            with pytest.raises(RuntimeError, match="native MiniMax H3"):
+                selflift_upscaler.learned_latent_lift(video, (4, 4), name, device)
+            return
+
+        reference = MiniMaxH3LatentUpscaler(
+            channels=32, in_blocks=1, out_blocks=1, dtype=torch.float32, operations=comfy.ops.disable_weight_init
+        )
+        for weight in reference.parameters():
+            weight.uniform_(-0.2, 0.2, generator=generator)
+        weights = {f"upscaler.{key}": value for key, value in reference.state_dict().items()}
+        weights["upscaler.conv_out.bias"] = weights["upscaler.conv_out.bias"].double()
+        torch.save({"model": weights}, tmp_path / name)
+        expected = reference(video, (37, 4, 4))
+        actual = selflift_upscaler.learned_latent_lift(video, (4, 4), name, device, force_unload=True)
+        torch.testing.assert_close(actual.cpu(), expected)
+        unchanged = selflift_upscaler.learned_latent_lift(video, (2, 2), name, device)
+        torch.testing.assert_close(unchanged.cpu(), video, rtol=0, atol=0)

@@ -88,8 +88,12 @@ def test_first_and_last_frames_only_pin_keyframes():
     kwargs = _base_kwargs()
     kwargs.update(first_frame=image(768, 768), first_frame_mode="pad", first_frame_pad_color="#ff0000")
     kwargs.update(last_frame=image(512, 512), last_frame_mode="stretch")
-    ArisuMiniMaxH3HybridToVideo.execute(**kwargs)
+    guide_values = _cond_values(ArisuMiniMaxH3HybridToVideo.execute(**kwargs))
     padded, stretched = kwargs["vae"].encoded
+    for (source_key, pixels), guide, fitted in zip(
+        guide_values["arisu_keyframe_pixels"], guide_values["minimax_keyframes"], (padded, stretched), strict=True
+    ):
+        assert source_key is guide["latent"] and pixels is fitted
     assert tuple(padded.shape) == tuple(stretched.shape) == (1, 768, 1344, 3)
     red = torch.tensor([1.0, 0.0, 0.0]).expand(1, 768, 288, 3)
     assert torch.equal(padded[:, :, :288], red)

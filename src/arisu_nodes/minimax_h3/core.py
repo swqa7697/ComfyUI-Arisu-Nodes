@@ -16,7 +16,7 @@ import math
 import mimetypes
 import re
 from dataclasses import dataclass
-from typing import Any, Dict, Iterator, List, Optional, Sequence, Set, Tuple, TypeVar, Union
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple, TypeVar, Union
 
 from ..common.core import image_content_type, relative_path
 
@@ -1153,10 +1153,3 @@ def selflift_tile_regions(length: int, tile_count: int = 2) -> List[Tuple[int, i
         regions.append((start, end))
     regions[-1] = (regions[-1][0], length)
     return regions
-
-
-def selflift_temporal_windows(length: int, chunk: int, overlap: int) -> Iterator[Tuple[int, int, int, int]]:
-    """Yield each temporal chunk and its expanded interval for overlap blending."""
-    for start in range(0, length, chunk):
-        end = min(length, start + chunk)
-        yield start, end, max(0, start - overlap), min(length, end + overlap)

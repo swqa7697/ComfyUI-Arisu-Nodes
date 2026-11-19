@@ -12,11 +12,11 @@ Run the first Euler steps on a smaller video latent, then finish at the target r
 
 | Mode | Settings | Behavior |
 | --- | --- | --- |
-| Learned latent lift | Select an H3 upscaler and set `rho=0` (default). | Runs the checkpoint directly on the video latent and skips the VAE round trip. |
+| Learned latent lift | Select an H3 upscaler and set `rho=0` (default). | ComfyUI's native H3 model runs the checkpoint directly on the predicted video latent. The resolution transition skips the pixel anchor. |
 | SelfLift-zero | Select `none` and set `rho>0`. Upstream suggests starting with `rho=0.6` and `w_min=w_max=1` for H3. | Compares the nearest-neighbor lift with a VAE decode, resize, and re-encode. Corrects the fraction of locations with the largest disagreement. |
 | Hybrid (experimental) | Select an H3 upscaler and set `rho>0` and `w_max>0`. | Applies the same selective correction to the learned lift. |
 
-Place optional H3 upscaler weights under `models/latent_upscale_models/`. The selector defaults to the first installed filename containing `h3`, ignoring case. If none matches, select a suitable checkpoint or raise `rho` above zero. [Upstream H3 upscaler weights](https://huggingface.co/LBH-123-AI/Minimax_h3_latent_Upscaler)
+Place optional H3 upscaler weights under `models/latent_upscale_models/`. Learned and hybrid lifts require a ComfyUI build with native MiniMax H3 latent upscaling. Existing H3 checkpoints, including `h3_upscaler_lms_v0.1.safetensors`, stay in the same selector. It defaults to the first installed filename containing `h3`, ignoring case. [Upstream H3 upscaler weights](https://huggingface.co/LBH-123-AI/Minimax_h3_latent_Upscaler)
 
 ## Controls
 
@@ -35,10 +35,16 @@ An initialized latent can carry a noise mask. A value of 1 generates content and
 
 ### Continuing a clip with H3 Motion Context
 
-Connect the previous clip's **Load Latent** output to Motion Context's `context_latent`. Feed the current clip's target latent to both Motion Context and SelfLift, then connect Motion Context's conditioning output to SelfLift's `positive`. Both sampling stages keep the pinned video and audio at their original times, including audio that starts before frame zero. Send `trim_frames` to Motion Context Trim as usual. If you use the suite's optional single-step refine pass, keep SelfLift on the main sampling branch and use the ordinary sampler for refinement.
+1. Feed the **current** target latent to Motion Context and to SelfLift's `latent_image`. Send Motion Context's conditioning output to SelfLift's `positive`.
+2. Feed the **previous** clip's Load Latent output to `context_latent` on **both** nodes. Connect Motion Context's `trim_frames` output to **both** SelfLift and Motion Context Trim. For the first clip, a trim count of zero skips motion-guide preparation.
+3. Decode and trim the sampler output as usual. SelfLift uses the trim count to prepare the guide. Motion Context Trim removes the pinned frames once.
+
+At the low resolution, SelfLift resizes Arisu Hybrid's fitted first/last images before VAE encoding. For a continuation it resizes the previous clip's decoded tail and encodes the pinned frames together as one video, then places each token at its original frame index. With only `trim_frames` connected, it decodes the pinned guide tokens together to obtain the pixels. Third-party keyframes without source pixels or a declared motion window keep the latent resize. The high-resolution steps use the incoming full-resolution conditioning. Audio timing and guides are preserved throughout.
+
+If you use Motion Context's optional single-step refine pass, keep SelfLift on the main sampling branch and use the ordinary sampler for refinement.
 
 ## Diagnostics
 
 The console reports the sampling plan and stage timings. Set `SELFLIFT_TIMING_SYNC=1` before starting ComfyUI for CUDA-synchronized timings, or `SELFLIFT_MEMORY_LOG=1` for memory snapshots. Set `SELFLIFT_DEBUG=1` to decode the first frame of each transition intermediate to PNG. The console reports the new `arisu-selflift-*` directory under ComfyUI's temp directory for each run.
 
-This is the experimental H3 adaptation from **comfyui-SelfLift**, revision `835c3cf`. The SelfLift paper evaluated image models. The learned H3 upscaler uses the inference implementation credited to LBH-123-AI. [Sampler source](https://github.com/facok/comfyui-SelfLift/tree/835c3cf7919410f71f414688f049c6ca497789d0) · [SelfLift paper](https://arxiv.org/abs/2609.02036) · [H3 upscaler implementation](https://github.com/LBH-123-AI/Comfyui_Minimax_h3_latent_Upscaler)
+The progressive sampler is adapted from **comfyui-SelfLift**, revision `835c3cf`. The SelfLift paper evaluated image models. The native ComfyUI learned lift runs the H3 upscaler architecture originally published by LBH-123-AI. [Sampler source](https://github.com/facok/comfyui-SelfLift/tree/835c3cf7919410f71f414688f049c6ca497789d0) · [SelfLift paper](https://arxiv.org/abs/2609.02036) · [H3 upscaler project](https://github.com/LBH-123-AI/Comfyui_Minimax_h3_latent_Upscaler)

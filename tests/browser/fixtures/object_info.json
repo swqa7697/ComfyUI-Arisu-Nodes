@@ -2006,7 +2006,7 @@
         "vae": [
           "VAE",
           {
-            "tooltip": "Video VAE used to decode and re-encode the pixel anchor."
+            "tooltip": "H3 video VAE for low-resolution guides and optional pixel-anchor correction."
           }
         ],
         "latent_image": [
@@ -2125,6 +2125,22 @@
             "tooltip": "Unload the learned upscaler from VRAM after the lift.",
             "default": true
           }
+        ],
+        "context_latent": [
+          "LATENT",
+          {
+            "tooltip": "Previous clip used by Motion Context. Connect its trim_frames output too.",
+            "lazy": true
+          }
+        ],
+        "trim_frames": [
+          "INT",
+          {
+            "tooltip": "Connect Motion Context's trim_frames output to encode the pinned run together at the low resolution.",
+            "default": 0,
+            "forceInput": true,
+            "min": 0
+          }
         ]
       }
     },
@@ -2149,7 +2165,9 @@
       "optional": [
         "model_hires",
         "highres_tiling",
-        "upscaler_unload"
+        "upscaler_unload",
+        "context_latent",
+        "trim_frames"
       ]
     },
     "is_input_list": false,

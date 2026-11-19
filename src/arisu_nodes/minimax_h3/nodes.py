@@ -597,9 +597,11 @@ def encode_hybrid(
         ref_blocks = image_blocks[i] + video_blocks + audio_blocks
         values: Dict[str, Any] = {"minimax_refs": ref_blocks} if ref_blocks else {}
         if sources:
-            values["minimax_keyframes"] = [
-                {"resolved_frame_index": index, "latent": vae.encode(img)} for img, (_src, _fit, index) in zip(frames, sources)
-            ]
+            keyframes = [{"resolved_frame_index": index, "latent": vae.encode(img)} for img, (_src, _fit, index) in zip(frames, sources)]
+            values["minimax_keyframes"] = keyframes
+            # Motion Context may replace a frame at the same index. Associate its pixels
+            # with the actual encoded guide so SelfLift only reuses a surviving source.
+            values["arisu_keyframe_pixels"] = [(kf["latent"], img) for kf, img in zip(keyframes, frames)]
         conds.append(node_helpers.conditioning_set_values(cond, values) if values else cond)
     return conds, latent
 
@@ -1482,7 +1484,7 @@ class ArisuMiniMaxH3SelfLiftProgressiveSampler(io.ComfyNode):
                 io.Model.Input("model"),
                 io.Conditioning.Input("positive"),
                 io.Conditioning.Input("negative"),
-                io.Vae.Input("vae", tooltip="Video VAE used to decode and re-encode the pixel anchor."),
+                io.Vae.Input("vae", tooltip="H3 video VAE for low-resolution guides and optional pixel-anchor correction."),
                 io.Latent.Input("latent_image", tooltip="Target-resolution H3 latent. Its video stream sets the canvas and duration."),
                 io.Sampler.Input("sampler", tooltip="Use the standard Euler sampler with s_churn=0."),
                 io.Sigmas.Input("sigmas"),
@@ -1534,9 +1536,28 @@ class ArisuMiniMaxH3SelfLiftProgressiveSampler(io.ComfyNode):
                 io.Boolean.Input(
                     "upscaler_unload", default=True, optional=True, tooltip="Unload the learned upscaler from VRAM after the lift."
                 ),
+                io.Latent.Input(
+                    "context_latent",
+                    optional=True,
+                    lazy=True,
+                    tooltip="Previous clip used by Motion Context. Connect its trim_frames output too.",
+                ),
+                io.Int.Input(
+                    "trim_frames",
+                    default=0,
+                    min=0,
+                    optional=True,
+                    force_input=True,
+                    tooltip="Connect Motion Context's trim_frames output to encode the pinned run together at the low resolution.",
+                ),
             ],
             outputs=[io.Latent.Output("latent")],
         )
+
+    @classmethod
+    def check_lazy_status(cls, trim_frames: int = 0, **inputs: Any) -> List[str]:
+        """Only request the previous clip when Motion Context supplies a pinned run."""
+        return ["context_latent"] if trim_frames > 0 and "context_latent" in inputs and inputs["context_latent"] is None else []
 
     @classmethod
     def execute(
@@ -1559,6 +1580,8 @@ class ArisuMiniMaxH3SelfLiftProgressiveSampler(io.ComfyNode):
         model_hires: Optional[io.Model.Type] = None,
         highres_tiling: bool = False,
         upscaler_unload: bool = True,
+        context_latent: Optional[io.Latent.Type] = None,
+        trim_frames: int = 0,
     ) -> io.NodeOutput:
         """Sample one target-resolution latent using the selected direct lift and correction."""
         if rho == 0.0 and upscaler_model == "none":
@@ -1588,6 +1611,8 @@ class ArisuMiniMaxH3SelfLiftProgressiveSampler(io.ComfyNode):
                 latent_lifter=lifter,
                 highres_tiling=highres_tiling,
                 model_hires=model_hires,
+                context_latent=context_latent,
+                trim_frames=trim_frames,
             )
         )
 

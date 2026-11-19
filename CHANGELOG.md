@@ -9,7 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Add MiniMax H3 SelfLift Progressive Sampler with SelfLift-zero correction and optional learned latent upscaling. The sampler fixes high-resolution tiling failures in Motion Context workflows that use audio anchors or combine video anchors with references. The `highres_tiling` option is marked experimental and defaults to off because using multiple tiles can change the picture and soundtrack even with the same seed.
+- Port the original MiniMax H3 SelfLift Progressive Sampler to Arisu with SelfLift-zero correction and optional learned latent upscaling. [Original sampler by facok](https://github.com/facok/comfyui-SelfLift)
+  - Fix high-resolution tiled sampling for Motion Context workflows that use timed audio anchors or combine video anchors with visual references. All tiles contribute to the soundtrack. Tiling remains experimental and defaults to off because it can change both picture and sound.
+  - Address brief blur at clip starts and visible seams where Motion Context clips are joined. The learned lift runs existing LBH-compatible 3D checkpoints through ComfyUI’s native H3 upscaler. For low-resolution guidance, the sampler resizes Arisu keyframe images before VAE encoding and encodes the previous clip’s resized tail as one continuous video.
 
 ### Changed
 

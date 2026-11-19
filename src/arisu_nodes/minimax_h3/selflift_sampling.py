@@ -25,6 +25,7 @@ from comfy.sd import VAE
 
 from . import selflift_tiling
 from .selflift_diagnostics import StageTimer, debug_dump, log_memory
+from .selflift_guides import prepare_keyframes
 from .selflift_lift import LatentLifter, artifact_aware_consistency_lift, paired_lifts
 
 _LOGGER = logging.getLogger(__name__)
@@ -131,43 +132,6 @@ def _euler_step(state: torch.Tensor, denoised: torch.Tensor, sigma: torch.Tensor
     return state + (state - denoised.to(state)) * step
 
 
-def _resize_keyframes(cond: Sequence[Sequence[Any]], h: int, w: int) -> List[Tuple[Any, Dict[str, Any]]]:
-    """Keyframe cond latents share the generation grid; resize them to the low-res one."""
-    out = []
-    for tensor, d in cond:
-        kfs = d.get("minimax_keyframes")
-        if kfs is None:
-            out.append((tensor, d))
-            continue
-        d = d.copy()
-        resized = []
-        for kf in kfs:
-            kf = dict(kf)
-            lat = kf.get("latent")
-            if lat is not None and (lat.shape[-2] != h or lat.shape[-1] != w):
-                if lat.ndim == 5:
-                    # spatial-only resize per frame; never interpolates across time
-                    batch, channels, frames = lat.shape[:3]
-                    resized_latent = torch.nn.functional.interpolate(
-                        lat.float().permute(0, 2, 1, 3, 4).reshape(batch * frames, channels, lat.shape[-2], lat.shape[-1]),
-                        size=(h, w),
-                        mode="bilinear",
-                        align_corners=False,
-                    )
-                    resized_latent = resized_latent.reshape(batch, frames, channels, h, w).permute(0, 2, 1, 3, 4)
-                else:
-                    resized_latent = torch.nn.functional.interpolate(lat.float(), size=(h, w), mode="bilinear", align_corners=False)
-                # per-channel, per-frame mean match: fixes bilinear's color drift without
-                # restoring variance the low-res grid cannot represent
-                source_mean = lat.float().mean(dim=(-2, -1), keepdim=True)
-                resized_mean = resized_latent.mean(dim=(-2, -1), keepdim=True)
-                kf["latent"] = (resized_latent + (source_mean - resized_mean)).to(lat)
-            resized.append(kf)
-        d["minimax_keyframes"] = resized
-        out.append((tensor, d))
-    return out
-
-
 def progressive_sample(
     model: comfy.model_patcher.ModelPatcher,
     positive: Sequence[Sequence[Any]],
@@ -187,6 +151,8 @@ def progressive_sample(
     latent_lifter: Optional[LatentLifter] = None,
     highres_tiling: bool = False,
     model_hires: Optional[comfy.model_patcher.ModelPatcher] = None,
+    context_latent: Optional[Dict[str, Any]] = None,
+    trim_frames: int = 0,
 ) -> Dict[str, Any]:
     """Sample a low-resolution prefix, lift the endpoint, then resume at target size."""
     _validate_schedule(sigmas, transition_step)
@@ -305,8 +271,7 @@ def progressive_sample(
     callback = latent_preview.prepare_callback(model, total_steps)
     disable_pbar = not comfy.utils.PROGRESS_BAR_ENABLED
     if video:  # keyframe cond latents share the generation grid on MiniMax H3
-        positive_low = _resize_keyframes(positive, h, w)
-        negative_low = _resize_keyframes(negative, h, w)
+        positive_low, negative_low = prepare_keyframes(positive, negative, vae, h, w, context_latent, trim_frames)
     else:
         positive_low, negative_low = positive, negative
 
