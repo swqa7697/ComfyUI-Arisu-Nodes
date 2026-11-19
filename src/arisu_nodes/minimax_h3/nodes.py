@@ -31,7 +31,7 @@ import folder_paths
 import node_helpers
 import torch
 from comfy_api.latest import io
-from nodes import MAX_RESOLUTION
+from nodes import MAX_RESOLUTION, UNETLoader
 from PIL import Image
 from safetensors import safe_open
 
@@ -139,7 +139,7 @@ def read_h3_source(path: str) -> H3Source:
     return H3Source(path, identity, hashlib.sha256(raw).hexdigest(), 8 + len(raw), tensors, metadata, representation, architecture)
 
 
-def _resolve_h3(name: str, role: str) -> H3Source:
+def _validate_model_name(name: str, role: str):
     if not isinstance(name, str) or name not in folder_paths.get_filename_list("diffusion_models"):
         raise ValueError(f"{role}: select an installed diffusion_models checkpoint")
     # Registered model roots (including administrator symlinks) are authoritative.
@@ -152,6 +152,10 @@ def _resolve_h3(name: str, role: str) -> H3Source:
         or ".." in name.replace("\\", "/").split("/")
     ):
         raise ValueError(f"{role}: select a registered relative checkpoint name")
+
+
+def _resolve_h3(name: str, role: str) -> H3Source:
+    _validate_model_name(name, role)
     path = folder_paths.get_full_path("diffusion_models", name)
     if path is None:
         raise ValueError(f"{role}: checkpoint is missing; reselect an installed model")
@@ -298,18 +302,22 @@ class ArisuMiniMaxH3ModelLoader(io.ComfyNode):
     @classmethod
     def fingerprint_inputs(cls, base_model: str, weight_dtype: str, mode: Dict[str, Any]) -> str:
         branch, start, end, final = h3_selection(mode, weight_dtype)
-        base = _resolve_h3(base_model, "base")
         if branch == "native":
-            return hashlib.sha256(repr((base.identity, base.digest, weight_dtype)).encode()).hexdigest()
+            _validate_model_name(base_model, "base")
+            path = folder_paths.get_full_path_or_raise("diffusion_models", base_model)
+            return hashlib.sha256(repr((_h3_identity(path), weight_dtype)).encode()).hexdigest()
+        base = _resolve_h3(base_model, "base")
         overlay = _resolve_h3(mode.get("overlay_model"), "overlay")
         return h3_plan(base, overlay, start, end, final, weight_dtype).fingerprint
 
     @classmethod
     def execute(cls, base_model: str, weight_dtype: str, mode: Dict[str, Any]) -> io.NodeOutput:
         branch, start, end, final = h3_selection(mode, weight_dtype)
-        base = _resolve_h3(base_model, "base")
         if branch == "native":
-            return io.NodeOutput(comfy.sd.load_diffusion_model(base.path, model_options=_h3_options(weight_dtype)))
+            _validate_model_name(base_model, "base")
+            (model,) = UNETLoader().load_unet(base_model, weight_dtype)
+            return io.NodeOutput(model)
+        base = _resolve_h3(base_model, "base")
         overlay = _resolve_h3(mode.get("overlay_model"), "overlay")
         plan = h3_plan(base, overlay, start, end, final, weight_dtype)
         return io.NodeOutput(load_h3_hybrid(plan))

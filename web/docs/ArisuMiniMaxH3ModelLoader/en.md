@@ -5,13 +5,14 @@ Load one H3 checkpoint in **native** mode (the default), or build one experiment
 standard **MODEL** socket for downstream model patches and sampling.
 
 Choose `mode` first, then `base_model` from ComfyUI's registered diffusion models.
-Supported containers are unsharded `.safetensors` and `.sft` with unprefixed H3 tensor names.
-`weight_dtype`, the last widget, is an advanced native loading option; `default`
-leaves the choice to ComfyUI. The FP8 choices request native model operations, not conversion between
-arbitrary checkpoint quantization formats. `native` mode also permits pre-composed
-checkpoints supported by the installed ComfyUI H3 implementation.
+In **native** mode, the node passes `base_model` and `weight_dtype` directly to
+ComfyUI's **Load Diffusion Model**. Checkpoint support follows your installed
+ComfyUI version, including supported models with stacked PDD output heads.
+The advanced `weight_dtype` setting defaults to `default`, which leaves the choice
+to ComfyUI. The FP8 choices request native FP8 model operations.
 
 In **hybrid**, choose an `overlay_model` and enter `block_start` and `block_end`.
+Both checkpoints must be unsharded `.safetensors` or `.sft` files with unprefixed H3 tensor names.
 Indices are zero-based and inclusive: `45–49` selects five block AdaLN families,
 `17–17` selects one, and `0–49` selects all fifty. The editable initial values
 `25–49` are not a quality recommendation. Advanced `include_final_adaln` additionally

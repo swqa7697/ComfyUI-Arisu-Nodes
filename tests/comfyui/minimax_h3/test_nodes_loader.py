@@ -120,10 +120,30 @@ def test_loader_preflight_and_active_branch_contract(tmp_path: Path, monkeypatch
         nested = _io.build_nested_inputs(exported, dynamic)
         assert nested["mode"] == (hybrid_mode() if branch == "hybrid" else {"mode": "native"})
         assert h3.h3_selection(nested["mode"], nested["weight_dtype"])[0] == branch
-    assert h3.ArisuMiniMaxH3ModelLoader.execute("base.safetensors", "default", inactive)[0] is native
-    assert h3.ArisuMiniMaxH3ModelLoader.fingerprint_inputs(
-        "base.safetensors", "default", inactive
-    ) == h3.ArisuMiniMaxH3ModelLoader.fingerprint_inputs("base.safetensors", "default", {"mode": "native"})
+    # A PDD checkpoint stacks 32 output heads. Only hybrid interprets their layout.
+    stacked = tmp_path / "stacked.safetensors"
+    save_file(
+        {
+            "video_patch_proj.weight": torch.zeros(4, 4),
+            "audio_patch_proj.weight": torch.zeros(4, 1),
+            "final_layer.video_out.weight": torch.zeros(32 * 4, 4),
+            "final_layer.audio_out.weight": torch.zeros(32, 4),
+        },
+        str(stacked),
+    )
+    inventory[stacked.name] = str(stacked)
+    loader = h3.ArisuMiniMaxH3ModelLoader
+    fingerprint = loader.fingerprint_inputs(stacked.name, "default", inactive)
+    assert fingerprint == loader.fingerprint_inputs(stacked.name, "default", {"mode": "native"})
+    assert fingerprint != loader.fingerprint_inputs(stacked.name, "fp8_e5m2", inactive)
+    assert loader.execute(stacked.name, "default", inactive)[0] is native
+    with pytest.raises(ValueError, match="base: inconsistent H3 input/output dimensions"):
+        loader.execute(stacked.name, "default", hybrid_mode())
+    # Replacing a checkpoint under the same registered name invalidates the native cache.
+    replacement = tmp_path / "replacement.safetensors"
+    replacement.write_bytes(stacked.read_bytes())
+    replacement.replace(stacked)
+    assert fingerprint != loader.fingerprint_inputs(stacked.name, "default", inactive)
     for change in (
         {"block_start": True},
         {"block_end": 49.5},
