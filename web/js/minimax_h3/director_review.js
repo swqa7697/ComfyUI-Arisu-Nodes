@@ -24,7 +24,7 @@ export function openDirectorReview(run, read, apply) {
   // Shared activity dialog owns focus, Escape, the streamed logs, and the Apply button.
   const style = el('style', {
     textContent: `
-    .arisu-film-review{overflow:auto;flex:1;padding:12px 16px;scrollbar-width:thin;min-height:0}
+    .arisu-film-review{overflow:auto;flex:1;padding:2px;scrollbar-width:thin;min-height:0}
     .arisu-film-review{--edge:var(--border-color,#555)}
     .arisu-film-review section{min-width:0}
     .arisu-film-review .review-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(190px,100%),1fr));gap:12px 18px}
@@ -34,7 +34,11 @@ export function openDirectorReview(run, read, apply) {
     .arisu-film-review summary{cursor:pointer;font-weight:600;padding:10px 12px;overflow-wrap:anywhere}
     .arisu-film-review details[open]>summary{background:color-mix(in srgb,var(--arisu-blue,#adbfd2) 12%,transparent)}
     .arisu-film-review .review-grid.prompts,.arisu-film-review .shot-info{padding:12px}
-    .arisu-film-review .shot-info{border-top:1px solid var(--edge)}
+    .arisu-film-review .shot-info{border-top:1px solid var(--edge);background:var(--comfy-input-bg,#222)}
+    .arisu-film-review .shot-info section:last-child{grid-column:1/-1}
+    .arisu-film-review .prompts section{padding:8px 10px;border-inline-start:2px solid var(--edge);background:var(--comfy-input-bg,#222)}
+    .arisu-film-review .prompts section:last-child{border-inline-start-color:var(--arisu-blue)}
+    .arisu-film-review h3{font-size:14px;margin:0 0 8px}
     .arisu-film-review strong{color:color-mix(in srgb,var(--input-text,#ddd) 82%,var(--comfy-menu-bg,#222));overflow-wrap:anywhere}
     .arisu-film-review .prompts section:last-child strong{color:var(--arisu-blue,#b5cbdf)}
 

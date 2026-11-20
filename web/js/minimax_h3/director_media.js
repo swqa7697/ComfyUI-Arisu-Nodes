@@ -11,7 +11,7 @@ export function moveItem(list, index, offset) {
 
 const filename = (asset) => asset.path.split(/[\\/]/).at(-1);
 function preview(asset) {
-  if (asset.kind === 'audio') return el('span', { className: 'asset-thumb audio', textContent: 'Audio' });
+  if (asset.kind === 'audio') return el('span', { className: 'asset-thumb audio', textContent: '♫', ariaHidden: 'true' });
   const crop = asset.crop && ['left', 'top', 'width', 'height'].map((k) => asset.crop[k]).join(',');
   return el('img', {
     className: 'asset-thumb',
@@ -31,7 +31,7 @@ function task(ui) {
   return { signal: controller.signal, current: () => !controller.signal.aborted };
 }
 
-async function browse(ui, id) {
+export async function browseAssets(ui, id) {
   const work = task(ui);
   const doc = ui.read(),
     old = doc.assets.find((a) => a.id === id),
@@ -80,11 +80,17 @@ async function browse(ui, id) {
   );
 }
 
+// Bindings can override the selected region and soundtrack of a library asset.
+function boundMedia(asset, binding = {}) {
+  const { crop = asset.crop, crop_basis_ratio = asset.crop_basis_ratio, clip = asset.clip, include_audio = asset.include_audio } = binding;
+  return { ...asset, crop, crop_basis_ratio, clip, include_audio };
+}
+
 async function edit(ui, asset, binding, segmentId) {
   const work = task(ui);
   const ratio = ui.read().film.aspect_ratio;
   const keyframe = binding && ['first', 'last'].includes(binding.role);
-  const item = { ...asset, ...binding };
+  const item = boundMedia(asset, binding);
   if (keyframe && item.crop_basis_ratio !== ratio) {
     const info = await probe(item, work.signal);
     if (!work.current()) return;
@@ -108,6 +114,22 @@ async function edit(ui, asset, binding, segmentId) {
   });
 }
 
+function mediaHeading(ui, asset, detail, binding, segmentId) {
+  const command = asset.kind === 'image' ? 'Edit crop' : 'Edit clip';
+  const editButton = ui.button('', () => edit(ui, asset, binding, segmentId));
+  editButton.className = 'media-preview';
+  editButton.title = editButton.ariaLabel = command + ' · ' + filename(asset);
+  editButton.append(preview(boundMedia(asset, binding)), el('span', { textContent: command }));
+  return el('div', { className: 'asset-title' }, [
+    editButton,
+    el('div', { className: 'asset-info' }, [
+      el('small', { className: 'media-kind', textContent: asset.kind + (asset.muted ? ' · muted' : '') }),
+      el('strong', { textContent: filename(asset), title: asset.path }),
+      ...(detail ? [el('small', { textContent: detail })] : []),
+    ]),
+  ]);
+}
+
 export function libraryView(ui, doc) {
   const rows = doc.assets.map((asset, i) => {
     const uses = doc.segments.flatMap((s, index) => (s.bindings.some((b) => b.asset_id === asset.id) ? [String(index + 1)] : []));
@@ -115,35 +137,34 @@ export function libraryView(ui, doc) {
       ui.change((next) => {
         next.assets.find((a) => a.id === asset.id)[key] = value;
       }, false);
-    const card = el('article', { className: 'card' }, [
-      el('div', { className: 'asset-title' }, [
-        preview(asset),
-        el('strong', { textContent: filename(asset), title: asset.path }),
-        el('small', { textContent: asset.kind }),
-      ]),
-      el('small', { textContent: uses.length ? 'Used by segments ' + uses.join(', ') : 'Available to the director · unbound' }),
+    const card = el('article', { className: asset.muted ? 'card muted' : 'card' }, [
+      mediaHeading(ui, asset, uses.length ? 'Used by segments ' + uses.join(', ') : 'Unbound'),
       ui.field('Asset notes', asset.note, (value) => update('note', value)),
-      el('div', { className: 'actions' }, [
-        ui.button(asset.kind === 'image' ? 'Edit crop' : 'Edit clip', () => edit(ui, asset)),
-        ui.button('Reselect', () => browse(ui, asset.id)),
-        ui.check('Mute', asset.muted, (v) =>
-          ui.change((next) => {
-            next.assets[i].muted = v;
-          }),
-        ),
-        ...(asset.kind === 'video'
-          ? [
-              ui.check('Soundtrack', asset.include_audio, (v) =>
-                ui.change((next) => {
-                  next.assets[i].include_audio = v;
-                }),
-              ),
-            ]
-          : []),
-        ...ui.moves(doc.assets, i, (delta) => ui.change((next) => moveItem(next.assets, i, delta))),
-        ui.button('Remove', () => ui.change((next) => next.assets.splice(i, 1))),
+      el('div', { className: 'card-tools' }, [
+        el('div', { className: 'actions' }, [
+          ui.button('Reselect', () => browseAssets(ui, asset.id)),
+          ui.check('Mute', asset.muted, (v) =>
+            ui.change((next) => {
+              next.assets[i].muted = v;
+            }),
+          ),
+          ...(asset.kind === 'video'
+            ? [
+                ui.check('Soundtrack', asset.include_audio, (v) =>
+                  ui.change((next) => {
+                    next.assets[i].include_audio = v;
+                  }),
+                ),
+              ]
+            : []),
+        ]),
+        el('div', { className: 'actions' }, [
+          ...ui.moves(doc.assets, i, (delta) => ui.change((next) => moveItem(next.assets, i, delta))),
+          ui.button('Remove', () => ui.change((next) => next.assets.splice(i, 1))),
+        ]),
       ]),
     ]);
+    card.dataset.kind = asset.kind;
     card.dataset.asset = asset.id;
     return card;
   });
@@ -152,11 +173,10 @@ export function libraryView(ui, doc) {
     doc.segments.flatMap((s) => s.bindings.map((b) => b.asset_id)).filter((id) => !doc.assets.some((a) => a.id === id)),
   );
   return [
-    el('div', { className: 'actions' }, [ui.button('Browse assets', () => browse(ui), doc.assets.length >= 256)]),
     ...(rows.length
       ? [el('div', { className: 'library' }, rows)]
-      : [el('p', { className: 'meta', textContent: 'Add images, video or audio for planning and segment bindings.' })]),
-    ...[...missing].map((id) => ui.button('Reselect missing asset ' + id, () => browse(ui, id))),
+      : [el('p', { className: 'empty-library meta', textContent: 'Browse images, video or audio to add your first asset.' })]),
+    ...[...missing].map((id) => ui.button('Reselect missing asset ' + id, () => browseAssets(ui, id))),
   ];
 }
 
@@ -166,8 +186,8 @@ export function bindingView(ui, doc, segment) {
     const asset = doc.assets.find((a) => a.id === b.asset_id);
     const opts = asset?.kind === 'image' ? ['first', 'last', 'image'] : [asset?.kind ?? b.role];
     const override = ['clip', 'crop', 'include_audio'].some((k) => Object.hasOwn(b, k));
-    const card = el('div', { className: 'binding card' }, [
-      el('strong', { textContent: asset ? filename(asset) + (asset.muted ? ' · muted' : '') : 'Missing asset ' + b.asset_id }),
+    const card = el('div', { className: asset?.muted ? 'binding card muted' : 'binding card' }, [
+      asset ? mediaHeading(ui, asset, '', b, segment.id) : el('strong', { textContent: 'Missing asset ' + b.asset_id }),
       ui.select(
         'Role',
         b.role,
@@ -178,9 +198,6 @@ export function bindingView(ui, doc, segment) {
           }),
       ),
       el('div', { className: 'actions' }, [
-        ...(asset
-          ? [ui.button(asset.kind === 'image' ? 'Edit segment crop' : 'Edit segment clip', () => edit(ui, asset, b, segment.id))]
-          : []),
         ...(asset?.kind === 'video'
           ? [
               ui.check('Segment soundtrack', b.include_audio ?? asset.include_audio, (v) =>
@@ -203,6 +220,7 @@ export function bindingView(ui, doc, segment) {
         ui.button('Unbind', () => ui.change((next) => locate(next).splice(i, 1))),
       ]),
     ]);
+    card.dataset.kind = asset?.kind ?? '';
     card.dataset.asset = b.asset_id;
     return card;
   });
@@ -220,6 +238,6 @@ export function bindingView(ui, doc, segment) {
           }),
         ]
       : []),
-    ui.button('Add to library…', () => browse(ui), doc.assets.length >= 256),
+    ui.button('Add to library…', () => browseAssets(ui), doc.assets.length >= 256),
   ]);
 }

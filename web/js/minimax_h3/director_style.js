@@ -56,26 +56,54 @@ export const DIRECTOR_STYLE = `
  .arisu-director .list{grid-template-columns:repeat(auto-fit,minmax(min(150px,100%),1fr))}
  .arisu-director .editor{padding:12px}
 }
-dialog.arisu-director-dialog{position:fixed;inset:0;margin:auto;width:min(850px,calc(100vw - 32px));max-height:calc(100dvh - 40px);padding:0;border:1px solid var(--line);background:var(--base)}
+dialog.arisu-director-dialog{
+ position:fixed;inset:0;margin:auto;width:min(860px,calc(100vw - 24px));max-height:calc(100dvh - 24px);overflow:hidden;
+ padding:0;border:1px solid var(--line);background:var(--base);font-family:inherit
+}
+dialog.arisu-director-dialog.compact{width:min(640px,calc(100vw - 24px))}
 dialog.arisu-director-dialog[open]{display:flex;flex-direction:column}
-.arisu-director-dialog .dialog-head,.arisu-director-dialog .dialog-foot{flex:none;padding:14px 20px;background:var(--panel)}
-.arisu-director-dialog .dialog-head{border-bottom:1px solid var(--edge)}
-.arisu-director-dialog .dialog-foot{border-top:1px solid var(--edge)}
-.arisu-director-dialog .dialog-body{padding:18px 20px;overflow:auto;scrollbar-width:thin;overscroll-behavior:contain}
-.arisu-director-dialog .columns,.arisu-director-dialog .library{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));align-items:start;gap:18px}
-.arisu-director-dialog .library{grid-template-columns:repeat(auto-fit,minmax(min(320px,100%),1fr))}
-.arisu-director-dialog .columns>section+section{border-inline-start:1px solid var(--edge);padding-inline-start:18px}
-.arisu-director-dialog .paired{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(135px,100%),1fr));gap:10px}
-.arisu-director-dialog .card{display:grid;gap:8px;border:1px solid var(--edge);border-radius:6px;background:var(--panel);padding:12px}
-.arisu-director-dialog strong{overflow-wrap:anywhere}
-.arisu-director-dialog .asset-thumb{width:58px;height:43px;border-radius:3px;object-fit:contain;background:var(--well)}
-.arisu-director-dialog .asset-thumb.audio{display:grid;place-items:center}
-.arisu-director-dialog .check{display:inline-flex;align-items:center;gap:6px;cursor:pointer}
-.arisu-director-dialog .current-prompt{white-space:pre-wrap;max-height:25vh;overflow:auto;background:var(--panel);padding:10px;border-radius:4px}
-.arisu-director-dialog .dialog-foot .field>span,.arisu-director-dialog .dialog-foot select{flex:none;width:auto}
+.arisu-director-dialog .dialog-head,.arisu-director-dialog .dialog-foot{flex:none;padding:10px 14px}
+.arisu-director-dialog .dialog-head{border-bottom:1px solid var(--line)}
+.arisu-director-dialog .dialog-title{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
+.arisu-director-dialog .dialog-title h2{font-size:15px;color:var(--fg-color,#eee)}
+.arisu-director-dialog .dialog-close{width:32px;font-size:16px;line-height:1}
+.arisu-director-dialog .dialog-foot{border-top:1px solid var(--line)}
+.arisu-director-dialog .dialog-body{padding:16px;min-height:0;overflow:auto;scrollbar-width:thin;overscroll-behavior:contain}
+.arisu-director-dialog .columns{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));align-items:start;gap:18px}
+.arisu-director-dialog .columns>:nth-child(2){border-inline-start:1px solid var(--edge);padding-inline-start:18px}
+.arisu-director-dialog .stack{gap:10px}
+.arisu-director-dialog h3{color:var(--fg-color,#eee);font-size:13px}
+.arisu-director-dialog .stack>section+section{padding-top:12px;border-top:1px solid var(--edge)}
+.arisu-director-dialog .paired{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(135px,100%),1fr));gap:8px}
+.arisu-director-dialog .field>span,.arisu-director-dialog button{font-weight:400}
 .arisu-director-dialog .dialog-foot .field{display:flex;align-items:center;gap:6px}
+.arisu-director-dialog .dialog-foot .field>select{width:auto}
+.arisu-director-dialog .library{display:grid;gap:8px}
+.arisu-director-dialog .card{
+ --kind:var(--edge);display:grid;gap:10px;padding:10px 12px;background:var(--panel);border:1px solid var(--edge);
+ border-inline-start:3px solid var(--kind);border-radius:4px
+}
+.arisu-director-dialog .card[data-kind=image]{--kind:var(--arisu-image)}
+.arisu-director-dialog .card[data-kind=video]{--kind:var(--arisu-video)}
+.arisu-director-dialog .card[data-kind=audio]{--kind:var(--arisu-audio)}
+.arisu-director-dialog .library .card{grid-template-columns:minmax(0,1fr) minmax(0,1fr);align-items:center}
+.arisu-director-dialog .asset-title{display:grid;grid-template-columns:66px minmax(0,1fr);gap:10px}
+.arisu-director-dialog .asset-info{display:grid;gap:2px}
+.arisu-director-dialog strong{overflow-wrap:anywhere}
+.arisu-director-dialog .media-kind{color:var(--kind);text-transform:capitalize}
+.arisu-director-dialog .media-preview{display:grid;justify-items:stretch;overflow:hidden;padding:0;font-size:11px}
+.arisu-director-dialog .media-preview>span:last-child{padding:2px 0}
+.arisu-director-dialog .asset-thumb{width:100%;height:40px;object-fit:contain;background:color-mix(in srgb,var(--kind) 12%,var(--base))}
+.arisu-director-dialog .asset-thumb.audio{display:grid;place-items:center;color:var(--kind);font-size:19px}
+.arisu-director-dialog .card-tools{grid-column:1/-1;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px}
+.arisu-director-dialog .card.muted .asset-info strong{text-decoration:line-through}
+.arisu-director-dialog .empty-library{display:grid;place-items:center;text-align:center;min-height:100px;padding:12px;background:var(--well);border:1px solid var(--edge);border-radius:4px}
+.arisu-director-dialog .check{display:inline-flex;align-items:center;gap:6px;cursor:pointer}
+.arisu-director-dialog .current-prompt{white-space:pre-wrap;max-height:25dvh;overflow:auto;background:var(--panel);padding:10px 12px;border-inline-start:2px solid var(--accent)}
+.arisu-director-dialog details{border-top:1px solid var(--edge);padding-top:8px}
+.arisu-director-dialog details p{white-space:pre-wrap;margin-block-start:6px}
 @media(max-width:640px){
- .arisu-director-dialog .columns,.arisu-director-dialog .library{grid-template-columns:minmax(0,1fr)}
- .arisu-director-dialog .columns>section+section{border-inline-start:0;padding:12px 0 0;border-top:1px solid var(--edge)}
+ .arisu-director-dialog .columns,.arisu-director-dialog .library .card{grid-template-columns:minmax(0,1fr)}
+ .arisu-director-dialog .columns>:nth-child(2){border-inline-start:0;padding:12px 0 0;border-top:1px solid var(--edge)}
 }
 `;

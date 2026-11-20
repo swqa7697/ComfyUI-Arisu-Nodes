@@ -5,7 +5,7 @@ Add **MiniMax H3 Director Workbench** to plan a film and render its segments in 
 ## Plan the film
 
 1. Enter the creative brief on the node. Open **Film setup** to edit the story requirements, trigger words, continuity notes, canvas, and generation range together. An optional target runtime can be approximate.
-2. Open **Asset library** to add images, videos, or audio. Give each asset a note. Set its default crop or clip and choose whether to include a video’s soundtrack.
+2. Open **Asset library** to add images, videos, or audio. Give each asset a note. Select its thumbnail to edit the default crop or clip. For video, choose whether to include its soundtrack.
 3. Choose **Plan the film**. The selected Workbench agent prepares the outline, continuity decisions, requirement coverage, and all segment prompts in one task. Agent setup is shared with Prompt Workbench.
 4. Review the plan and its estimated runtime, then apply it in one edit. Undo restores the previous plan. If a plan exceeds the agent budget, reduce the brief or the requested scope and try again.
 5. A film-wide writing skill applies to all segments except those with a locked choice. Automatic selection records the skill and its reason for each segment.
@@ -14,7 +14,7 @@ A film can contain up to 128 segments and 256 library assets. The saved film doc
 
 ## Review a segment
 
-Choose a row in **Sequence** to edit its finalized prompt or render that segment. Use **+ Add** to write a segment manually. Open **Direction & bindings** to edit the intent, opening and closing states, timing, transition, and bound assets, or to reorder the segment. Edits in these dialogs are saved as you work. Close the dialog or press Escape to return to the sequence. Library assets are available to the director during planning. Only the current segment’s bindings are sent to Hybrid. A segment can override a library crop, clip interval, or video soundtrack setting.
+Choose a row in **Sequence** to edit its finalized prompt or render that segment. Use **+ Add** to write a segment manually. Open **Direction & bindings** to edit the intent, opening and closing states, timing, transition, and bound assets, or to reorder the segment. Edits in these dialogs are saved as you work. Close the dialog or press Escape to return to the sequence. Library assets are available to the director during planning. Only the current segment’s bindings are sent to Hybrid. Select a bound thumbnail to override the crop or clip interval for that segment. Video bindings also have a segment soundtrack setting.
 
 Prompt tags follow the segment’s input order. For example, `<Picture 1>` refers to the first numbered picture for the selected keyframe tag setting. A saved stable tag such as `<Picture:umbrella>` follows the asset with ID `umbrella` as bindings move. Reselect missing or changed sources before rendering.
 

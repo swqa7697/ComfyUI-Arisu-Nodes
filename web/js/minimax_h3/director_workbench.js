@@ -6,7 +6,7 @@ import { installSelectionGuards, preservingSelections, registerSelectionOwner } 
 import { hideWidget, setWidget } from '../common/widgets.js';
 import { agentStatus, openAgentSettings } from './agent_settings.js';
 import { ASPECTS, clearLocations, readDocument, secondsLabel, stableTags, timeline, timing } from './director_document.js';
-import { bindingView, libraryView, moveItem } from './director_media.js';
+import { bindingView, browseAssets, libraryView, moveItem } from './director_media.js';
 import {
   installDirectorQueue,
   refreshRenderTakes,
@@ -157,22 +157,24 @@ function filmView(ui, doc) {
         ui.field('Trigger words', f.triggers, update('triggers')),
         ui.field('Character, picture and sound continuity', f.continuity, update('continuity'), { multiline: true }),
       ]),
-      group('Canvas & timing', [
-        paired(
-          ui.select(
-            'Film aspect ratio',
-            f.aspect_ratio,
-            ASPECTS.map((k) => [k, k]),
-            update('aspect_ratio'),
+      el('div', { className: 'stack' }, [
+        group('Canvas & timing', [
+          paired(
+            ui.select(
+              'Film aspect ratio',
+              f.aspect_ratio,
+              ASPECTS.map((k) => [k, k]),
+              update('aspect_ratio'),
+            ),
+            ui.field('Megapixels', f.megapixels, update('megapixels'), { number: true }),
           ),
-          ui.field('Megapixels', f.megapixels, update('megapixels'), { number: true }),
-        ),
-        paired(
-          ui.field('Minimum generation (s)', f.min_seconds, update('min_seconds'), { number: true }),
-          ui.field('Maximum generation (s)', f.max_seconds, update('max_seconds'), { number: true }),
-        ),
-        warning,
-        ui.field('Target film runtime (optional)', f.target_runtime, update('target_runtime')),
+          paired(
+            ui.field('Minimum generation (s)', f.min_seconds, update('min_seconds'), { number: true }),
+            ui.field('Maximum generation (s)', f.max_seconds, update('max_seconds'), { number: true }),
+          ),
+          warning,
+          ui.field('Target film runtime (optional)', f.target_runtime, update('target_runtime')),
+        ]),
         group('Planning', [
           paired(
             ui.select('Writing skill for the film', f.writing_skill, skillChoices(ui.state, f.writing_skill), update('writing_skill')),
@@ -253,39 +255,58 @@ function directionView(ui, doc, seg) {
     );
   return [
     columns(
-      group('Shot direction', [
-        field('Intent', 'intent'),
-        paired(
-          field('Generation length (s)', 'seconds', { number: true }),
-          ui.select(
-            'Transition',
-            seg.transition,
-            [
-              ['cut', 'Hard cut'],
-              ['continuation', 'Continuation'],
-            ],
-            (v) =>
-              modify((s) => {
-                s.transition = v;
-                s.overlap_frames = v === 'cut' ? 0 : 22;
-              }),
+      el('div', { className: 'stack' }, [
+        group('Shot direction', [
+          field('Intent', 'intent'),
+          paired(
+            field('Generation length (s)', 'seconds', { number: true }),
+            ui.select(
+              'Transition',
+              seg.transition,
+              [
+                ['cut', 'Hard cut'],
+                ['continuation', 'Continuation'],
+              ],
+              (v) =>
+                modify((s) => {
+                  s.transition = v;
+                  s.overlap_frames = v === 'cut' ? 0 : 22;
+                }),
+            ),
           ),
-        ),
-        ...(seg.transition === 'continuation'
-          ? [
-              ui.select(
-                'Overlap (frames)',
-                String(seg.overlap_frames),
-                [5, 22, 39, 56].map((n) => [String(n), String(n)]),
-                (v) =>
-                  modify((s) => {
-                    s.overlap_frames = Number(v);
-                  }),
-              ),
-            ]
-          : []),
-        field('Opening state', 'opening'),
-        field('Closing state', 'closing'),
+          ...(seg.transition === 'continuation'
+            ? [
+                ui.select(
+                  'Overlap (frames)',
+                  String(seg.overlap_frames),
+                  [5, 22, 39, 56].map((n) => [String(n), String(n)]),
+                  (v) =>
+                    modify((s) => {
+                      s.overlap_frames = Number(v);
+                    }),
+                ),
+              ]
+            : []),
+          field('Opening state', 'opening'),
+          field('Closing state', 'closing'),
+        ]),
+        group('Sequence order', [
+          row([
+            ...ui.moves(doc.segments, index, (delta) => ui.change((next) => moveItem(next.segments, index, delta))),
+            ui.button('Remove segment', () => {
+              ui.state.dialog.close();
+              ui.change((next) => {
+                next.segments.splice(index, 1);
+                next.selected = next.segments[Math.min(index, next.segments.length - 1)]?.id ?? '';
+                for (const ids of Object.values(next.coverage))
+                  if (Array.isArray(ids)) {
+                    const i = ids.indexOf(seg.id);
+                    if (i >= 0) ids.splice(i, 1);
+                  }
+              });
+            }),
+          ]),
+        ]),
       ]),
       el('section', { className: 'stack' }, [
         group('Asset bindings', [bindingView(ui, doc, seg)]),
@@ -306,27 +327,10 @@ function directionView(ui, doc, seg) {
               }),
             !seg.skill,
           ),
-          el('small', { textContent: seg.skill_reason }),
+          ...(seg.skill_reason ? [el('small', { textContent: seg.skill_reason })] : []),
         ]),
       ]),
     ),
-    group('Sequence order', [
-      row([
-        ...ui.moves(doc.segments, index, (delta) => ui.change((next) => moveItem(next.segments, index, delta))),
-        ui.button('Remove segment', () => {
-          ui.state.dialog.close();
-          ui.change((next) => {
-            next.segments.splice(index, 1);
-            next.selected = next.segments[Math.min(index, next.segments.length - 1)]?.id ?? '';
-            for (const ids of Object.values(next.coverage))
-              if (Array.isArray(ids)) {
-                const i = ids.indexOf(seg.id);
-                if (i >= 0) ids.splice(i, 1);
-              }
-          });
-        }),
-      ]),
-    ]),
   ];
 }
 
@@ -492,11 +496,17 @@ function openEditor(ui, title) {
   const { state, node } = ui;
   if (state.dialog?.open) return;
   const dialog = el('dialog', { className: 'arisu-director-dialog', ariaLabel: title });
-  const close = ui.button('Close', () => dialog.close());
+  dialog.classList.toggle('compact', title === REVISION || title === LIBRARY);
+  const close = ui.button('×', () => dialog.close());
+  close.title = close.ariaLabel = 'Close';
+  close.className = 'dialog-close';
   const body = el('div', { className: 'dialog-body stack' });
   const foot = el('div', { className: 'dialog-foot bar' });
   const heading = text('h2', title);
-  const head = el('div', { className: 'dialog-head bar' }, [heading, close]);
+  const context = text('small', '');
+  const browse = title === LIBRARY ? ui.button('Browse assets', () => browseAssets(ui)) : null;
+  const headActions = row(browse ? [browse, close] : [close]);
+  const head = el('header', { className: 'dialog-head bar' }, [el('div', { className: 'dialog-title' }, [heading, context]), headActions]);
   const segmentId = ui.read().selected;
   dialog.append(head, body, foot);
   closeOnBackdropClick(dialog);
@@ -508,8 +518,12 @@ function openEditor(ui, title) {
       dialog.close();
       return;
     }
-    if (title === DIRECTION || title === REVISION) heading.textContent = title + ' · Segment ' + (doc.segments.indexOf(seg) + 1);
     const restore = retainFocus(dialog);
+    if (title === DIRECTION || title === REVISION) context.textContent = 'Segment ' + (doc.segments.indexOf(seg) + 1);
+    if (title === LIBRARY) {
+      context.textContent = doc.assets.length + (doc.assets.length === 1 ? ' asset' : ' assets');
+      browse.disabled = doc.assets.length >= 256;
+    }
     const top = body.scrollTop;
     const planOpen = body.querySelector('details')?.open;
     if (title === FILM) body.replaceChildren(...filmView(ui, doc));
@@ -564,7 +578,9 @@ function openEditor(ui, title) {
   state.refreshEditor(ui.read());
   document.body.append(dialog);
   dialog.showModal();
-  (body.querySelector('input,textarea,button,select') ?? close).focus({ preventScroll: true });
+  ((browse && !browse.disabled ? browse : body.querySelector('input,textarea,button:enabled,select')) ?? close).focus({
+    preventScroll: true,
+  });
 }
 
 function sequenceView(ui, doc, times) {
