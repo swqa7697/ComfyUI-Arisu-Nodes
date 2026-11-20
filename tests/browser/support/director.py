@@ -93,8 +93,8 @@ def inspect_render_recovery(page: Page, director_id: str):
         output,
     )
     try:
-        first = page.get_by_role("button", name="1. Launch the paper boat", exact=False)
-        second = page.get_by_role("button", name="2. Follow the boat", exact=False)
+        first = page.get_by_role("button", name="01 Launch the paper boat", exact=False)
+        second = page.get_by_role("button", name="02 Follow the boat", exact=False)
         first.click()
         remaining = page.get_by_role("button", name="Render remaining segments", exact=True)
         current = page.get_by_role("button", name="Render current segment", exact=True)

@@ -1,7 +1,7 @@
 import { api } from '../../../../scripts/api.js';
 import { app } from '../../../../scripts/app.js';
 import { forwardToCanvas, keepScrollWheel } from '../common/canvas_gestures.js';
-import { el } from '../common/dom.js';
+import { closeOnBackdropClick, el } from '../common/dom.js';
 import { installSelectionGuards, preservingSelections, registerSelectionOwner } from '../common/selection_context.js';
 import { hideWidget, setWidget } from '../common/widgets.js';
 import { agentStatus, openAgentSettings } from './agent_settings.js';
@@ -17,6 +17,7 @@ import {
   verifiedPredecessor,
 } from './director_render.js';
 import { applyDraft, openDirectorReview } from './director_review.js';
+import { DIRECTOR_STYLE } from './director_style.js';
 import { resourceId } from './media_selection.js';
 import { captureWorkbenchPrompt, executionTarget } from './settings_broadcast.js';
 import { generationTime, workbenchSessions } from './workbench_sessions.js';
@@ -29,26 +30,10 @@ const read = (node) => readDocument(filmWidget(node).value);
 const selected = (doc) => doc.segments.find((segment) => segment.id === doc.selected);
 const label = (textContent) => el('span', { textContent });
 const row = (children) => el('div', { className: 'actions' }, children);
-const STYLE = `
-.arisu-director{--surface:var(--comfy-input-bg,#222);--line:var(--border-color,#505050);--accent:var(--arisu-accent,#8ebcff);
- box-sizing:border-box;display:flex;flex-direction:column;gap:8px;padding:10px;width:100%;height:100%;min-width:0;
- background:var(--comfy-menu-bg,#343434);color:var(--input-text,#ddd);font:12px/1.45 Arial,system-ui,sans-serif;}
-.arisu-director *{box-sizing:border-box}.arisu-director nav,.arisu-director .actions,.arisu-director .asset-title{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
-.arisu-director nav{border-bottom:1px solid var(--line);padding-bottom:7px}.arisu-director .scroll{flex:1;min-height:0;overflow:auto;scrollbar-width:thin;padding:2px 4px}
-.arisu-director :is(button,input,textarea,select){color:inherit;background:var(--surface);border:1px solid var(--line);border-radius:4px;padding:6px 9px;font:inherit}
-.arisu-director button,.arisu-director select,.arisu-director summary{cursor:pointer}.arisu-director :disabled{opacity:.5;cursor:default}
-.arisu-director :focus-visible{outline:2px solid var(--accent);outline-offset:1px}.arisu-director button[aria-pressed="true"],.arisu-director .primary{border-color:var(--accent)}
-.arisu-director button:enabled:hover{background:color-mix(in srgb,var(--surface) 85%,var(--accent));border-color:var(--accent)}
-.arisu-director .field,.arisu-director .card{display:flex;flex-direction:column;gap:4px;margin:0 0 8px}.arisu-director .field>span,.arisu-director small{color:var(--descrip-text,#bbb)}
-.arisu-director .field>:is(input,select,textarea){width:100%;min-width:0}.arisu-director textarea{resize:vertical;min-height:64px;line-height:1.5}
-.arisu-director .prompt textarea{min-height:116px}.arisu-director .card,.arisu-director details{padding:8px;border:1px solid var(--line);border-radius:5px}
-.arisu-director details{margin:8px 0}.arisu-director details[open]>summary{margin-bottom:8px}
-.arisu-director .list{display:grid;gap:4px;margin:7px 0 12px}.arisu-director .list button{text-align:left;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px}
-.arisu-director .list button span,.arisu-director .status,.arisu-director strong{overflow-wrap:anywhere}.arisu-director footer{border-top:1px solid var(--line);padding-top:6px}
-.arisu-director .status{margin-top:4px;min-height:1.4em}.arisu-director .asset-thumb{width:58px;height:43px;object-fit:contain;background:var(--surface)}
-.arisu-director .asset-thumb.audio{display:grid;place-items:center}.arisu-director video{display:block;width:100%;max-height:260px}
-.arisu-director .paired{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px}
-`;
+const text = (tag, textContent, className = '') => el(tag, { textContent, className });
+const group = (title, children) => el('section', { className: 'stack' }, [text('h3', title), ...children]);
+const meta = (value) => text('p', value, 'meta');
+const columns = (...children) => el('div', { className: 'columns' }, children);
 
 function notify(severity, detail) {
   app.extensionManager?.toast?.add?.({ severity, summary: 'Director Workbench', detail, life: 8000 });
@@ -87,16 +72,14 @@ function controls(node) {
       },
     });
   }
-  function field(name, value, update, { multiline = false, number = false, refresh = false } = {}) {
+  function field(name, value, update, { multiline = false, number = false } = {}) {
     const input = el(multiline ? 'textarea' : 'input', { ariaLabel: name, value: value ?? '' });
-    if (number) input.type = 'number';
-    if (number) input.step = 'any';
-    const save = () => update(number ? Number(input.value) : input.value);
-    if (number) input.onchange = save;
-    else {
-      input.oninput = save;
-      if (refresh) input.onchange = () => render(node);
-    }
+    if (multiline) input.onwheel = keepScrollWheel;
+    if (number) {
+      input.type = 'number';
+      input.step = 'any';
+      input.onchange = () => update(Number(input.value));
+    } else input.oninput = () => update(input.value);
     return el('label', { className: 'field' }, [label(name), input]);
   }
   function select(name, value, choices, update) {
@@ -112,7 +95,7 @@ function controls(node) {
   function check(name, checked, update, disabled = false) {
     const input = el('input', { type: 'checkbox', checked: !!checked, ariaLabel: name, disabled });
     input.onchange = () => update(input.checked);
-    return el('label', {}, [input, label(name)]);
+    return el('label', { className: 'check' }, [input, label(name)]);
   }
   return {
     node,
@@ -144,63 +127,76 @@ function skillChoices(state, current) {
 }
 function filmView(ui, doc) {
   const f = doc.film;
-  const update =
-    (key, refresh = false) =>
-    (v) =>
-      ui.change((next) => {
-        next.film[key] = v;
-      }, refresh);
+  const warning = el('p', {
+    role: 'status',
+    className: 'meta',
+    textContent: 'No valid H3 frame count fits. Adjust the generation range.',
+    hidden: !!timing(f, f.min_seconds),
+  });
+  const update = (key) => (value) =>
+    ui.change((next) => {
+      next.film[key] = value;
+      warning.hidden = !!timing(next.film, next.film.min_seconds);
+    }, false);
   return [
-    ui.field('Creative brief', f.brief, update('brief'), { multiline: true }),
-    ui.field(
-      'Required story elements (one per line)',
-      f.requirements.join('\n'),
-      (v) =>
-        update('requirements')(
-          v
-            .split('\n')
-            .map((r) => r.trim())
-            .filter(Boolean),
+    columns(
+      group('Story direction', [
+        ui.field('Creative brief', f.brief, update('brief'), { multiline: true }),
+        ui.field(
+          'Required story elements (one per line)',
+          f.requirements.join('\n'),
+          (v) =>
+            update('requirements')(
+              v
+                .split('\n')
+                .map((r) => r.trim())
+                .filter(Boolean),
+            ),
+          { multiline: true },
         ),
-      { multiline: true },
-    ),
-    ui.field('Trigger words', f.triggers, update('triggers')),
-    ui.field('Character, picture and sound continuity', f.continuity, update('continuity'), { multiline: true }),
-    paired(
-      ui.select(
-        'Film aspect ratio',
-        f.aspect_ratio,
-        ASPECTS.map((k) => [k, k]),
-        update('aspect_ratio', true),
-      ),
-      ui.field('Megapixels', f.megapixels, update('megapixels', true), { number: true }),
-    ),
-    paired(
-      ui.field('Minimum generation (s)', f.min_seconds, update('min_seconds', true), { number: true }),
-      ui.field('Maximum generation (s)', f.max_seconds, update('max_seconds', true), { number: true }),
-    ),
-    ...(!timing(f, f.min_seconds) ? [label('No valid H3 frame count fits. Adjust the generation range.')] : []),
-    ui.field('Target film runtime (optional)', f.target_runtime, update('target_runtime')),
-    ui.field(
-      'Whole-film revision request',
-      ui.state.filmRequest,
-      (v) => {
-        ui.state.filmRequest = v;
-      },
-      { multiline: true },
-    ),
-    paired(
-      ui.select('Writing skill for the film', f.writing_skill, skillChoices(ui.state, f.writing_skill), update('writing_skill', true)),
-      ui.select(
-        'Keyframe picture tags',
-        f.frame_picture_tags,
-        [
-          ['after_refs', 'After references'],
-          ['before_refs', 'Before references'],
-          ['none', 'No keyframe tags'],
-        ],
-        update('frame_picture_tags', true),
-      ),
+        ui.field('Trigger words', f.triggers, update('triggers')),
+        ui.field('Character, picture and sound continuity', f.continuity, update('continuity'), { multiline: true }),
+      ]),
+      group('Canvas & timing', [
+        paired(
+          ui.select(
+            'Film aspect ratio',
+            f.aspect_ratio,
+            ASPECTS.map((k) => [k, k]),
+            update('aspect_ratio'),
+          ),
+          ui.field('Megapixels', f.megapixels, update('megapixels'), { number: true }),
+        ),
+        paired(
+          ui.field('Minimum generation (s)', f.min_seconds, update('min_seconds'), { number: true }),
+          ui.field('Maximum generation (s)', f.max_seconds, update('max_seconds'), { number: true }),
+        ),
+        warning,
+        ui.field('Target film runtime (optional)', f.target_runtime, update('target_runtime')),
+        group('Planning', [
+          paired(
+            ui.select('Writing skill for the film', f.writing_skill, skillChoices(ui.state, f.writing_skill), update('writing_skill')),
+            ui.select(
+              'Keyframe picture tags',
+              f.frame_picture_tags,
+              [
+                ['after_refs', 'After references'],
+                ['before_refs', 'Before references'],
+                ['none', 'No keyframe tags'],
+              ],
+              update('frame_picture_tags'),
+            ),
+          ),
+          ui.field(
+            'Whole-film revision request',
+            ui.state.filmRequest,
+            (v) => {
+              ui.state.filmRequest = v;
+            },
+            { multiline: true },
+          ),
+        ]),
+      ]),
     ),
     ...(doc.outline
       ? [
@@ -238,42 +234,8 @@ function addSegment(ui) {
   });
 }
 
-function segmentView(ui, doc) {
-  const { node, state } = ui;
-  const seg = selected(doc),
-    times = timeline(doc);
-  const rows = doc.segments.map((s, i) => {
-    const t = times[i];
-    const b = ui.button('', () =>
-      ui.change((next) => {
-        next.selected = s.id;
-      }),
-    );
-    b.ariaPressed = String(s === seg);
-    b.replaceChildren(
-      label(i + 1 + '. ' + s.intent),
-      el('small', {
-        textContent:
-          secondsLabel(t.start) +
-          ' – ' +
-          secondsLabel(t.end) +
-          ' · ' +
-          secondsLabel(t.frames ?? 0) +
-          ' generated · ' +
-          (t.outside ? 'Adjust length' : renderStatus(node, s.id, doc)),
-      }),
-    );
-    return b;
-  });
-  const children = [
-    label(
-      'Estimated film ' + secondsLabel(times.at(-1)?.end ?? 0) + (doc.film.target_runtime ? ' · Target ' + doc.film.target_runtime : ''),
-    ),
-    el('div', { className: 'list' }, rows),
-  ];
-  if (!seg) return [...children, ui.button('Add segment', () => addSegment(ui))];
-  const index = doc.segments.indexOf(seg),
-    duration = times[index];
+function directionView(ui, doc, seg) {
+  const index = doc.segments.indexOf(seg);
   const modify = (fn, refresh = true) =>
     ui.change((next) => {
       const target = next.segments.find((s) => s.id === seg.id);
@@ -286,102 +248,73 @@ function segmentView(ui, doc) {
       (v) =>
         modify((s) => {
           s[key] = v;
-        }, !!opts?.number),
+        }, false),
       opts,
     );
-  const prompt = ui.field(
-    'Finalized prompt',
-    seg.prompt,
-    (v) =>
-      modify((s) => {
-        s.prompt = stableTags(doc, seg, v);
-      }, false),
-    { multiline: true },
-  );
-  prompt.className = 'field prompt';
-  children.push(
-    prompt,
-    row([
-      ui.button('Render current segment', () => startRender(ui, false), state.rendering),
-      ui.button('Render remaining segments', () => startRender(ui, true), state.rendering),
-      ...(state.rendering ? [ui.button('Stop after current', () => stopRender(node))] : []),
-    ]),
-  );
-  const take = renderTake(node, seg.id);
-  if (
-    take?.video &&
-    take.video.type === 'output' &&
-    /^arisu_director\/[a-f0-9-]+$/.test(take.video.subfolder) &&
-    /^clip_\d+_\.(mp4|mov|webm|mkv)$/.test(take.video.filename)
-  )
-    children.push(
-      el('details', {}, [
-        el('summary', { textContent: 'Rendered footage' }),
-        el('video', {
-          controls: true,
-          preload: 'none',
-          src: api.apiURL(
-            '/view?' + new URLSearchParams({ type: 'output', subfolder: take.video.subfolder, filename: take.video.filename }),
+  return [
+    columns(
+      group('Shot direction', [
+        field('Intent', 'intent'),
+        paired(
+          field('Generation length (s)', 'seconds', { number: true }),
+          ui.select(
+            'Transition',
+            seg.transition,
+            [
+              ['cut', 'Hard cut'],
+              ['continuation', 'Continuation'],
+            ],
+            (v) =>
+              modify((s) => {
+                s.transition = v;
+                s.overlap_frames = v === 'cut' ? 0 : 22;
+              }),
           ),
-        }),
-      ]),
-    );
-  children.push(
-    el('details', {}, [
-      el('summary', { textContent: 'Segment direction · ' + secondsLabel(duration.frames ?? 0) + ' generated' }),
-      field('Intent', 'intent', { refresh: true }),
-      paired(
-        field('Generation length (s)', 'seconds', { number: true }),
-        ui.select(
-          'Transition',
-          seg.transition,
-          [
-            ['cut', 'Hard cut'],
-            ['continuation', 'Continuation'],
-          ],
-          (v) =>
-            modify((s) => {
-              s.transition = v;
-              s.overlap_frames = v === 'cut' ? 0 : 22;
-            }),
         ),
-      ),
-      ...(seg.transition === 'continuation'
-        ? [
-            ui.select(
-              'Overlap (frames)',
-              String(seg.overlap_frames),
-              [5, 22, 39, 56].map((n) => [String(n), String(n)]),
-              (v) =>
-                modify((s) => {
-                  s.overlap_frames = Number(v);
-                }),
-            ),
-          ]
-        : []),
-      field('Opening state', 'opening'),
-      field('Closing state', 'closing'),
-      ui.select('Segment writing skill', seg.skill, skillChoices(state, seg.skill), (v) =>
-        modify((s) => {
-          s.skill = v;
-          s.skill_locked = !!v;
-          s.skill_reason = v ? 'Selected manually.' : '';
-        }),
-      ),
-      ui.check(
-        'Lock this writing skill',
-        seg.skill_locked,
-        (v) =>
-          modify((s) => {
-            s.skill_locked = v;
-          }),
-        !seg.skill,
-      ),
-      el('small', { textContent: seg.skill_reason }),
+        ...(seg.transition === 'continuation'
+          ? [
+              ui.select(
+                'Overlap (frames)',
+                String(seg.overlap_frames),
+                [5, 22, 39, 56].map((n) => [String(n), String(n)]),
+                (v) =>
+                  modify((s) => {
+                    s.overlap_frames = Number(v);
+                  }),
+              ),
+            ]
+          : []),
+        field('Opening state', 'opening'),
+        field('Closing state', 'closing'),
+      ]),
+      el('section', { className: 'stack' }, [
+        group('Asset bindings', [bindingView(ui, doc, seg)]),
+        group('Writing skill', [
+          ui.select('Segment writing skill', seg.skill, skillChoices(ui.state, seg.skill), (v) =>
+            modify((s) => {
+              s.skill = v;
+              s.skill_locked = !!v;
+              s.skill_reason = v ? 'Selected manually.' : '';
+            }),
+          ),
+          ui.check(
+            'Lock this writing skill',
+            seg.skill_locked,
+            (v) =>
+              modify((s) => {
+                s.skill_locked = v;
+              }),
+            !seg.skill,
+          ),
+          el('small', { textContent: seg.skill_reason }),
+        ]),
+      ]),
+    ),
+    group('Sequence order', [
       row([
         ...ui.moves(doc.segments, index, (delta) => ui.change((next) => moveItem(next.segments, index, delta))),
-        ui.button('Add segment', () => addSegment(ui), doc.segments.length >= 128),
-        ui.button('Remove segment', () =>
+        ui.button('Remove segment', () => {
+          ui.state.dialog.close();
           ui.change((next) => {
             next.segments.splice(index, 1);
             next.selected = next.segments[Math.min(index, next.segments.length - 1)]?.id ?? '';
@@ -390,13 +323,17 @@ function segmentView(ui, doc) {
                 const i = ids.indexOf(seg.id);
                 if (i >= 0) ids.splice(i, 1);
               }
-          }),
-        ),
+          });
+        }),
       ]),
     ]),
-    bindingView(ui, doc, seg),
-  );
-  children.push(
+  ];
+}
+
+function revisionView(ui, seg) {
+  const { state } = ui;
+  const children = [
+    group('Current prompt', [text('p', seg.prompt || 'No finalized prompt yet.', 'current-prompt')]),
     ui.field(
       'Revision request',
       state.request,
@@ -423,10 +360,10 @@ function segmentView(ui, doc) {
       ],
       (v) => {
         state.motion = v;
-        render(node);
+        render(ui.node);
       },
     ),
-  );
+  ];
   if (state.motion)
     children.push(
       ui.field('Actual visual notes', state.visual, (v) => {
@@ -438,7 +375,6 @@ function segmentView(ui, doc) {
     );
   return children;
 }
-
 async function startRender(ui, remaining) {
   ui.state.rendering = true;
   render(ui.node);
@@ -511,75 +447,319 @@ function review(ui) {
   );
 }
 
+function action(ui, name, fn, disabled = false) {
+  const button = ui.button(name, fn, disabled);
+  button.className = 'primary';
+  return button;
+}
+
+const FILM = 'Film setup',
+  LIBRARY = 'Asset library',
+  DIRECTION = 'Direction & bindings',
+  REVISION = 'Revise prompt';
+
+function launcher(ui, title) {
+  const button = ui.button(title, () => openEditor(ui, title));
+  button.dataset.editor = title;
+  button.setAttribute('aria-haspopup', 'dialog');
+  return button;
+}
+
+// A render can follow a select change, a graph edit, or an asynchronous status update.
+// Keep the active control, caret and scroll when its part of the form still exists.
+function retainFocus(root) {
+  const active = document.activeElement;
+  if (!root.contains(active)) return () => {};
+  const asset = active.closest('[data-asset]')?.dataset.asset;
+  const key = (control) => control.dataset.focus ?? control.ariaLabel ?? control.textContent;
+  const selector = 'button,input,textarea,select,summary';
+  const matches = () =>
+    Array.from(root.querySelectorAll(selector)).filter(
+      (control) =>
+        control.tagName === active.tagName && key(control) === key(active) && control.closest('[data-asset]')?.dataset.asset === asset,
+    );
+  const index = matches().indexOf(active);
+  const start = active.selectionStart,
+    end = active.selectionEnd;
+  return () => {
+    const next = matches()[index];
+    next?.focus({ preventScroll: true });
+    if (start != null && next?.setSelectionRange) next.setSelectionRange(start, end);
+  };
+}
+
+function openEditor(ui, title) {
+  const { state, node } = ui;
+  if (state.dialog?.open) return;
+  const dialog = el('dialog', { className: 'arisu-director-dialog', ariaLabel: title });
+  const close = ui.button('Close', () => dialog.close());
+  const body = el('div', { className: 'dialog-body stack' });
+  const foot = el('div', { className: 'dialog-foot bar' });
+  const heading = text('h2', title);
+  const head = el('div', { className: 'dialog-head bar' }, [heading, close]);
+  const segmentId = ui.read().selected;
+  dialog.append(head, body, foot);
+  closeOnBackdropClick(dialog);
+  dialog.addEventListener('keydown', (event) => event.stopPropagation());
+  state.dialog = dialog;
+  state.refreshEditor = (doc) => {
+    const seg = selected(doc);
+    if ((title === DIRECTION || title === REVISION) && (!seg || seg.id !== segmentId)) {
+      dialog.close();
+      return;
+    }
+    if (title === DIRECTION || title === REVISION) heading.textContent = title + ' · Segment ' + (doc.segments.indexOf(seg) + 1);
+    const restore = retainFocus(dialog);
+    const top = body.scrollTop;
+    const planOpen = body.querySelector('details')?.open;
+    if (title === FILM) body.replaceChildren(...filmView(ui, doc));
+    if (title === LIBRARY) body.replaceChildren(...libraryView(ui, doc));
+    if (title === DIRECTION) body.replaceChildren(...directionView(ui, doc, seg));
+    if (title === REVISION) body.replaceChildren(...revisionView(ui, seg));
+    const planning = title === FILM;
+    if (planning || title === REVISION) {
+      const ready = state.agents?.agents?.[state.agent]?.ready;
+      foot.replaceChildren(
+        row([
+          ui.select(
+            'Agent',
+            state.agent,
+            [
+              ['codex', 'Codex'],
+              ['grok', 'Grok'],
+            ],
+            (v) => {
+              state.agent = v;
+              render(node);
+            },
+          ),
+          ui.button('Agent settings', () => openAgentSettings(state.agent)),
+          ...(!ready ? [meta('Agent unavailable')] : []),
+        ]),
+        action(
+          ui,
+          planning ? 'Plan the film' : 'Refine current segment',
+          () => {
+            dialog.close();
+            return generate(ui, planning ? 'plan' : 'refine');
+          },
+          !ready || state.run?.running,
+        ),
+      );
+    } else foot.remove();
+    if (planOpen && body.querySelector('details')) body.querySelector('details').open = true;
+    body.scrollTop = top;
+    restore();
+  };
+  dialog.onclose = () => {
+    dialog.remove();
+    if (state.dialog !== dialog) return;
+    state.dialog = null;
+    state.refreshEditor = null;
+    if (nodes.get(node) !== state) return;
+    render(node);
+    const opener = state.body.querySelector(`[data-editor="${title}"]`) ?? state.body.querySelector('.timeline-head button');
+    opener?.focus({ preventScroll: true });
+  };
+  state.refreshEditor(ui.read());
+  document.body.append(dialog);
+  dialog.showModal();
+  (body.querySelector('input,textarea,button,select') ?? close).focus({ preventScroll: true });
+}
+
+function sequenceView(ui, doc, times) {
+  const list = el('div', { className: 'list' });
+  for (const [i, seg] of doc.segments.entries()) {
+    const t = times[i];
+    const status = t.outside ? 'Adjust length' : renderStatus(ui.node, seg.id, doc);
+    const button = ui.button('', () =>
+      ui.change((next) => {
+        next.selected = seg.id;
+      }),
+    );
+    button.ariaPressed = String(seg.id === doc.selected);
+    button.dataset.focus = seg.id;
+    button.title = seg.intent;
+    button.append(
+      text('span', String(i + 1).padStart(2, '0'), 'index'),
+      text('span', seg.intent, 'intent'),
+      text('small', secondsLabel(t.start) + ' – ' + secondsLabel(t.end)),
+      text('small', status),
+    );
+    list.append(button);
+  }
+  const add = ui.button('+ Add', () => addSegment(ui), doc.segments.length >= 128);
+  add.ariaLabel = 'Add segment';
+  return el('section', { className: 'timeline', ariaLabel: 'Sequence', onwheel: keepScrollWheel }, [
+    el('div', { className: 'timeline-head bar' }, [text('h3', 'Sequence'), add]),
+    list,
+    ...(!doc.segments.length ? [meta('No segments yet.')] : []),
+  ]);
+}
+
+function editorView(ui, doc, times) {
+  const { node, state } = ui;
+  const seg = selected(doc);
+  const editor = el('section', { className: 'editor', ariaLabel: 'Segment editor', onwheel: keepScrollWheel });
+  if (!seg) {
+    if (doc.segments.length) editor.append(meta('Select a segment to edit its prompt.'));
+    else {
+      const brief = ui.field(
+        'Creative brief',
+        doc.film.brief,
+        (v) =>
+          ui.change((next) => {
+            next.film.brief = v;
+          }, false),
+        { multiline: true },
+      );
+      brief.classList.add('prompt');
+      editor.append(
+        text('h2', 'Plan your film'),
+        meta('Describe the film to draft a sequence, or add a segment to write it yourself.'),
+        brief,
+        row([action(ui, 'Plan the film', () => generate(ui, 'plan'), !state.agents?.agents?.[state.agent]?.ready || state.run?.running)]),
+      );
+    }
+    return editor;
+  }
+  const index = doc.segments.indexOf(seg);
+  const prompt = ui.field(
+    'Finalized prompt',
+    seg.prompt,
+    (v) =>
+      ui.change((next) => {
+        next.segments[index].prompt = stableTags(doc, seg, v);
+      }, false),
+    { multiline: true },
+  );
+  prompt.classList.add('prompt');
+  const duration = times[index];
+  editor.append(
+    el('header', { className: 'segment-head' }, [
+      meta(
+        'Segment ' +
+          String(index + 1).padStart(2, '0') +
+          ' · ' +
+          (seg.transition === 'continuation' ? 'Continuation' : 'Hard cut') +
+          ' · ' +
+          secondsLabel(duration.frames ?? 0) +
+          ' generated',
+      ),
+      text('h2', seg.intent || 'Untitled segment'),
+    ]),
+    ...(seg.opening || seg.closing
+      ? [
+          el(
+            'dl',
+            { className: 'continuity' },
+            Object.entries({ Opening: seg.opening, Closing: seg.closing })
+              .filter(([, value]) => value)
+              .map(([name, value]) => el('div', {}, [text('dt', name), el('dd', { textContent: value, title: value })])),
+          ),
+        ]
+      : []),
+    prompt,
+    row([launcher(ui, DIRECTION), launcher(ui, REVISION)]),
+    el('section', { className: 'render-group' }, [
+      text('h3', 'Render'),
+      row([
+        action(ui, 'Render current segment', () => startRender(ui, false), state.rendering),
+        ui.button('Render remaining segments', () => startRender(ui, true), state.rendering),
+        ...(state.rendering ? [ui.button('Stop after current', () => stopRender(node))] : []),
+      ]),
+    ]),
+  );
+  const take = renderTake(node, seg.id);
+  if (
+    take?.video?.type === 'output' &&
+    /^arisu_director\/[a-f0-9-]+$/.test(take.video.subfolder) &&
+    /^clip_\d+_\.(mp4|mov|webm|mkv)$/.test(take.video.filename)
+  )
+    editor.append(
+      el('details', {}, [
+        el('summary', { textContent: 'Rendered footage' }),
+        el('video', {
+          controls: true,
+          preload: 'none',
+          src: api.apiURL(
+            '/view?' + new URLSearchParams({ type: 'output', subfolder: take.video.subfolder, filename: take.video.filename }),
+          ),
+        }),
+      ]),
+    );
+  return editor;
+}
+
 function render(node) {
   const state = nodes.get(node);
   if (!state) return;
-  const ui = controls(node);
+  const { body } = state,
+    ui = controls(node);
   let doc;
   try {
     doc = read(node);
   } catch (e) {
-    state.body.replaceChildren(label(e.message));
+    state.dialog?.close();
+    body.replaceChildren(label(e.message));
     return;
   }
-  const run = state.run ?? {};
-  const tabs = ['Segments', 'Film', 'Asset library'].map((view) => {
-    const tab = ui.button(view, () => {
-      state.view = view;
-      state.scroll = null;
-      render(node);
-    });
-    tab.ariaPressed = String(state.view === view);
-    return tab;
-  });
-  const previous = state.scroll;
-  const scroll = el(
-    'div',
-    { className: 'scroll', onwheel: keepScrollWheel },
-    state.view === 'Film' ? filmView(ui, doc) : state.view === 'Asset library' ? libraryView(ui, doc) : segmentView(ui, doc),
-  );
-  const getLabel = (d) => d.querySelector('summary')?.textContent?.split(' · ')[0].split(' (')[0];
-  if (previous) {
-    const open = new Set(Array.from(previous.querySelectorAll?.('details[open]') ?? [], getLabel));
-    for (const detail of scroll.querySelectorAll?.('details') ?? []) detail.open = open.has(getLabel(detail));
-  }
-  const status = el('span', { role: 'status', textContent: run.status ?? '' });
-  const elapsed = el('span', { textContent: run.elapsedMs != null ? ' · ' + generationTime(run) : '' });
+  const times = timeline(doc),
+    run = state.run ?? {};
+  const restore = retainFocus(body);
+  const previousList = body.querySelector('.timeline'),
+    previousEditor = body.querySelector('.editor');
+  const timelinePane = sequenceView(ui, doc, times),
+    editor = editorView(ui, doc, times);
+  const listTop = previousList?.scrollTop ?? 0;
+  const editorTop = state.selected === doc.selected ? (previousEditor?.scrollTop ?? 0) : 0;
+  if (state.selected === doc.selected && previousEditor?.querySelector('details[open]') && editor.querySelector('details'))
+    editor.querySelector('details').open = true;
+  const status = label(run.status ?? '');
+  const elapsed = label(run.elapsedMs != null ? ' · ' + generationTime(run) : '');
   state.statusElement = status;
   state.timeElement = elapsed;
-  const unavailable = !state.agents?.agents?.[state.agent]?.ready;
-  const buttons = [
-    ui.select(
-      'Agent',
-      state.agent,
-      [
-        ['codex', 'Codex'],
-        ['grok', 'Grok'],
-      ],
-      (v) => {
-        state.agent = v;
-        render(node);
-      },
-    ),
-    ui.button('Agent settings', () => openAgentSettings(state.agent)),
-    ui.button('Plan the film', () => generate(ui, 'plan'), unavailable || run.running),
-    ...(state.view === 'Segments' && selected(doc)
-      ? [ui.button('Refine current segment', () => generate(ui, 'refine'), unavailable || run.running)]
-      : []),
-    ui.button('Review draft', () => review(ui), !run.hasOutput && !run.running && !run.started),
+  const summary = [
+    String(doc.film.aspect_ratio).split(' ')[0],
+    doc.segments.length + (doc.segments.length === 1 ? ' segment' : ' segments'),
+    ...(times.length ? [secondsLabel(times.at(-1).end) + ' estimated'] : []),
+    ...(doc.film.target_runtime ? ['Target ' + doc.film.target_runtime] : []),
   ];
-  if (run.running) buttons.push(ui.button('Cancel generation', () => sessions.cancelGeneration(run), run.cancelling));
-  state.scroll = scroll;
-  state.body.replaceChildren(
-    el('style', { textContent: STYLE }),
-    el('nav', {}, tabs),
-    scroll,
-    el('footer', {}, [
-      row(buttons),
-      el('div', { className: 'status' }, [status, elapsed, ...(state.message ? [label(' ' + state.message)] : [])]),
+  const library = launcher(ui, LIBRARY);
+  library.ariaLabel = LIBRARY;
+  library.append(text('span', String(doc.assets.length), 'count'));
+  const ready = state.agents?.agents?.[state.agent]?.ready;
+  const feedback = el('div', { className: 'status', role: 'status' }, [
+    ...(!run.status && !state.message ? [label((state.agent === 'codex' ? 'Codex' : 'Grok') + (ready ? ' ready' : ' unavailable'))] : []),
+    status,
+    elapsed,
+    ...(state.message ? [label(' ' + state.message)] : []),
+  ]);
+  const reviewButton = ui.button('Review draft', () => review(ui), !run.started && !run.running && !run.hasOutput);
+  if (run.hasOutput) reviewButton.className = 'review';
+  body.replaceChildren(
+    el('header', { className: 'film-head bar' }, [
+      el('div', {}, [text('h2', 'Film overview'), meta(summary.join(' · '))]),
+      row([launcher(ui, FILM), library]),
+    ]),
+    el('div', { className: 'workspace' }, [timelinePane, editor]),
+    el('footer', { className: 'bar' }, [
+      feedback,
+      row([...(run.running ? [ui.button('Cancel generation', () => sessions.cancelGeneration(run), run.cancelling)] : []), reviewButton]),
     ]),
   );
-  if (previous) scroll.scrollTop = previous.scrollTop;
+  timelinePane.scrollTop = listTop;
+  editor.scrollTop = editorTop;
+  if (state.selected !== doc.selected) {
+    const active = timelinePane.querySelector('[aria-pressed=true]');
+    if (active) {
+      const offset = active.offsetTop;
+      if (offset < listTop || offset + active.offsetHeight > listTop + timelinePane.clientHeight) timelinePane.scrollTop = offset;
+    }
+  }
+  state.selected = doc.selected;
+  restore();
+  if (state.dialog?.open) state.refreshEditor(doc);
 }
 async function refresh(node) {
   const state = nodes.get(node);
@@ -595,6 +775,7 @@ async function refresh(node) {
   }
 }
 function invalidate(node) {
+  nodes.get(node)?.dialog?.close();
   nodes.get(node)?.media?.abort();
   stopRender(node, true);
 }
@@ -603,6 +784,7 @@ app.registerExtension({
   name: 'Arisu.MiniMaxH3.DirectorWorkbench',
   init: installSelectionGuards,
   setup() {
+    document.head.append(el('style', { textContent: DIRECTOR_STYLE }));
     installDirectorQueue(sessions.views);
   },
   beforeRegisterNodeDef(nodeType, nodeData) {
@@ -618,7 +800,7 @@ app.registerExtension({
     chain('onNodeCreated', function () {
       const body = el('div', { className: 'arisu-director' });
       forwardToCanvas(body);
-      nodes.set(this, { body, agent: 'codex', view: 'Segments', message: '' });
+      nodes.set(this, { body, agent: 'codex', message: '' });
       sessions.views.add(this);
       sessions.bindSession(this);
       const w = filmWidget(this);

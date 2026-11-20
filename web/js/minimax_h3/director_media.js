@@ -115,7 +115,7 @@ export function libraryView(ui, doc) {
       ui.change((next) => {
         next.assets.find((a) => a.id === asset.id)[key] = value;
       }, false);
-    return el('article', { className: 'card' }, [
+    const card = el('article', { className: 'card' }, [
       el('div', { className: 'asset-title' }, [
         preview(asset),
         el('strong', { textContent: filename(asset), title: asset.path }),
@@ -144,6 +144,8 @@ export function libraryView(ui, doc) {
         ui.button('Remove', () => ui.change((next) => next.assets.splice(i, 1))),
       ]),
     ]);
+    card.dataset.asset = asset.id;
+    return card;
   });
   // A retained binding can recover its stable ID after an import or an accidental library deletion.
   const missing = new Set(
@@ -151,7 +153,9 @@ export function libraryView(ui, doc) {
   );
   return [
     el('div', { className: 'actions' }, [ui.button('Browse assets', () => browse(ui), doc.assets.length >= 256)]),
-    ...rows,
+    ...(rows.length
+      ? [el('div', { className: 'library' }, rows)]
+      : [el('p', { className: 'meta', textContent: 'Add images, video or audio for planning and segment bindings.' })]),
     ...[...missing].map((id) => ui.button('Reselect missing asset ' + id, () => browse(ui, id))),
   ];
 }
@@ -162,7 +166,7 @@ export function bindingView(ui, doc, segment) {
     const asset = doc.assets.find((a) => a.id === b.asset_id);
     const opts = asset?.kind === 'image' ? ['first', 'last', 'image'] : [asset?.kind ?? b.role];
     const override = ['clip', 'crop', 'include_audio'].some((k) => Object.hasOwn(b, k));
-    return el('div', { className: 'binding card' }, [
+    const card = el('div', { className: 'binding card' }, [
       el('strong', { textContent: asset ? filename(asset) + (asset.muted ? ' · muted' : '') : 'Missing asset ' + b.asset_id }),
       ui.select(
         'Role',
@@ -199,18 +203,23 @@ export function bindingView(ui, doc, segment) {
         ui.button('Unbind', () => ui.change((next) => locate(next).splice(i, 1))),
       ]),
     ]);
+    card.dataset.asset = b.asset_id;
+    return card;
   });
   const choices = doc.assets.filter((a) => !a.muted && !segment.bindings.some((b) => b.asset_id === a.id));
-  return el('details', {}, [
-    el('summary', { textContent: 'Asset bindings (' + rows.length + ')' }),
+  return el('div', { className: 'stack' }, [
+    ...(rows.length ? [] : [el('p', { className: 'meta', textContent: 'No assets bound to this segment.' })]),
     ...rows,
     ...(choices.length
       ? [
           ui.select('Bind an asset', '', [['', 'Choose an asset…'], ...choices.map((a) => [a.id, filename(a)])], (id) => {
             const asset = choices.find((a) => a.id === id);
-            if (asset) ui.change((next) => locate(next).push({ asset_id: id, role: asset.kind }));
+            if (!asset) return;
+            ui.change((next) => locate(next).push({ asset_id: id, role: asset.kind }));
+            ui.state.dialog?.querySelector(`.binding[data-asset="${CSS.escape(id)}"] select`)?.focus();
           }),
         ]
       : []),
+    ui.button('Add to library…', () => browse(ui), doc.assets.length >= 256),
   ]);
 }

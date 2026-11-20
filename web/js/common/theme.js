@@ -6,11 +6,12 @@ const NODE_COLORS = {
   ArisuMiniMaxH3ResourceStudio: 'red',
   ArisuPreviewSaveImage: 'yellow',
   ArisuPreviewSaveImageUpscale: 'yellow',
+  ArisuMiniMaxH3DirectorWorkbench: 'pale_blue',
   ArisuMiniMaxH3PromptWorkbench: 'pale_blue',
 };
 const PANELS =
-  ':is(.arisu-studio,.arisu-workbench,.arisu-browser,.arisu-cropper,.arisu-clip,.arisu-settings,.arisu-agents,.arisu-activity-modal,.arisu-settings-entry)';
-const DIALOGS = ':is(.arisu-browser,.arisu-cropper,.arisu-clip,.arisu-settings,.arisu-agents,.arisu-activity-modal)';
+  ':is(.arisu-studio,.arisu-director,.arisu-director-dialog,.arisu-workbench,.arisu-browser,.arisu-cropper,.arisu-clip,.arisu-settings,.arisu-agents,.arisu-activity-modal,.arisu-settings-entry)';
+const DIALOGS = ':is(.arisu-director-dialog,.arisu-browser,.arisu-cropper,.arisu-clip,.arisu-settings,.arisu-agents,.arisu-activity-modal)';
 const ACTIONS = 'button:is(.arisu-action,.primary,.danger)';
 const CONFIRM = 'button:is(.review,.apply,.arisu-cropper-apply,.arisu-clip-apply,.arisu-settings-apply)';
 const STYLE = `
@@ -26,8 +27,8 @@ ${PANELS}{
  --arisu-hover:color-mix(in srgb,var(--comfy-input-bg,#222),var(--fg-color,#ddd) 8%);
  scrollbar-width:thin;scrollbar-color:var(--border-color,#444) transparent;
 }
-:is(.arisu-workbench,.arisu-agents,.arisu-activity-modal,.arisu-settings-entry){--arisu-accent:var(--arisu-blue);}
-:is(.arisu-workbench,.arisu-agents,.arisu-activity-modal,.arisu-settings-entry){--arisu-action:var(--arisu-video);}
+:is(.arisu-director,.arisu-director-dialog,.arisu-workbench,.arisu-agents,.arisu-activity-modal,.arisu-settings-entry){--arisu-accent:var(--arisu-blue);}
+:is(.arisu-director,.arisu-director-dialog,.arisu-workbench,.arisu-agents,.arisu-activity-modal,.arisu-settings-entry){--arisu-action:var(--arisu-video);}
 .arisu-settings{--arisu-accent:var(--p-primary-color,var(--fg-color,#ddd));}
 dialog${DIALOGS}[open]{border-radius:8px;box-shadow:0 12px 40px #0006;animation:none;}
 dialog${DIALOGS}[open]::backdrop{background:#0008;backdrop-filter:none;animation:none;}

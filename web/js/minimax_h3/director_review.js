@@ -15,6 +15,7 @@ export function applyDraft(doc, draft) {
   }
 }
 
+const grid = (...items) => el('div', { className: 'review-grid' }, items);
 const section = (label, text) => el('section', {}, [el('strong', { textContent: label }), el('p', { textContent: text })]);
 
 export function openDirectorReview(run, read, apply) {
@@ -24,10 +25,19 @@ export function openDirectorReview(run, read, apply) {
   const style = el('style', {
     textContent: `
     .arisu-film-review{overflow:auto;flex:1;padding:12px 16px;scrollbar-width:thin;min-height:0}
-    .arisu-film-review section,.arisu-film-review details{margin:0 0 12px}
-    .arisu-film-review details{border:1px solid var(--border-color,#555);border-radius:5px;padding:8px 12px}
-    .arisu-film-review p{white-space:pre-wrap;margin:4px 0;overflow-wrap:anywhere}
-    .arisu-film-review summary{cursor:pointer;font-weight:600}
+    .arisu-film-review{--edge:var(--border-color,#555)}
+    .arisu-film-review section{min-width:0}
+    .arisu-film-review .review-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(190px,100%),1fr));gap:12px 18px}
+    .arisu-film-review>.review-grid,.arisu-film-review>section{margin-bottom:16px}
+    .arisu-film-review details{border:1px solid var(--edge);border-radius:6px;margin-bottom:6px}
+    .arisu-film-review p{white-space:pre-wrap;margin:4px 0 0;overflow-wrap:anywhere;line-height:1.55}
+    .arisu-film-review summary{cursor:pointer;font-weight:600;padding:10px 12px;overflow-wrap:anywhere}
+    .arisu-film-review details[open]>summary{background:color-mix(in srgb,var(--arisu-blue,#adbfd2) 12%,transparent)}
+    .arisu-film-review .review-grid.prompts,.arisu-film-review .shot-info{padding:12px}
+    .arisu-film-review .shot-info{border-top:1px solid var(--edge)}
+    .arisu-film-review strong{color:color-mix(in srgb,var(--input-text,#ddd) 82%,var(--comfy-menu-bg,#222));overflow-wrap:anywhere}
+    .arisu-film-review .prompts section:last-child strong{color:var(--arisu-blue,#b5cbdf)}
+
   `,
   });
   let last = '';
@@ -80,17 +90,16 @@ export function openDirectorReview(run, read, apply) {
           const times = timeline({ ...doc, segments });
           const runtime = secondsLabel(times.at(-1)?.end ?? 0);
           children.push(
-            section('Film outline', data.outline),
-            section('Continuity', data.continuity),
-            section('Estimated runtime', runtime + (doc.film.target_runtime ? ' · Target ' + doc.film.target_runtime : '')),
+            grid(
+              section('Film outline', data.outline),
+              section('Continuity', data.continuity),
+              section('Estimated runtime', runtime + (doc.film.target_runtime ? ' · Target ' + doc.film.target_runtime : '')),
+            ),
           );
-          for (const [req, ids] of Object.entries(data.coverage))
-            children.push(
-              section(
-                req,
-                ids.length ? ids.map((id) => 'Segment ' + (segments.findIndex((s) => s.id === id) + 1)).join(', ') : 'Uncovered',
-              ),
-            );
+          const coverage = Object.entries(data.coverage).map(([req, ids]) =>
+            section(req, ids.length ? ids.map((id) => 'Segment ' + (segments.findIndex((s) => s.id === id) + 1)).join(', ') : 'Uncovered'),
+          );
+          if (coverage.length) children.push(el('section', {}, [el('h3', { textContent: 'Story coverage' }), grid(...coverage)]));
         }
         for (const segment of segments) {
           const old = doc.segments.find((item) => item.id === segment.id);
@@ -105,16 +114,20 @@ export function openDirectorReview(run, read, apply) {
                   secondsLabel(timing(doc.film, segment.seconds) ?? 0) +
                   ' generated',
               }),
-              section(
-                'Transition',
-                segment.transition === 'cut' ? 'Hard cut' : 'Continuation · ' + segment.overlap_frames + ' overlap frames',
-              ),
-              section('Opening', segment.opening),
-              section('Closing', segment.closing),
-              section('Bindings', segment.bindings.map((b) => b.role + ' · ' + b.asset_id).join('\n') || 'None'),
-              section('Writing skill', segment.skill + ' · ' + segment.skill_reason),
-              ...(old ? [section('Current prompt', old.prompt)] : []),
-              section('Proposed prompt', segment.prompt),
+              el('div', { className: 'review-grid prompts' }, [
+                ...(old ? [section('Current prompt', old.prompt)] : []),
+                section('Proposed prompt', segment.prompt),
+              ]),
+              el('div', { className: 'review-grid shot-info' }, [
+                section(
+                  'Transition',
+                  segment.transition === 'cut' ? 'Hard cut' : 'Continuation · ' + segment.overlap_frames + ' overlap frames',
+                ),
+                section('Opening', segment.opening),
+                section('Closing', segment.closing),
+                section('Bindings', segment.bindings.map((b) => b.role + ' · ' + b.asset_id).join('\n') || 'None'),
+                section('Writing skill', segment.skill + ' · ' + segment.skill_reason),
+              ]),
             ]),
           );
         }
