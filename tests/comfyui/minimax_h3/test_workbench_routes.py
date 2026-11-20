@@ -13,9 +13,11 @@ from typing import Any, Dict
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
+from PIL import Image
 
 from src.arisu_nodes.minimax_h3 import workbench_routes
 from src.arisu_nodes.minimax_h3.workbench import Workbench
+from tests.support.media import make_audio
 
 pytestmark = pytest.mark.comfyui
 
@@ -40,6 +42,7 @@ def test_workbench_routes_reject_untrusted_requests_and_queue_only_preparation(t
         job.draft = "review me"
         owner.agents.guard.release()
 
+    real_execute = owner.execute
     monkeypatch.setattr(owner, "execute", execute)
     workbench_routes.register_routes(server, owner)
 
@@ -88,7 +91,7 @@ def test_workbench_routes_reject_untrusted_requests_and_queue_only_preparation(t
                 return {
                     "authenticated": True,
                     "policy_ready": True,
-                    "policy_revision": 6,
+                    "policy_revision": 7,
                     "models": [{"id": "test", "efforts": ["medium"]}],
                 }
 
@@ -99,7 +102,7 @@ def test_workbench_routes_reject_untrusted_requests_and_queue_only_preparation(t
                     owner.agents,
                     "command",
                     lambda args, **kwargs: (
-                        json.dumps([{"Config": {"Labels": {"org.arisu.workbench.policy": "6"}}}])
+                        json.dumps([{"Config": {"Labels": {"org.arisu.workbench.policy": "7"}}}])
                         if args[:2] == ["image", "inspect"]
                         else "linux"
                     ),
@@ -125,6 +128,131 @@ def test_workbench_routes_reject_untrusted_requests_and_queue_only_preparation(t
             await asyncio.sleep(0.01)
             response = await client.get("/arisu/workbench/jobs/" + identifier)
             assert (await response.json())["draft"] == "review me"
+            # Cross the whole Director HTTP/CPU/attachment/review path, replacing only the provider.
+            # The planning call returns both prompts. Refinement returns one draft and preserves the neighbor.
+            root = tmp_path / "media"
+            root.mkdir()
+            Image.new("RGB", (20, 16), "red").save(root / "prop.png")
+            make_audio(root / "sound.wav")
+            custom = owner.directory / "skills" / "handwritten"
+            custom.mkdir(parents=True)
+            (custom / "SKILL.md").write_text("Write in short sentences.")
+            document = {
+                "version": 1,
+                "film": {"brief": "Find the red box", "requirements": ["Open the box"]},
+                "assets": [{"id": "box", "kind": "image", "root": "input", "path": "prop.png", "muted": False, "note": "The brass lock"}],
+                "segments": [],
+                "selected": "",
+            }
+            document["assets"].append(
+                {"id": "chime", "kind": "audio", "root": "input", "path": "sound.wav", "muted": False, "clip": {"start": 0, "end": 1}}
+            )
+            segments = [
+                {
+                    "id": "arrival",
+                    "intent": "Introduce the room",
+                    "opening": "Morning",
+                    "closing": "Paused at a desk",
+                    "seconds": 8,
+                    "transition": "cut",
+                    "overlap_frames": 0,
+                    "prompt": "Walk into the room.",
+                    "bindings": [],
+                    "skill": "bundled:no-ref",
+                    "skill_reason": "Original establishing shot.",
+                    "skill_locked": False,
+                },
+                {
+                    "id": "opening",
+                    "intent": "Open the box",
+                    "opening": "Paused at a desk",
+                    "closing": "An open box",
+                    "seconds": 6,
+                    "transition": "continuation",
+                    "overlap_frames": 22,
+                    "prompt": "The lock on <Picture 1> opens.",
+                    "bindings": [{"asset_id": "box", "role": "image"}],
+                    "skill": "bundled:with-ref",
+                    "skill_reason": "Match the lock.",
+                    "skill_locked": False,
+                },
+            ]
+            plan = {
+                "version": 1,
+                "segments": segments,
+                "outline": "Arrive and open the box.",
+                "continuity": "Morning light.",
+                "coverage": {"Open the box": ["opening"]},
+            }
+            calls = []
+
+            def generate_director(agent: str, directory: Path, skill: Path, *_args: Any) -> str:
+                context = json.loads((directory / "context.json").read_bytes())
+                task = context["director"]
+                calls.append(task["task"])
+                assert context["assets"][0]["note"] == "The brass lock" and "root" not in task["library"][0]
+                assert (directory / context["assets"][0]["file"]).is_file()
+                catalog = {row["id"]: row for row in task["writing_skills"]}
+                assert all((skill / row["path"]).is_file() for row in catalog.values())
+                if task["task"] == "plan":
+                    assert set(catalog) == {"bundled:no-ref", "bundled:with-ref"}
+                    return "```text\n" + json.dumps(plan) + "\n```"
+                assert task["selected"] == "opening" and task["segments"][0]["id"] == "arrival"
+                assert set(catalog) == {"custom:handwritten"} and not context["motion"]["present"]
+                if task["request"] == "more":
+                    return "x" * (256 * 1024 + 33)
+                replacement = {**segments[1], "prompt": "Open <Picture:box> slowly.", "skill": "custom:handwritten"}
+                if task["request"] == "zoom":
+                    crop = {"left": 0, "top": 0, "width": 1000, "height": 1000}
+                    replacement["bindings"] = [{**replacement["bindings"][0], "crop": crop}]
+                if task["request"] == "long chime":
+                    replacement["bindings"] = [
+                        *replacement["bindings"],
+                        {"asset_id": "chime", "role": "audio", "clip": {"start": 0, "end": 120}},
+                    ]
+                return "```text\n" + json.dumps({"version": 1, "segment": replacement, "suggestions": ["Hold on the desk."]}) + "\n```"
+
+            async def director_job(task: str, note: str) -> Dict[str, Any]:
+                value = {
+                    "node_id": "d",
+                    "workflow": "director",
+                    "director": {"task": task, "request": note},
+                    "options": {"motion_enabled": False},
+                    "prompt": {"d": {"class_type": "ArisuMiniMaxH3DirectorWorkbench", "inputs": {"film_json": json.dumps(document)}}},
+                }
+                accepted = await client.post("/arisu/workbench/generate", json=value)
+                assert accepted.status == 202, await accepted.text()
+                pending = await accepted.json()
+                assert pending["prompt_id"] is None
+                for _ in range(250):
+                    result = await (await client.get("/arisu/workbench/jobs/" + pending["id"])).json()
+                    if result["state"] in ("complete", "failed", "cancelled") and not owner.agents.guard.locked():
+                        return result
+                    await asyncio.sleep(0.04)
+                raise AssertionError("Director task did not finish")
+
+            with monkeypatch.context() as local:
+                local.setattr(owner, "execute", real_execute)
+                local.setattr(workbench_routes, "image_roots", lambda *args: {"input": str(root)})
+                local.setattr(owner.agents, "generate", generate_director)
+                result = await director_job("plan", "")
+                assert result["state"] == "complete", result["error"]
+                draft = json.loads(result["draft"])
+                assert len(draft["segments"]) == 2 and draft["segments"][1]["prompt"] == "The lock on <Picture:box> opens."
+                assert draft["coverage"] == plan["coverage"] and not document["segments"]
+                document.update({key: draft[key] for key in ("segments", "outline", "continuity", "coverage")}, selected="opening")
+                document["segments"][1].update(skill="custom:handwritten", skill_locked=True)
+                result = await director_job("refine", "Slow the action")
+                assert result["state"] == "complete", result["error"]
+                assert json.loads(result["draft"])["segment"]["id"] == "opening" and document["segments"][0] == segments[0]
+                result = await director_job("refine", "more")
+                assert result["state"] == "failed" and "budget" in result["error"] and not result["draft"]
+                result = await director_job("refine", "zoom")
+                assert result["state"] == "failed" and "Segment opening" in result["error"] and "asset box" in result["error"]
+                assert not result["draft"] and document["segments"][1]["bindings"] == segments[1]["bindings"]
+                result = await director_job("refine", "long chime")
+                assert result["state"] == "failed" and "asset chime" in result["error"] and not result["draft"]
+                assert calls == ["plan", "refine", "refine", "refine", "refine"] and not queued
             # Real operations still refuse concurrent generation immediately.
             owner.agents.guard.acquire()
             try:

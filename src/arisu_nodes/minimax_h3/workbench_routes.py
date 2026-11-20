@@ -17,6 +17,7 @@ from ..common.paths import image_roots
 from . import workbench_execution
 from .agent_docker import AgentBusy
 from .core import preparation_graph, workbench_options
+from .director_task import DIRECTOR_SKILL, DirectorTask, writing_catalog
 from .workbench import Workbench, skill_catalog
 
 logger = logging.getLogger(__name__)
@@ -83,8 +84,10 @@ def register_routes(server: Any, owner: Workbench):
     @routes.get("/arisu/workbench/status")
     async def status(request: web.Request) -> web.Response:
         value = await asyncio.to_thread(owner.agents.status)
+        skills = await asyncio.to_thread(skill_catalog, owner.directory)
+        value["writing_skills"] = list((await asyncio.to_thread(writing_catalog, skills)).values())
         value["skills"] = [
-            {"id": key, "name": key.split(":", 1)[1], "source": key.split(":", 1)[0]} for key in skill_catalog(owner.directory)
+            {"id": key, "name": key.split(":", 1)[1], "source": key.split(":", 1)[0]} for key in skills if key != DIRECTOR_SKILL
         ]
         return web.json_response(value)
 
@@ -140,8 +143,16 @@ def register_routes(server: Any, owner: Workbench):
             if not isinstance(node_id, str) or not isinstance(workflow, str) or not 1 <= len(workflow) <= 160:
                 raise ValueError("invalid workflow identity")
             options = workbench_options(value.get("options"))
-            graph = preparation_graph(value.get("prompt"), node_id, options["motion_enabled"])
-            reservation = asyncio.create_task(asyncio.to_thread(owner.create, node_id, workflow, options, graph))
+            director = None
+            if "director" in value:
+                skills = await asyncio.to_thread(skill_catalog, owner.directory)
+                director, graph = await asyncio.to_thread(
+                    DirectorTask.capture, value["director"], value.get("prompt"), node_id, options, skills
+                )
+                options["skill"] = DIRECTOR_SKILL
+            else:
+                graph = preparation_graph(value.get("prompt"), node_id, options["motion_enabled"])
+            reservation = asyncio.create_task(asyncio.to_thread(owner.create, node_id, workflow, options, graph, director))
             job = await asyncio.shield(reservation)
             job.cpu_context = True
             job.context_graph = graph
@@ -198,6 +209,10 @@ def register_routes(server: Any, owner: Workbench):
             raise
         except AgentBusy as error:
             return web.json_response({"error": str(error)}, status=409)
+        except web.HTTPRequestEntityTooLarge:
+            return web.json_response(
+                {"error": "The generation request exceeds the 1 MiB input budget. Shorten the film, notes, or asset library."}, status=413
+            )
         except web.HTTPException:
             raise
         except Exception as error:

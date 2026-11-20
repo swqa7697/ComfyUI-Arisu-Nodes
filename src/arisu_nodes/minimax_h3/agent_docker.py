@@ -22,7 +22,7 @@ ASSETS = Path(__file__).resolve().parents[3] / "assets" / "prompt_workbench"
 BASE_IMAGE = "python:3.13-slim-trixie"
 LABEL = "org.arisu.workbench.instance"
 PROVIDER_LABEL = "org.arisu.workbench.provider"
-POLICY_REVISION = 6
+POLICY_REVISION = 7
 MAX_OUTPUT = 2 * 1024 * 1024
 
 
@@ -425,29 +425,40 @@ class DockerAgents:
             raise ValueError("update the agent image before generation: Workbench policy changed")
         name = self.namespace + "-generate-" + uuid.uuid4().hex
         result: List[str] = []
+        incomplete = False
 
         def receive(line: str):
+            nonlocal incomplete
+            if line.rstrip() == "ARISU_DIRECTOR_INCOMPLETE":
+                incomplete = True
             if line.startswith("ARISU_RESULT "):
                 result.append(json.loads(line.removeprefix("ARISU_RESULT "))["final"])
 
         self.log("[job " + inputs.name + "] generating with " + agent)
-        self.stream(
-            [
-                *self.run_args(agent, name),
-                "--mount",
-                "type=bind,src=" + str(inputs) + ",dst=/inputs,readonly",
-                "--mount",
-                "type=bind,src=" + str(skill) + ",dst=/skill,readonly",
-                self.image(agent),
-                agent,
-                "generate",
-            ],
-            deadline,
-            cancelled,
-            name,
-            json.dumps(selection),
-            receive,
-        )
+        try:
+            self.stream(
+                [
+                    *self.run_args(agent, name),
+                    "--mount",
+                    "type=bind,src=" + str(inputs) + ",dst=/inputs,readonly",
+                    "--mount",
+                    "type=bind,src=" + str(skill) + ",dst=/skill,readonly",
+                    self.image(agent),
+                    agent,
+                    "generate",
+                ],
+                deadline,
+                cancelled,
+                name,
+                json.dumps(selection),
+                receive,
+            )
+        except ValueError:
+            if incomplete:
+                raise ValueError(
+                    "The Director response is incomplete or exceeds the single-task context or output budget. Shorten the brief or target runtime and try again."
+                ) from None
+            raise
         if len(result) != 1:
             raise ValueError("agent did not return one final response")
         return result[0]

@@ -19,6 +19,7 @@ from PIL import Image
 
 from src.arisu_nodes.minimax_h3 import nodes as h3
 from src.arisu_nodes.minimax_h3.core import EMPTY_RESOURCES, VideoSettings, video_latent_t
+from src.arisu_nodes.minimax_h3.director import EMPTY_FILM
 from src.arisu_nodes.minimax_h3.media import StaleResource
 from src.arisu_nodes.minimax_h3.nodes import ArisuMiniMaxH3HybridToVideo, ArisuMiniMaxH3HybridToVideoAdvanced
 from tests.support.comfy import StubAudioVae, StubClip, StubVae, audio_input, image
@@ -323,3 +324,60 @@ def test_studio_bundles_originals_and_rejects_invalid_or_conflicting_resources(t
     ):
         with pytest.raises(ValueError):
             studio.execute("16:9 (Widescreen)", False, json.dumps(invalid))
+
+    # Director binds the same library source to different roles in each segment.
+    # Only its selected sources reach Hybrid, in the resolved numbering order.
+    film = json.loads(EMPTY_FILM)
+    film["film"].update(frame_picture_tags="before_refs", megapixels=0.1, min_seconds=5, max_seconds=5.8)
+    film["assets"] = [first, *state["references"]]
+    film["assets"][1]["muted"] = False  # Unbound and undecodable, but irrelevant to both selected segments.
+    segment = {
+        "id": "arrival",
+        "intent": "arrival",
+        "seconds": 5.8,
+        "transition": "cut",
+        "overlap_frames": 0,
+        "prompt": "<Picture:first> by the door",
+        "opening": "outside",
+        "closing": "at door",
+        "bindings": [{"asset_id": "first", "role": "image"}],
+        "skill": "bundled:with-ref",
+        "skill_reason": "image reference",
+        "skill_locked": False,
+    }
+    second = {
+        **segment,
+        "id": "inside",
+        "transition": "continuation",
+        "overlap_frames": 22,
+        "prompt": "<Picture:first> follows <Picture:ref>",
+        "bindings": [{"asset_id": "first", "role": "first"}, {"asset_id": "ref", "role": "image"}],
+    }
+    film.update(segments=[segment, second], selected="arrival")
+    director = h3.ArisuMiniMaxH3DirectorWorkbench
+    prompt, settings, resources = director.execute(json.dumps(film))
+    assert prompt == "<Picture 1> by the door" and settings.length == 124
+    assert [r.id for r in resources.sources()] == ["first"] and resources.first is None
+    film.update(selected="inside", assets=list(reversed(film["assets"])))
+    prompt, settings, resources = director.execute(json.dumps(film))
+    assert prompt == "<Picture 1> follows <Picture 2>" and resources.first.crop == (1, 2, 10, 9)
+    assert [r.id for r in resources.images] == ["ref"]
+    clip, _ = _run(prompt=prompt, video_settings=settings, resources=resources)
+    assert [tuple(ref["data"].shape[1:3]) for ref in clip.tokenize_kwargs["minimax_ref_items"]] == [
+        (settings.height, settings.width),
+        (64, 96),
+    ]
+    film["film"]["megapixels"] = 0.2
+    assert director.execute(json.dumps(film))[2].first.crop == (1, 2, 10, 9)
+    film["film"]["aspect_ratio"] = "1:1 (Square)"
+    assert director.execute(json.dumps(film))[2].first.crop == (10, 0, 61, 61)
+    second["bindings"].pop()
+    assert "asset ref" in director.validate_inputs(json.dumps(film))
+    with pytest.raises(ValueError, match="inside.*asset ref"):
+        director.execute(json.dumps(film))
+    second["prompt"] = "<Picture:first>"
+    first["revision"] = resources.first.revision
+    Image.new("RGB", (81, 61), "yellow").save(tmp_path / "frame.png")
+    for operation in (director.execute, director.fingerprint_inputs):
+        with pytest.raises(ValueError, match="inside.*asset first"):
+            operation(json.dumps(film))

@@ -18,7 +18,17 @@ from PIL import Image, ImageOps
 
 from ..common.core import MAX_THUMBNAIL, MIN_THUMBNAIL, contained_path, encode_preview, image_content_type, open_raster_image
 from ..common.paths import select_root
-from .core import Resource, ResourceBundle, align_clip_frames, auto_crop, clip_interval, media_kind, parse_resources, ref_video_canvas
+from .core import (
+    Resource,
+    ResourceBundle,
+    align_clip_frames,
+    auto_crop,
+    clip_frames,
+    clip_interval,
+    media_kind,
+    parse_resources,
+    ref_video_canvas,
+)
 
 FORMATS = "mov,matroska,webm,wav,mp3,flac,ogg,aac,aiff,avi,asf,mpeg,mpegts"
 
@@ -90,7 +100,7 @@ def upright(frame: av.VideoFrame) -> Image.Image:
     return image
 
 
-def stream_duration(container: av.container.InputContainer, stream: Any) -> float:
+def stream_duration(container: av.container.InputContainer, stream: Any, *, packets_only: bool = False) -> float:
     """Resolve elapsed stream duration even when a container stores absolute end times."""
     if stream.duration is not None:
         return float(stream.duration * stream.time_base)
@@ -110,6 +120,17 @@ def stream_duration(container: av.container.InputContainer, stream: Any) -> floa
     # For containers without per-stream duration, inspect the final presentation interval.
     estimate = Fraction(container.duration + (container.start_time or 0), av.time_base)
     container.seek(max(0, int(estimate / stream.time_base)), stream=stream, backward=True)
+    if packets_only:
+        # Audio is notes-only during writing. Use packet timestamps when the header omits the stream length.
+        ends = (
+            (packet.pts + packet.duration) * packet.time_base
+            for packet in container.demux(stream)
+            if packet.pts is not None and packet.duration and packet.time_base
+        )
+        last = max(ends, default=None)
+        if last is None:
+            raise UnsupportedMedia("cannot establish audio clip bounds from timestamps")
+        return float(last - origin_for(stream))
     end = None
     for frame in container.decode(stream):
         if frame.pts is None:
@@ -126,7 +147,7 @@ def stream_duration(container: av.container.InputContainer, stream: Any) -> floa
     return float(end - origin_for(stream))
 
 
-def metadata(roots: Mapping[str, str], item: Resource) -> Dict[str, Any]:
+def metadata(roots: Mapping[str, str], item: Resource, *, audio_headers_only: bool = False) -> Dict[str, Any]:
     """Probe image dimensions or finite media timing through an authorized handle."""
     if media_kind(item.path) is None:
         raise UnsupportedMedia("unsupported resource extension")
@@ -145,7 +166,9 @@ def metadata(roots: Mapping[str, str], item: Resource) -> Dict[str, Any]:
                 main = video or audio
                 if main is None:
                     raise UnsupportedMedia("no usable media stream")
-                duration = stream_duration(container, main)
+                if audio_headers_only and video is not None:
+                    raise UnsupportedMedia("resource kind does not match the file")
+                duration = stream_duration(container, main, packets_only=audio_headers_only)
                 if not math.isfinite(duration) or duration <= 0:
                     raise UnsupportedMedia("media needs a finite duration")
                 width = height = 0
@@ -197,18 +220,23 @@ def poster(roots: Mapping[str, str], item: Resource, at: float, max_size: int) -
         raise UnsupportedMedia("unsupported or incomplete media") from error
 
 
-def validate_workbench_source(roots: Mapping[str, str], item: Resource):
-    """Check notes-only audio containment/revision without invoking a decoder."""
+def validate_workbench_source(roots: Mapping[str, str], item: Resource, ratio: Optional[str] = None) -> Resource:
+    """Freeze the source revision and creative selection; audio preparation only needs notes."""
     if item.kind == "audio":
-        with source_file(roots, item):
-            pass
-    else:
-        validate_source(roots, item)
+        if media_kind(item.path) not in ("video", "audio"):
+            raise UnsupportedMedia("unsupported audio resource extension")
+        with source_file(roots, item) as handle:
+            return replace(item, revision=revision_for(os.fstat(handle.fileno())))
+    return validate_source(roots, item, ratio)
 
 
 def validate_source(roots: Mapping[str, str], item: Resource, ratio: Optional[str] = None) -> Resource:
     """Validate a source and freeze its current revision and effective crop."""
-    info = metadata(roots, item)
+    return apply_selection(item, metadata(roots, item), ratio)
+
+
+def apply_selection(item: Resource, info: Mapping[str, Any], ratio: Optional[str] = None) -> Resource:
+    """Validate a crop or clip against metadata from the authorized source revision."""
     if info["kind"] != item.kind:
         raise UnsupportedMedia("resource kind does not match the file")
     result = replace(item, revision=info["revision"])
@@ -311,7 +339,7 @@ def read_audio(
 def read_video(roots: Mapping[str, str], item: Resource, frame_count: int) -> Tuple[np.ndarray, Optional[Tuple[np.ndarray, int]]]:
     """Sample presentation intervals at 24 fps and resize each retained frame once."""
     start, end = item.clip or (0, 0)
-    count = align_clip_frames(math.floor((Fraction(str(end)) - Fraction(str(start))) * 24), frame_count)
+    count = align_clip_frames(clip_frames(start, end), frame_count)
     samples = [Fraction(str(start)) + Fraction(i, 24) for i in range(count)]
     images: List[np.ndarray] = []
     with source_file(roots, item) as handle, open_media(handle) as container:

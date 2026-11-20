@@ -8,6 +8,7 @@ from typing import Any, Dict
 import pytest
 from playwright.sync_api import Locator, Page, expect, sync_playwright
 
+from tests.browser.support.director import inspect_render_recovery
 from tests.browser.support.harness import DRAFT, STUDIO, WORKBENCH, FixtureServer, add_node, browser_page, screenshot
 
 pytestmark = pytest.mark.browser
@@ -53,7 +54,7 @@ def inspect_native_nodes(page: Page, name: str):
     """Exercise the native widgets and settings dialogs alongside the custom panels."""
     definitions = page.evaluate("async () => (await fetch('/object_info')).json()")
     for node_type in definitions:
-        if node_type in (STUDIO, WORKBENCH):
+        if node_type in (STUDIO, WORKBENCH, "ArisuMiniMaxH3DirectorWorkbench"):
             continue
         if node_type == "ArisuMiniMaxH3ModelLoader" and page.viewport_size["width"] == 1024:
             # Frontend 1.52.7 locks the accessor and shrinks inside the setter,
@@ -514,6 +515,76 @@ def test_resource_studio():
             browser.close()
 
 
+def inspect_director(page: Page, server: FixtureServer, name: str):
+    """Plan once, review the film, and undo a local revision in the real editor."""
+    node_id = add_node(page, "ArisuMiniMaxH3DirectorWorkbench")
+    page.get_by_role("button", name="Film", exact=True).click()
+    page.get_by_label("Creative brief", exact=True).fill("Follow a paper boat across the pond.")
+    page.get_by_label("Required story elements (one per line)", exact=True).fill("Launch the boat")
+    page.get_by_label("Target film runtime (optional)", exact=True).fill("about 12 seconds")
+    page.get_by_label("Whole-film revision request", exact=True).fill("Keep both segments short.")
+    before = len(server.generation_requests)
+    page.get_by_role("button", name="Plan the film", exact=True).click()
+    expect(page.locator(".arisu-director .status")).to_contain_text("Output ready to apply")
+    assert len(server.generation_requests) == before + 1
+    assert server.generation_requests[-1]["director"]["request"] == "Keep both segments short."
+    assert not json.loads(widget_value(page, node_id, "film_json"))["segments"]
+    page.get_by_role("button", name="Review draft", exact=True).click()
+    review = page.get_by_role("dialog", name="Generation Results", exact=True)
+    expect(review.get_by_text("Launch the boat", exact=True)).to_be_visible()
+    expect(review.get_by_text("Segment 1", exact=True)).to_be_visible()
+    review.get_by_text("1. Launch the paper boat", exact=False).click()
+    screenshot(page, name, "director-review")
+    review.get_by_role("button", name="Apply to Workbench", exact=True).click()
+    review.get_by_role("button", name="Close", exact=True).click()
+    page.get_by_role("button", name="Segments", exact=True).click()
+    expect(page.get_by_label("Finalized prompt", exact=True)).to_have_value(DRAFT)
+    page.get_by_role("button", name="2. Follow the boat", exact=False).click()
+    before_revision = json.loads(widget_value(page, node_id, "film_json"))
+    page.get_by_label("Revision request", exact=True).fill("Settle the camera on the boat.")
+    page.get_by_role("button", name="Refine current segment", exact=True).click()
+    expect(page.locator(".arisu-director .status")).to_contain_text("Output ready to apply")
+    page.get_by_role("button", name="Review draft", exact=True).click()
+    expect(review.get_by_text("The boat reaches the willow.", exact=True)).to_be_visible()
+    expect(review.get_by_text("The camera settles on the paper boat.", exact=True)).to_be_visible()
+    page.evaluate("window.comfyAPI.app.app.extensionManager.workflow.activeWorkflow.changeTracker.captureCanvasState()")
+    review.get_by_role("button", name="Apply to Workbench", exact=True).click()
+    review.get_by_role("button", name="Close", exact=True).click()
+    after_revision = json.loads(widget_value(page, node_id, "film_json"))
+    assert after_revision["segments"][0] == before_revision["segments"][0]
+    assert after_revision["segments"][1]["prompt"] == "The camera settles on the paper boat."
+    page.evaluate("window.comfyAPI.app.app.extensionManager.workflow.activeWorkflow.changeTracker.undo()")
+    expect(page.get_by_label("Finalized prompt", exact=True)).to_have_value("The boat reaches the willow.")
+    contained(page, ".arisu-director")
+    screenshot(page, name, "director-segments")
+    inspect_render_recovery(page, node_id)
+    page.get_by_role("button", name="2. Follow the boat", exact=False).click()
+    page.get_by_role("button", name="Asset library", exact=True).click()
+    page.get_by_role("button", name="Browse assets", exact=True).click()
+    pick(page, "scene.png")
+    page.get_by_label("Asset notes", exact=True).fill("Red umbrella")
+    saved = json.loads(widget_value(page, node_id, "film_json"))
+    assert saved["assets"][0]["path"] == "scene.png"
+    asset_id = saved["assets"][0]["id"]
+    page.get_by_role("button", name="Segments", exact=True).click()
+    page.get_by_text("Asset bindings (0)", exact=True).click()
+    page.get_by_label("Bind an asset", exact=True).select_option(asset_id)
+    page.get_by_label("Finalized prompt", exact=True).fill("Follow <Picture 1>.")
+    assert json.loads(widget_value(page, node_id, "film_json"))["segments"][1]["prompt"] == f"Follow <Picture:{asset_id}>."
+    # Pasted or duplicated nodes preserve creative state and stable bindings for reselection.
+    restored = page.evaluate(
+        """id => {
+        const app=window.comfyAPI.app.app, original=app.graph.getNodeById(id);
+        const duplicate=LiteGraph.createNode(original.type);
+        duplicate.configure(original.serialize());
+        return JSON.parse(duplicate.widgets.find(w=>w.name==='film_json').value);
+    }""",
+        node_id,
+    )
+    assert not restored["assets"]
+    assert restored["segments"][1]["bindings"] == [{"asset_id": asset_id, "role": "image"}]
+
+
 def test_prompt_workbench():
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch()
@@ -522,6 +593,7 @@ def test_prompt_workbench():
                 name = f"workbench-{width}"
                 with FixtureServer() as server, browser_page(browser, server, name, width, height) as page:
                     expect(page.get_by_role("button", name="Manage Agents", exact=True)).to_have_count(0)
+                    inspect_director(page, server, name)
                     inspect_set_get(page)
                     node_id = add_node(page, WORKBENCH)
                     expect(page.get_by_role("button", name="Generate Prompt", exact=True)).to_be_enabled()

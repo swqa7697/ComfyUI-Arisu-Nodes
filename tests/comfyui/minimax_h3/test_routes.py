@@ -31,6 +31,8 @@ def test_resource_routes_browse_probe_ranges_and_reject_untrusted_inputs(tmp_pat
     monkeypatch.setattr(routes, "roots", lambda: {"input": str(root), "external": str(root)})
     monkeypatch.setattr(routes.folder_paths, "temp_directory", str(tmp_path / "temp"))
 
+    monkeypatch.setattr(routes.folder_paths, "output_directory", str(tmp_path / "output"))
+
     async def run():
         app = web.Application()
         table = web.RouteTableDef()
@@ -43,6 +45,25 @@ def test_resource_routes_browse_probe_ranges_and_reject_untrusted_inputs(tmp_pat
             # Browse draws a poster for videos and a waveform tile for audio, so the listing tells them apart.
             assert data["kinds"] == {"image.png": "image", "movie.mkv": "video", "sound.wav": "audio"}
             assert data["dirs"] == ["nested"] and data["parent"] is None
+            # Resuming a Director sequence requires the exact video and Motion Context latent.
+            take = "552564c1-1999-442e-a016-c1965b957d62"
+            directory = tmp_path / "output" / "arisu_director" / take
+            directory.mkdir(parents=True)
+            params = {"take": take, "video": "clip_00001_.mp4"}
+            latent = directory / "clip_00001.safetensors"
+            latent.write_bytes(b"latent")
+            endpoint = "/arisu/resources/director-take"
+            assert await (await client.get(endpoint, params=params)).json() == {}
+            video = directory / params["video"]
+            video.write_bytes(b"render")
+            revisions = await (await client.get(endpoint, params=params)).json()
+            assert set(revisions) == {"video", "latent"}
+            video.write_bytes(b"another take")
+            assert (await (await client.get(endpoint, params=params)).json())["video"] != revisions["video"]
+            latent.unlink()
+            latent.symlink_to(outside)
+            assert (await client.get(endpoint, params=params)).status == 400
+            assert (await client.get(endpoint, params={**params, "take": "../outside"})).status == 400
             # Studio reopens Browse at the last reference's file path, which lists its containing directory.
             response = await client.get("/arisu/resources/browse", params={"root": "external", "path": "sound.wav"})
             assert response.status == 200

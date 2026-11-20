@@ -31,6 +31,9 @@ from .core import (
     validate_bundle,
     workbench_options,
 )
+from .director import segment_frames
+from .director_media import library_resources, segment_resources
+from .director_task import DIRECTOR_SKILL, DirectorTask
 from .media import validate_workbench_source
 from .workbench_context import context_inputs
 from .workbench_images import IMAGE_LIMIT, PROCESSING, encode_image
@@ -78,6 +81,7 @@ class Generation:
     cancelled: threading.Event = field(default_factory=threading.Event)
     prepared: threading.Event = field(default_factory=threading.Event)
     preparation_done: threading.Event = field(default_factory=threading.Event)
+    director: Optional[DirectorTask] = None
     cpu_context: bool = False
     context_graph: Dict[str, Any] = field(default_factory=dict)
     vae_revision: str = ""
@@ -134,10 +138,25 @@ def _inspect(item: Any, assets: List[Dict[str, Any]]) -> Dict[str, Any]:
 def job_context(job: Generation, assets: List[Dict[str, Any]], resources: ResourceBundle) -> Dict[str, Any]:
     """Build the version-3 Workbench MCP manifest from staged media."""
     settings = job.settings
-    duration = settings.length / 24 if settings else None
+    frames = settings.length if settings else None
     present = bool(job.motion)
+    overlap = job.options["context_length"] if present else 0
+    aspect = settings.aspect_ratio if settings else None
+    if job.director:
+        doc = job.director.document
+        film = doc["film"]
+        aspect = film["aspect_ratio"]
+        if job.director.task == "refine":
+            segment = next(s for s in doc["segments"] if s["id"] == doc["selected"])
+            seconds = segment["seconds"]
+            overlap = segment["overlap_frames"] if segment["transition"] == "continuation" else 0
+            # A local revision may repair a duration made invalid by tighter film limits.
+            if film["min_seconds"] <= seconds <= film["max_seconds"]:
+                frames = segment_frames(seconds, film["min_seconds"], film["max_seconds"])
+    duration = frames / FPS if frames else None
     audio_notes = job.options["motion_audio_notes"] if present else ""
-    delivered = (settings.length - job.options["context_length"]) / 24 if settings and present else duration
+    delivered = (frames - overlap) / FPS if frames else None
+    director_notes = {a["id"]: a.get("note", "") for a in job.director.document["assets"]} if job.director else {}
     references = []
     for item in resources.images + resources.videos + resources.audios:
         if item.muted:
@@ -147,14 +166,14 @@ def job_context(job: Generation, assets: List[Dict[str, Any]], resources: Resour
             "id": item.id,
             "kind": item.kind,
             "name": Path(item.path).name,
-            "note": job.options["reference_notes"].get(key, ""),
+            "note": director_notes.get(item.id, job.options["reference_notes"].get(key, "")),
             "inspect": _inspect(item, assets),
         }
         if item.kind == "video":
             entry["include_audio"] = item.include_audio
         references.append(entry)
     attached = []
-    notes = {entry["id"]: entry["note"] for entry in references}
+    notes = {**director_notes, **{entry["id"]: entry["note"] for entry in references}}
     for index, asset in enumerate(assets):
         note = job.options["motion_notes"] if asset["role"] == "motion" else notes.get(asset.get("resource_id"), "")
         attached.append({**asset, "path": "/inputs/" + asset["file"], "attachment_index": index + 1, "note": note})
@@ -175,8 +194,8 @@ def job_context(job: Generation, assets: List[Dict[str, Any]], resources: Resour
     return {
         "version": 3,
         "duration_seconds": duration,
-        "frame_count": settings.length if settings else None,
-        "aspect_ratio": settings.aspect_ratio if settings else None,
+        "frame_count": frames,
+        "aspect_ratio": aspect,
         "trigger_words": job.options["trigger_words"],
         "requirements": job.options["requirements"],
         "motion": motion,
@@ -198,10 +217,12 @@ class Workbench:
         self.released: Dict[str, float] = {}
         self.lock = threading.RLock()
 
-    def create(self, node_id: str, workflow: str, options: Any, graph: Dict[str, Any]) -> Generation:
+    def create(
+        self, node_id: str, workflow: str, options: Any, graph: Dict[str, Any], director: Optional[DirectorTask] = None
+    ) -> Generation:
         """Reserve the shared agent guard and issue a fresh preparation capability."""
         options = workbench_options(options)
-        if options["skill"] not in skill_catalog(self.directory):
+        if options["skill"] not in skill_catalog(self.directory) or (options["skill"] == DIRECTOR_SKILL and not director):
             raise ValueError("selected skill is unavailable")
         # Let discovery finish, then reserve without another poll taking the guard.
         with self.agents.discovery:
@@ -223,7 +244,7 @@ class Workbench:
             identifier = uuid.uuid4().hex
             destination = self.temp / identifier
             destination.mkdir(mode=0o700)
-            job = Generation(identifier, node_id, workflow, options, provider["selection"], destination, graph)
+            job = Generation(identifier, node_id, workflow, options, provider["selection"], destination, graph, director=director)
             graph[node_id]["inputs"]["prepare_job"] = identifier
             with self.lock:
                 if workflow in self.released:
@@ -385,7 +406,13 @@ class Workbench:
                 raise ValueError(job.error)
             if job.cancelled.is_set() or time.monotonic() > job.deadline:
                 raise ValueError("generation cancelled or preparation timed out")
-            if job.cpu_context:
+            if job.director:
+                doc = job.director.document
+                if job.director.task == "plan":
+                    job.resources = library_resources(doc, job.roots)
+                else:
+                    job.resources = segment_resources(doc, job.roots, doc["selected"])
+            elif job.cpu_context:
                 values = context_inputs(job.context_graph, job.node_id, job.roots)
                 job.settings = values.get("video_settings")
                 job.resources = values.get("resources")
@@ -400,7 +427,8 @@ class Workbench:
                 if job.cancelled.is_set():
                     raise ValueError("generation cancelled")
             resources = job.resources or ResourceBundle()
-            validate_bundle(resources)
+            if not job.director or job.director.task == "refine":
+                validate_bundle(resources)
             sources = []
             for role, items in (
                 ("first_keyframe", (resources.first,)),
@@ -457,16 +485,23 @@ class Workbench:
             if job.cancelled.is_set():
                 raise ValueError("generation cancelled")
             assets = assets + job.motion
-            (job.directory / "context.json").write_text(json.dumps(job_context(job, assets, resources), ensure_ascii=False))
-            self.enforce_budget()
-            # Snapshot the selected skill too: no symlink/administrator edits during a run.
-            skill = skill_catalog(self.directory).get(job.options["skill"])
-            if skill is None:
-                raise ValueError("selected skill is unavailable")
+            manifest = job_context(job, assets, resources)
+            skills = skill_catalog(self.directory)
             staged_skill = job.directory / "skill"
-            if sum(p.stat().st_size for p in skill.rglob("*") if p.is_file()) + self.used_bytes() > CACHE_LIMIT:
-                raise ValueError("Workbench media cache capacity exceeded")
-            shutil.copytree(skill, staged_skill)
+            if job.director:
+                manifest["director"] = job.director.stage(staged_skill, skills, max(0, CACHE_LIMIT - self.used_bytes()))
+            else:
+                skill = skills.get(job.options["skill"])
+                if skill is None:
+                    raise ValueError("selected skill is unavailable")
+                if sum(p.stat().st_size for p in skill.rglob("*") if p.is_file()) + self.used_bytes() > CACHE_LIMIT:
+                    raise ValueError("Workbench media cache capacity exceeded")
+                shutil.copytree(skill, staged_skill)
+            metadata = json.dumps(manifest, ensure_ascii=False).encode()
+            if len(metadata) > 1024 * 1024:
+                raise ValueError("The prepared context exceeds the single-task 1 MiB budget. Shorten notes or reduce the asset library.")
+            (job.directory / "context.json").write_bytes(metadata)
+            self.enforce_budget()
             for item in resources.sources():
                 validate_workbench_source(job.roots, item)
             # Docker's fixed unprivileged UID can differ from the host owner's UID.
@@ -477,9 +512,8 @@ class Workbench:
             job.generation_started = time.monotonic()
             job.state = "generating"
             try:
-                job.draft = finalized_markdown(
-                    self.agents.generate(job.options["agent"], job.directory, staged_skill, job.selection, job.cancelled, job.deadline)
-                )
+                final = self.agents.generate(job.options["agent"], job.directory, staged_skill, job.selection, job.cancelled, job.deadline)
+                job.draft = job.director.result(final, job.roots) if job.director else finalized_markdown(final)
             finally:
                 job.generation_finished = time.monotonic()
             if job.cancelled.is_set():

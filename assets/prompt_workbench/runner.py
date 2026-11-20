@@ -12,7 +12,7 @@ import sys
 import tempfile
 from typing import Any, Dict, Iterator, List, Tuple
 
-from contract import POLICY_REVISION, context, final_response, read_text
+from contract import POLICY_REVISION, DirectorBudgetError, context, final_response, read_text
 from events import ActivityStream, EventValidationError, diagnostic
 from gate import AUDIT
 from runtime import Runtime, stop_on_signal
@@ -85,7 +85,11 @@ def generate(agent: str, options: Dict[str, Any]):
     if details.get("policy_revision") != POLICY_REVISION or not details.get("policy_ready"):
         raise ValueError("agent policy is incompatible; update its image")
     manifest = context()
-    prompt = PROMPT + "\nAttachment identity index (image order is one-based):\n" + json.dumps(manifest["assets"], ensure_ascii=False)
+    director = manifest.get("director")
+    instruction = (
+        "Read the complete Director task and skills via Workbench MCP. Return the structured film or segment draft." if director else PROMPT
+    )
+    prompt = instruction + "\nAttachment identity index (image order is one-based):\n" + json.dumps(manifest["assets"], ensure_ascii=False)
     final = ""
     completed = False
     # Codex reads text from stdin to avoid the per-argument limit on large note sets.
@@ -122,8 +126,24 @@ def generate(agent: str, options: Dict[str, Any]):
                     raise EventValidationError("Agent emitted events after completion")
                 if not isinstance(event, dict):
                     raise EventValidationError("Malformed agent event envelope")
+                if director and event.get("type") in ("error", "turn.failed", "result"):
+                    details_text = json.dumps({k: event.get(k) for k in ("error", "message", "subtype", "stop_reason", "errors")}).lower()
+                    if any(
+                        marker in details_text
+                        for marker in (
+                            "context_length",
+                            "context window",
+                            "context length",
+                            "max_tokens",
+                            "max_output_tokens",
+                            "token limit",
+                        )
+                    ):
+                        raise DirectorBudgetError("Director task exceeded the provider context or output budget")
                 value = adapter.event(event)
                 rendered = display.render(event, agent)
+            except DirectorBudgetError:
+                raise
             except (ValueError, TypeError, AttributeError, KeyError) as error:
                 reason = str(error) if isinstance(error, EventValidationError) else "Provider event rejected or malformed"
                 print(diagnostic(event, agent, details.get("version"), reason), flush=True)
@@ -135,14 +155,29 @@ def generate(agent: str, options: Dict[str, Any]):
                 final = value
         if process.wait() != 0 or not completed:
             raise ValueError("agent execution failed")
-        final_response(final)
+        final_response(final, director=bool(director))
         records = audit()
         if not any(r["tool"] == "get_context" for r in records) or not any(
             r["tool"] == "read_skill" and r["arguments"] == {"path": "SKILL.md"} for r in records
         ):
             raise ValueError("agent did not read the required context and skill through the managed gate")
+        if director:
+            # A writing skill may serve many segments. Audit each distinct selection once.
+            try:
+                payload = json.loads("\n".join(final.strip().splitlines()[1:-1]))
+            except (ValueError, RecursionError):
+                raise DirectorBudgetError("Director output is incomplete or invalid JSON.") from None
+            if not isinstance(payload, dict):
+                raise ValueError("Director response must be a structured plan or replacement.")
+            segments = payload.get("segments") if director["task"] == "plan" else [payload.get("segment")]
+            if not isinstance(segments, list) or not segments or not all(isinstance(s, dict) for s in segments):
+                raise ValueError("Director response is incomplete.")
+            paths = {row["id"]: row["path"] for row in director["writing_skills"]}
+            read = {r["arguments"].get("path") for r in records if r["tool"] == "read_skill"}
+            if any(paths.get(s.get("skill")) not in read for s in segments):
+                raise ValueError("Director did not read each selected writing skill.")
         print("ARISU_AUDIT " + json.dumps(records), flush=True)
-        print("ARISU_RESULT " + json.dumps({"final": final}), flush=True)
+        print("ARISU_RESULT " + json.dumps({"final": final}, ensure_ascii=False), flush=True)
     finally:
         lines.close()
         if process.poll() is None:
@@ -172,7 +207,11 @@ def main():
                 (runtime.auth / "auth.json").unlink(missing_ok=True)
             raise SystemExit(result)
         elif action == "generate":
-            generate(agent, json.loads(sys.stdin.buffer.read(65536)))
+            try:
+                generate(agent, json.loads(sys.stdin.buffer.read(65536)))
+            except DirectorBudgetError:
+                print("ARISU_DIRECTOR_INCOMPLETE", flush=True)
+                raise
         else:
             raise ValueError("unsupported action")
 

@@ -7,7 +7,10 @@ import json
 import logging
 import mimetypes
 import os
+import re
+import stat
 import threading
+import uuid
 from dataclasses import replace
 from typing import Any, Awaitable, Callable, Dict, Optional
 
@@ -17,7 +20,7 @@ from aiohttp import web
 from ..common.core import PREVIEW_CONTENT_TYPE, browse_directory, contained_path, image_content_type, is_animated_image, relative_path
 from ..common.paths import image_roots, select_root
 from .core import Resource, media_kind
-from .media import StaleResource, UnsupportedMedia, metadata, poster, source_path
+from .media import StaleResource, UnsupportedMedia, metadata, poster, revision_for, source_path
 from .proxies import ProxyBusy, ProxyJob, ProxyManager
 
 logger = logging.getLogger(__name__)
@@ -119,6 +122,23 @@ def listing(root: str, path: str, tree: bool) -> Dict[str, Any]:
     }
 
 
+def director_take(output_root: str, take: str, video: str) -> Dict[str, str]:
+    """Identify both finished artifacts of one Director render inside the output root."""
+    if str(uuid.UUID(take)) != take or not re.fullmatch(r"clip_[0-9]{5,}_\.(?:mp4|webm|mov|mkv)", video):
+        raise ValueError("invalid Director take")
+    revisions = {}
+    for kind, filename in (("latent", "clip_00001.safetensors"), ("video", video)):
+        path = contained_path(output_root, f"arisu_director/{take}/{filename}")
+        try:
+            info = os.stat(path)
+        except FileNotFoundError:
+            return {}
+        if not stat.S_ISREG(info.st_mode) or not info.st_size:
+            return {}
+        revisions[kind] = revision_for(info)
+    return revisions
+
+
 class ProxyResponse(web.FileResponse):
     """Pin a ready proxy until FileResponse has finished streaming its ranges."""
 
@@ -181,6 +201,13 @@ def register_routes(routes: web.RouteTableDef, app: Optional[web.Application] = 
             return handler
 
         return decorate
+
+    @route("GET", "/director-take")
+    async def inspect_director_take(request: web.Request) -> web.Response:
+        result = await bounded(
+            director_take, folder_paths.get_output_directory(), request.query.get("take", ""), request.query.get("video", "")
+        )
+        return web.json_response(result, headers={**HEADERS, "Cache-Control": "no-store"})
 
     @route("GET", "/browse")
     async def browse(request: web.Request) -> web.Response:

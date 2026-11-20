@@ -101,7 +101,7 @@ class FixtureServer:
             "installed": True,
             "authenticated": True,
             "policy_ready": True,
-            "policy_revision": 6,
+            "policy_revision": 7,
             "ready": self.available,
             "version": "fixture",
             "models": [{"id": "fixture", "name": "Fixture model", "efforts": ["medium"]}],
@@ -112,6 +112,44 @@ class FixtureServer:
             "agents": {"codex": info, "grok": info},
             "skills": [{"id": "bundled:with-ref", "name": "with-ref", "source": "bundled"}],
         }
+
+    def draft(self) -> str:
+        request = self.generation_requests[-1]
+        if "director" not in request:
+            return DRAFT
+        doc = json.loads(request["prompt"][request["node_id"]]["inputs"]["film_json"])
+        if request["director"]["task"] == "refine":
+            segment = next(s for s in doc["segments"] if s["id"] == doc["selected"])
+            return json.dumps({"version": 1, "segment": {**segment, "prompt": "The camera settles on the paper boat."}, "suggestions": []})
+        segments = [
+            {
+                "id": key,
+                "intent": intent,
+                "seconds": 6,
+                "transition": "cut" if key == "launch" else "continuation",
+                "overlap_frames": 0 if key == "launch" else 22,
+                "opening": "Sunlit pond",
+                "closing": "Boat on the water",
+                "prompt": prompt,
+                "bindings": [],
+                "skill": "bundled:no-ref",
+                "skill_reason": "The scene uses written direction.",
+                "skill_locked": False,
+            }
+            for key, intent, prompt in (
+                ("launch", "Launch the paper boat", DRAFT),
+                ("follow", "Follow the boat", "The boat reaches the willow."),
+            )
+        ]
+        return json.dumps(
+            {
+                "version": 1,
+                "outline": "A paper boat crosses the pond.",
+                "continuity": "Soft morning light.",
+                "coverage": {req: ["launch"] for req in doc["film"]["requirements"]},
+                "segments": segments,
+            }
+        )
 
     async def handle(self, request: web.Request) -> web.StreamResponse:
         path = request.path.removeprefix("/api") if request.path.startswith("/api/") else request.path
@@ -319,7 +357,7 @@ class FixtureServer:
             return web.json_response(
                 {"state": "generating", "generation_elapsed_ms": 42000}
                 if self.hold_generation or self.polls < 3
-                else {"state": "complete", "draft": DRAFT, "generation_elapsed_ms": 78000}
+                else {"state": "complete", "draft": self.draft(), "generation_elapsed_ms": 78000}
             )
         if path in ("/arisu/workbench/release", "/arisu/workbench/cancel", "/arisu/workbench/action") and method == "POST":
             return web.json_response({"accepted": True})

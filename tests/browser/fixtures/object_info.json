@@ -2199,5 +2199,78 @@
     "search_aliases": null,
     "essentials_category": null,
     "has_intermediate_output": false
+  },
+  "ArisuMiniMaxH3DirectorWorkbench": {
+    "input": {
+      "required": {
+        "film_json": [
+          "STRING",
+          {
+            "default": "{\"version\":1,\"film\":{\"brief\":\"\",\"requirements\":[],\"triggers\":\"\",\"continuity\":\"\",\"aspect_ratio\":\"16:9 (Widescreen)\",\"megapixels\":1.0,\"min_seconds\":5.0,\"max_seconds\":15.0,\"target_runtime\":\"\",\"writing_skill\":\"\",\"frame_picture_tags\":\"after_refs\"},\"assets\":[],\"segments\":[],\"selected\":\"\",\"outline\":\"\",\"continuity\":\"\",\"coverage\":{}}",
+            "socketless": true,
+            "multiline": false
+          }
+        ]
+      },
+      "optional": {
+        "context_latent": [
+          "LATENT",
+          {
+            "lazy": true
+          }
+        ],
+        "vae": [
+          "VAE",
+          {
+            "lazy": true
+          }
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "film_json"
+      ],
+      "optional": [
+        "context_latent",
+        "vae"
+      ]
+    },
+    "is_input_list": false,
+    "output": [
+      "STRING",
+      "ARISU_MINIMAX_H3_VIDEO_SETTINGS",
+      "ARISU_MINIMAX_H3_RESOURCES"
+    ],
+    "output_is_list": [
+      false,
+      false,
+      false
+    ],
+    "output_name": [
+      "prompt",
+      "video_settings",
+      "resources"
+    ],
+    "output_tooltips": [
+      null,
+      "Every other output in one bundle, for the hybrid nodes' video_settings input.",
+      null
+    ],
+    "output_matchtypes": null,
+    "name": "ArisuMiniMaxH3DirectorWorkbench",
+    "display_name": "MiniMax H3 Director Workbench",
+    "description": "",
+    "python_module": "custom_nodes.arisu",
+    "category": "Arisu Nodes/MiniMax H3",
+    "output_node": false,
+    "deprecated": false,
+    "experimental": false,
+    "dev_only": false,
+    "api_node": false,
+    "price_badge": null,
+    "search_aliases": null,
+    "essentials_category": null,
+    "has_intermediate_output": false
   }
 }

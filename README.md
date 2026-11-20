@@ -66,7 +66,9 @@ JSONC supports comments; omit trailing commas.
   and select a model and reasoning effort. Docker Desktop must use Linux containers on macOS/Windows. Provider accounts and settings are shared by users of the ComfyUI instance.
 - **Custom prompt skills:** place each skill folder, including its `SKILL.md` and supporting files, at
   `user/__arisu_nodes/skills/<skill-name>/` under ComfyUI's user directory. The pack creates the `skills`
-  directory on startup; administrators manage its contents. Select `custom:<skill-name>` in Prompt Workbench.
+  directory on startup; administrators manage its contents. Select `custom:<skill-name>` in either Workbench.
+  To make a writing skill eligible for automatic Director selection, add a `director.json` beside `SKILL.md`.
+  Provide a short `purpose`, a description of its writing `characteristics`, and an `inputs` array listing supported roles from `first`, `last`, `image`, `video`, and `audio`. Use an empty array for text-only writing.
 
 In Prompt Workbench, choose a skill, connect your contexts, and click **Generate prompt**.
 For a first clip, turn off **Motion Context → Enable motion context** to keep the wires
@@ -85,6 +87,14 @@ in chronological order. The selected context length sets the H3 prompt timing. U
 forward, including background music. To change those sounds, say so in **Requirements**.
 Agents receive audio descriptions as text and are restricted to prompt generation, with
 web search, commands, and file editing disabled.
+
+### Direct a multi-segment film
+
+Add **MiniMax H3 Director Workbench** to your graph. Connect its `prompt`, `video_settings`, and `resources` outputs to the matching inputs on **MiniMax H3 Hybrid to Video**. The Director render controls also require the **comfyui-h3-motion-context** pack. See the [Director node guide](web/docs/ArisuMiniMaxH3DirectorWorkbench/en.md) for the render chain.
+
+In **Film**, enter the brief, required story elements and generation length range. Add reference material to the asset library. Use **Plan the film** to draft the whole sequence in one agent task. Review the coverage, timing, bindings and prompts, then apply the plan. The node also supports manual editing. Agent generation uses the same Docker and account settings as Prompt Workbench. Update the agent image in **Agents** settings before using Director with an existing installation.
+
+Render the current segment to inspect its footage, or render the remaining segments in order. A continuation loads the previous take and trims its overlap from both picture and sound. Save the workflow to retain the plan and render records. Keep each take’s video and latent together under ComfyUI’s output directory for recovery.
 
 ## Nodes
 
@@ -106,6 +116,7 @@ Click a node name for its full reference, also available through the node's righ
 | Node                                                                                        | Summary                                                                       |
 | ------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
 | [MiniMax H3 Model Loader](web/docs/ArisuMiniMaxH3ModelLoader/en.md)                         | Load H3 natively or experimentally replace an inclusive AdaLN block range.    |
+| [MiniMax H3 Director Workbench](web/docs/ArisuMiniMaxH3DirectorWorkbench/en.md)             | Plan and render a film as a sequence of individually editable H3 generations. |
 | [MiniMax H3 Prompt Workbench](web/docs/ArisuMiniMaxH3PromptWorkbench/en.md)                 | Write prompts or generate and review drafts with Codex or Grok.               |
 | [MiniMax H3 Resource Studio](web/docs/ArisuMiniMaxH3ResourceStudio/en.md)                   | Arrange, crop, and trim keyframes and image, video, or audio references.      |
 | [MiniMax H3 Hybrid to Video](web/docs/ArisuMiniMaxH3HybridToVideo/en.md)                    | Combine keyframes and media references into H3 conditioning and an AV latent. |

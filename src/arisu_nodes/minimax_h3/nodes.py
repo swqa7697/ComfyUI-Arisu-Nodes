@@ -79,6 +79,8 @@ from .core import (
     temporal_shape,
     validate_bundle,
 )
+from .director import EMPTY_FILM, parse_document, segment_snapshot
+from .director_media import render_fingerprint, render_outputs
 from .media import build_bundle, read_audio, read_image, read_video, source_fingerprint, validate_source
 from .selflift_sampling import progressive_sample
 from .selflift_upscaler import learned_latent_lift, list_upscaler_models
@@ -837,6 +839,7 @@ class ArisuMiniMaxH3HybridToVideo(io.ComfyNode):
         """
         if video_settings is not None:
             width, height, length = video_settings.width, video_settings.height, video_settings.length
+            frame_picture_tags = video_settings.frame_picture_tags or frame_picture_tags
         if resources is not None:
             first_frame, last_frame, ref_images, ref_videos, ref_video_audios, ref_audios = _consume_resources(
                 resources, length, first_frame, last_frame, ref_images, ref_videos, ref_video_audios, ref_audios, audio_vae
@@ -1020,6 +1023,7 @@ class ArisuMiniMaxH3HybridToVideoAdvanced(io.ComfyNode):
         """
         if video_settings is not None:
             width, height, length = video_settings.width, video_settings.height, video_settings.length
+            frame_picture_tags = video_settings.frame_picture_tags or frame_picture_tags
             if video_settings.target_width is not None and video_settings.target_height is not None:
                 target_width, target_height = video_settings.target_width, video_settings.target_height
         if resources is not None:
@@ -1344,6 +1348,50 @@ class ArisuMiniMaxH3ResourceStudio(io.ComfyNode):
         return source_fingerprint(_resource_roots(), resources_json, aspect_ratio)
 
 
+class ArisuMiniMaxH3DirectorWorkbench(io.ComfyNode):
+    """Emit the finalized current segment for a dedicated long-video workflow."""
+
+    @classmethod
+    def define_schema(cls) -> io.Schema:
+        """Declare a persisted film document and three explicit Hybrid outputs."""
+        return io.Schema(
+            node_id="ArisuMiniMaxH3DirectorWorkbench",
+            display_name="MiniMax H3 Director Workbench",
+            category="Arisu Nodes/MiniMax H3",
+            inputs=[
+                io.String.Input("film_json", default=EMPTY_FILM, socketless=True),
+                io.Latent.Input("context_latent", optional=True, lazy=True),
+                io.Vae.Input("vae", optional=True, lazy=True),
+            ],
+            outputs=[io.String.Output("prompt"), _settings_bundle_output(), io.Custom("ARISU_MINIMAX_H3_RESOURCES").Output("resources")],
+        )
+
+    @classmethod
+    def check_lazy_status(cls, **kwargs: Any) -> List[str]:
+        """Writing uses the one-shot Workbench preparation path. Ordinary execution needs no motion inputs."""
+        return []
+
+    @classmethod
+    def execute(cls, film_json: str, context_latent: Optional[Dict[str, Any]] = None, vae: Optional[comfy.sd.VAE] = None) -> io.NodeOutput:
+        """Resolve the selected finalized segment from the current authorized roots."""
+        return io.NodeOutput(*render_outputs(film_json, _resource_roots()))
+
+    @classmethod
+    def validate_inputs(cls, film_json: Optional[str] = None) -> Union[bool, str]:
+        """Reject invalid selected segments before downstream work begins."""
+        try:
+            if film_json is not None:
+                segment_snapshot(parse_document(film_json))
+            return True
+        except (TypeError, ValueError) as error:
+            return str(error)
+
+    @classmethod
+    def fingerprint_inputs(cls, film_json: str, **kwargs: Any) -> str:
+        """Invalidate the render cache when a bound original changes."""
+        return render_fingerprint(film_json, _resource_roots())
+
+
 class ArisuMiniMaxH3PromptWorkbench(io.ComfyNode):
     """Editable text on normal runs; explicitly authorized preparation on button clicks."""
 
@@ -1624,6 +1672,7 @@ class ArisuMiniMaxH3SelfLiftProgressiveSampler(io.ComfyNode):
 NODES: List[Type[io.ComfyNode]] = [
     ArisuMiniMaxH3ModelLoader,
     ArisuMiniMaxH3PromptWorkbench,
+    ArisuMiniMaxH3DirectorWorkbench,
     ArisuMiniMaxH3ResourceStudio,
     ArisuMiniMaxH3HybridToVideo,
     ArisuMiniMaxH3HybridToVideoAdvanced,

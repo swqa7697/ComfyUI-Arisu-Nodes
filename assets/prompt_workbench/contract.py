@@ -9,12 +9,16 @@ import stat
 from pathlib import Path
 from typing import Any, Dict
 
-POLICY_REVISION = 6
+POLICY_REVISION = 7
 REFUSAL = "ARISU_POLICY_REFUSAL"
 INPUTS = Path("/inputs")
 SKILL = Path("/skill")
 TOOLS = ("get_context", "read_skill")
 MAX_TEXT = 1024 * 1024
+
+
+class DirectorBudgetError(ValueError):
+    """Identify a one-shot input or output limit for the host's review UI."""
 
 
 def read_text(path: Path, limit: int = MAX_TEXT) -> str:
@@ -125,11 +129,13 @@ def skill_text(relative: str, root: Path = SKILL) -> str:
     return read_text(path)
 
 
-def final_response(value: str) -> str:
+def final_response(value: str, director: bool = False) -> str:
     """Validate stream output, including the explicit policy refusal signal."""
     if not isinstance(value, str) or REFUSAL in value:
         raise ValueError("request refused by the prompt-only policy")
     match = re.fullmatch(r"\s*```(?:markdown|text)?[ \t]*\r?\n([\s\S]*?)\r?\n```\s*", value)
-    if not match or not match[1].strip() or "```" in match[1] or len(match[1]) > 65536:
+    if director and (not match or len(match[1].encode("utf-8")) > 256 * 1024):
+        raise DirectorBudgetError("Incomplete Director response or single-task output budget exceeded.")
+    if not match or not match[1].strip() or "```" in match[1] or (not director and len(match[1]) > 65536):
         raise ValueError("agent must return one nonempty markdown or plain-text fence")
     return value

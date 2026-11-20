@@ -150,7 +150,7 @@ def test_agent_update_preserves_working_image_and_settings_reject_unavailable_mo
         agents.manage("codex", "update")
     assert not tagged and not agents.guard.locked() and agents.operation["state"] == "failed"
     assert any("Candidate image validation failed" in line for line in agents.read_logs()["lines"])
-    monkeypatch.setattr(agents, "invoke", lambda *args, **kwargs: {"policy_ready": True, "policy_revision": 6})
+    monkeypatch.setattr(agents, "invoke", lambda *args, **kwargs: {"policy_ready": True, "policy_revision": 7})
     agents.manage("codex", "update")
     assert tagged == [agents.image("codex")] and agents.operation["state"] == "complete"
 
@@ -672,7 +672,7 @@ def test_mcp_manifest_images_and_unlisted_or_escaping_assets(
         runner.audit()
     audit_path.rmdir()
     provider = importlib.import_module("agents.codex.adapter")
-    monkeypatch.setattr(provider, "inspect", lambda: {"policy_ready": True, "policy_revision": 6})
+    monkeypatch.setattr(provider, "inspect", lambda: {"policy_ready": True, "policy_revision": 7})
     monkeypatch.setattr(runner, "adapter_for", lambda agent: provider)
     monkeypatch.setattr(runner, "context", lambda: {"assets": []})
     monkeypatch.setattr(
@@ -702,7 +702,7 @@ def test_mcp_manifest_images_and_unlisted_or_escaping_assets(
             assert "ARISU_RESULT " not in capsys.readouterr().out
 
     # Grok can emit init before MCP connects; required reads still gate final output.
-    monkeypatch.setattr(grok_provider, "inspect", lambda: {"policy_ready": True, "policy_revision": 6})
+    monkeypatch.setattr(grok_provider, "inspect", lambda: {"policy_ready": True, "policy_revision": 7})
     monkeypatch.setattr(runner, "adapter_for", lambda agent: grok_provider)
     init = {
         "type": "system",
@@ -747,6 +747,27 @@ def test_mcp_manifest_images_and_unlisted_or_escaping_assets(
             with pytest.raises(ValueError):
                 runner.generate("grok", {"model": "test"})
             assert "ARISU_RESULT " not in capsys.readouterr().out
+
+    # A Director task can share one audited writing-skill read across multiple segments.
+    with monkeypatch.context() as director:
+        path = "writing/1/SKILL.md"
+        director.setattr(
+            runner, "context", lambda: {"assets": [], "director": {"task": "plan", "writing_skills": [{"id": "base", "path": path}]}}
+        )
+        payload = json.dumps({"segments": [{"id": "a", "skill": "base"}, {"id": "b", "skill": "base"}]})
+        message = {**result, "result": "```text\n" + payload + "\n```"}
+        wire = json.dumps(init) + "\n" + json.dumps(message)
+        director.setattr(grok_provider, "command", lambda *args: [sys.executable, "-c", "print(" + repr(wire) + ")"])
+        director.setattr(runner, "audit", lambda: reads)
+        with pytest.raises(ValueError, match="writing skill"):
+            runner.generate("grok", {"model": "test"})
+        director.setattr(runner, "audit", lambda: [*reads, {"tool": "read_skill", "arguments": {"path": path}}])
+        runner.generate("grok", {"model": "test"})
+        assert "ARISU_RESULT " in capsys.readouterr().out
+        exhausted = json.dumps({"type": "error", "error": {"code": "context_length_exceeded"}})
+        director.setattr(grok_provider, "command", lambda *args: [sys.executable, "-c", "print(" + repr(exhausted) + ")"])
+        with pytest.raises(runner.DirectorBudgetError, match="context or output budget"):
+            runner.generate("grok", {"model": "test"})
 
     # A CLI burst must be visible before the provider is allowed to finish.
     # An incomplete stderr line must not block stdout, and UTF-8 may span reads.
@@ -895,7 +916,7 @@ def test_mcp_manifest_images_and_unlisted_or_escaping_assets(
             (grok_provider, ["private-envelope"]),
         ):
             patches.setattr(runner, "adapter_for", lambda agent, selected=selected: selected)
-            patches.setattr(selected, "inspect", lambda: {"policy_ready": True, "policy_revision": 6, "version": "test-cli 1.0"})
+            patches.setattr(selected, "inspect", lambda: {"policy_ready": True, "policy_revision": 7, "version": "test-cli 1.0"})
             wire = json.dumps(invalid) + "\n"
             patches.setattr(selected, "command", lambda *args, wire=wire: [sys.executable, "-c", "print(" + repr(wire) + ")"])
             with pytest.raises(ValueError):

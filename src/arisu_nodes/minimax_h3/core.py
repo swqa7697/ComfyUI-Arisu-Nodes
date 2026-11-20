@@ -16,6 +16,7 @@ import math
 import mimetypes
 import re
 from dataclasses import dataclass
+from fractions import Fraction
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple, TypeVar, Union
 
 from ..common.core import image_content_type, relative_path
@@ -570,6 +571,11 @@ def ref_video_canvas(video_width: int, video_height: int) -> Tuple[int, int]:
     return canvas_w, canvas_h
 
 
+def clip_frames(start: float, end: float) -> int:
+    """Count complete H3 video frames in a source interval at the native frame rate."""
+    return math.floor((Fraction(str(end)) - Fraction(str(start))) * FPS)
+
+
 def align_clip_frames(n_frames: int, frame_count: int) -> int:
     """Crop a reference clip length to the target duration and down to the 17k+5 grid.
 
@@ -786,6 +792,7 @@ class VideoSettings:
     upscale_factor: Optional[float] = None
     target_width: Optional[int] = None
     target_height: Optional[int] = None
+    frame_picture_tags: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -849,7 +856,8 @@ def clip_interval(value: Any, duration: Optional[float] = None) -> Tuple[float, 
     return float(start), float(end)
 
 
-def _resource(value: Any, keyframe: bool = False) -> Resource:
+def parse_resource(value: Any, keyframe: bool = False) -> Resource:
+    """Parse one untrusted source descriptor without opening the source."""
     if not isinstance(value, dict):
         raise TypeError("resource must be an object")
     common = {"id", "kind", "root", "path", "muted"}
@@ -914,8 +922,8 @@ def parse_resources(text: str) -> Tuple[Optional[Resource], Optional[Resource], 
     keys, refs = data["keyframes"], data["references"]
     if not isinstance(keys, dict) or set(keys) != {"first", "last"} or not isinstance(refs, list) or len(refs) > 256:
         raise ValueError("invalid keyframes or more than 256 reference cards")
-    first, last = (_resource(keys[key], True) if keys[key] is not None else None for key in ("first", "last"))
-    references = tuple(_resource(value) for value in refs)
+    first, last = (parse_resource(keys[key], True) if keys[key] is not None else None for key in ("first", "last"))
+    references = tuple(parse_resource(value) for value in refs)
     all_items = tuple(item for item in (first, last) if item is not None) + references
     if len({item.id for item in all_items}) != len(all_items):
         raise ValueError("resource IDs must be unique")
@@ -962,7 +970,7 @@ def validate_bundle(bundle: ResourceBundle):
                 data["clip"] = dict(zip(("start", "end"), item.clip))
                 if expected == "video":
                     data["include_audio"] = item.include_audio
-            _resource(data, keyframe)
+            parse_resource(data, keyframe)
             if item.id in ids:
                 raise ValueError("resource IDs must be unique")
             ids.add(item.id)

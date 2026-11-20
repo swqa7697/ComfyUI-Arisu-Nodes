@@ -29,9 +29,12 @@ function sanitize(data) {
       for (const name of owner.properties ?? []) if (value.properties) delete value.properties[name];
       const stored = value.widgets_values;
       for (const [name, position, replacement] of owner.fields) {
-        if (Array.isArray(stored)) stored[position] = replacement;
-        else if (stored && typeof stored === 'object') stored[name] = replacement;
-        if (value.inputs && !Array.isArray(value.inputs)) value.inputs[name] = replacement;
+        const reset = (previous) => (typeof replacement === 'function' ? replacement(previous) : replacement);
+        if (Array.isArray(stored)) stored[position] = reset(stored[position]);
+        else if (stored && typeof stored === 'object') stored[name] = reset(stored[name]);
+        if (value.widgets_values_named && name in value.widgets_values_named)
+          value.widgets_values_named[name] = reset(value.widgets_values_named[name]);
+        if (value.inputs && !Array.isArray(value.inputs)) value.inputs[name] = reset(value.inputs[name]);
       }
       delete value.imgs;
       delete value.images;

@@ -280,7 +280,7 @@ export function createActivity(label = 'Agent Logs') {
 let resultDialogId = 0;
 
 /** Keep generation results in the current browser session, outside workflow widgets. */
-export function openAgentActivity(snapshot, onClose, onEdit, onApply) {
+export function openAgentActivity(snapshot, onClose, onEdit, onApply, review) {
   const dialog = el('dialog', { className: 'arisu-activity-modal', ariaLabel: 'Generation Results' });
   const id = `arisu-generation-${++resultDialogId}`;
   const generationTime = el('span', { className: 'generation-time', ariaLive: 'off' });
@@ -293,13 +293,13 @@ export function openAgentActivity(snapshot, onClose, onEdit, onApply) {
   const hint = el('span', { className: 'output-hint', role: 'status' });
   const apply = el('button', { textContent: 'Apply to Workbench', className: 'apply', onclick: onApply });
   const output = el('div', { className: 'generation-output', role: 'tabpanel', id: `${id}-output` }, [
-    draft,
+    review?.element ?? draft,
     el('footer', {}, [hint, apply]),
   ]);
   activity.element.setAttribute('role', 'tabpanel');
   activity.element.id = `${id}-activity`;
   const panels = [activity.element, output];
-  const tabs = ['Activity', 'Output Prompt'].map((label, index) =>
+  const tabs = ['Activity', review?.label ?? 'Output Prompt'].map((label, index) =>
     el('button', {
       textContent: label,
       role: 'tab',
@@ -327,11 +327,16 @@ export function openAgentActivity(snapshot, onClose, onEdit, onApply) {
     const state = snapshot();
     generationTime.textContent = state.generationTime || '';
     generationTime.hidden = !state.generationTime;
+    review?.refresh(state);
     if (draft.value !== state.draft) draft.value = state.draft || '';
     draft.disabled = !state.hasOutput;
     apply.disabled = !state.draft?.trim() || state.applied;
     apply.textContent = state.applied ? 'Applied' : 'Apply to Workbench';
-    hint.textContent = state.running ? 'Generating…' : state.draft ? 'Only applied text is saved in the workflow.' : 'No output yet.';
+    hint.textContent = state.running
+      ? 'Generating…'
+      : state.draft
+        ? (review?.hint ?? 'Only applied text is saved in the workflow.')
+        : 'No output yet.';
   }
   draft.oninput = () => {
     onEdit(draft.value);

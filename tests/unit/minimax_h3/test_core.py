@@ -23,6 +23,7 @@ from src.arisu_nodes.minimax_h3.core import (
     video_frame_count,
     video_latent_t,
 )
+from src.arisu_nodes.minimax_h3.director import segment_frames
 
 
 def test_frame_grid_round_trips_between_pixels_and_latents():
@@ -32,6 +33,15 @@ def test_frame_grid_round_trips_between_pixels_and_latents():
         assert align_frame_count(requested) == aligned, f"case={requested!r}"
         assert video_latent_t(aligned) == latent_t, f"case={aligned!r}"
         assert video_frame_count(latent_t) == aligned, f"case={latent_t!r}"
+
+    # Director first computes legal candidates on both sides of the requested duration.
+    assert segment_frames(5, 5, 15) == 124 and segment_frames(15, 5, 15) == 345
+    assert segment_frames(5.8, 5, 5.8) == 124
+    assert segment_frames(141 / 24, 141 / 24, 141 / 24) == 141
+    with pytest.raises(ValueError, match="range"):
+        segment_frames(5.7, 5.6, 5.8)
+    with pytest.raises(ValueError, match="duration"):
+        segment_frames(16, 5, 15)
 
 
 def test_video_frame_count_rejects_off_grid_lengths():
