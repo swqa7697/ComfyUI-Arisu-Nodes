@@ -33,6 +33,7 @@ export function openDirectorReview(run, read, apply) {
     .arisu-film-review p{white-space:pre-wrap;margin:4px 0 0;overflow-wrap:anywhere;line-height:1.55}
     .arisu-film-review summary{cursor:pointer;font-weight:600;padding:10px 12px;overflow-wrap:anywhere}
     .arisu-film-review details[open]>summary{background:color-mix(in srgb,var(--arisu-blue,#adbfd2) 12%,transparent)}
+    .arisu-film-review details>p{padding:0 12px 10px}
     .arisu-film-review .review-grid.prompts,.arisu-film-review .shot-info{padding:12px}
     .arisu-film-review .shot-info{border-top:1px solid var(--edge);background:var(--comfy-input-bg,#222)}
     .arisu-film-review .shot-info section:last-child{grid-column:1/-1}
@@ -100,10 +101,21 @@ export function openDirectorReview(run, read, apply) {
               section('Estimated runtime', runtime + (doc.film.target_runtime ? ' · Target ' + doc.film.target_runtime : '')),
             ),
           );
+          if (run.directorSubmission?.brief)
+            children.push(
+              el('details', {}, [
+                el('summary', { textContent: 'Submitted film requirements' }),
+                el('p', { textContent: run.directorSubmission.brief }),
+              ]),
+            );
           const coverage = Object.entries(data.coverage).map(([req, ids]) =>
             section(req, ids.length ? ids.map((id) => 'Segment ' + (segments.findIndex((s) => s.id === id) + 1)).join(', ') : 'Uncovered'),
           );
           if (coverage.length) children.push(el('section', {}, [el('h3', { textContent: 'Story coverage' }), grid(...coverage)]));
+        } else if (run.directorSubmission?.request) {
+          children.push(
+            grid(section('Revision request', run.directorSubmission.request), section('Revision context', run.directorSubmission.context)),
+          );
         }
         for (const segment of segments) {
           const old = doc.segments.find((item) => item.id === segment.id);

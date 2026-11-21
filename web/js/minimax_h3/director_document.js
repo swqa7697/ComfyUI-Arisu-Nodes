@@ -1,9 +1,6 @@
 // Film document helpers for editing and review. Execution validates the same contract on the host.
 const DEFAULT_FILM = {
   brief: '',
-  requirements: [],
-  triggers: '',
-  continuity: '',
   aspect_ratio: '16:9 (Widescreen)',
   megapixels: 1,
   min_seconds: 5,
@@ -36,8 +33,13 @@ export function readDocument(text) {
     ...doc,
     film: { ...DEFAULT_FILM, ...doc.film },
   };
+  const { requirements = [], triggers = '', continuity = '', ...film } = result.film;
   if (
-    !Array.isArray(result.film.requirements) ||
+    typeof film.brief !== 'string' ||
+    typeof triggers !== 'string' ||
+    typeof continuity !== 'string' ||
+    !Array.isArray(requirements) ||
+    requirements.some((item) => typeof item !== 'string') ||
     !Array.isArray(result.assets) ||
     result.assets.some((asset) => typeof asset?.path !== 'string' || typeof asset.id !== 'string') ||
     !Array.isArray(result.segments) ||
@@ -52,6 +54,16 @@ export function readDocument(text) {
     Object.values(result.coverage).some((ids) => !Array.isArray(ids))
   )
     throw new Error('Invalid Director film document.');
+  // Match the host migration. Keep the original text and strip legacy keys so subsequent reads are idempotent.
+  film.brief = [
+    film.brief,
+    requirements.length && 'Required story elements:\n' + requirements.join('\n'),
+    triggers && 'Trigger words:\n' + triggers,
+    continuity && 'Continuity:\n' + continuity,
+  ]
+    .filter(Boolean)
+    .join('\n\n');
+  result.film = film;
   return result;
 }
 

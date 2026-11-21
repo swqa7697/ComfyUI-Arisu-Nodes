@@ -105,7 +105,10 @@ class Generation:
         if self.generation_started is not None:
             end = self.generation_finished if self.generation_finished is not None else time.monotonic()
             elapsed = max(0, int((end - self.generation_started) * 1000))
-        return {"id": self.id, "state": state, "error": self.error, "draft": self.draft, "generation_elapsed_ms": elapsed}
+        result = {"id": self.id, "state": state, "error": self.error, "draft": self.draft, "generation_elapsed_ms": elapsed}
+        if state == "complete" and self.director and self.director.task == "refine":
+            result["director_tail_frames"] = bool(self.motion)
+        return result
 
 
 def _keyframe(assets: List[Dict[str, Any]], role: str) -> Optional[Dict[str, Any]]:

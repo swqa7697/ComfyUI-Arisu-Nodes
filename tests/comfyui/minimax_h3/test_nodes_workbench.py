@@ -16,6 +16,7 @@ from PIL import Image
 
 from src.arisu_nodes.minimax_h3 import media, nodes, workbench
 from src.arisu_nodes.minimax_h3.core import Resource, ResourceBundle, VideoSettings, workbench_options
+from src.arisu_nodes.minimax_h3.director_task import DirectorTask
 from src.arisu_nodes.minimax_h3.media import revision_for
 from src.arisu_nodes.minimax_h3.workbench import Generation, Workbench, job_context, skill_catalog
 from src.arisu_nodes.minimax_h3.workbench_media import stage
@@ -118,6 +119,29 @@ def test_workbench_plain_string_first_clip_and_phase_aligned_tail(tmp_path: Path
     with pytest.raises(ValueError, match="phase"):
         node.execute(**inputs(prepare_job="malformed", context_latent=source(3), vae=vae))
     assert malformed.error and malformed.preparation_done.is_set()
+    # A Director revision can still use the storyboard when its optional tail cannot be decoded.
+    revision = DirectorTask({}, "refine", "Slow the action", False, {})
+
+    def fail_decode(_latent: torch.Tensor):
+        raise RuntimeError("incompatible decoder")
+
+    for name, context, decoder in (
+        ("phase", source(3), vae),
+        ("decode", source(12), SimpleNamespace(decode=fail_decode)),
+        ("shape", source(12), SimpleNamespace(decode=lambda _latent: torch.zeros(1))),
+    ):
+        optional = job(name)
+        optional.director = revision
+        node.execute(**inputs(prepare_job=name, context_latent=context, vae=decoder))
+        assert not optional.error and optional.prepared.is_set() and not optional.motion
+        assert not any(optional.directory.iterdir())
+    with monkeypatch.context() as local:
+        local.setattr(workbench, "CACHE_LIMIT", 1)
+        full = job("full-cache")
+        full.director = revision
+        with pytest.raises(ValueError, match="capacity"):
+            node.execute(**inputs(prepare_job=full.id, context_latent=source(57), vae=vae))
+        assert full.error and full.preparation_done.is_set()
     owner.release("workflow")
     assert all(value.cancelled.is_set() for value in owner.jobs.values()) and not owner.cache
 

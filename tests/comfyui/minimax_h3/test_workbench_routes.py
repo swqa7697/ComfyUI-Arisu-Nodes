@@ -139,7 +139,12 @@ def test_workbench_routes_reject_untrusted_requests_and_queue_only_preparation(t
             (custom / "SKILL.md").write_text("Write in short sentences.")
             document = {
                 "version": 1,
-                "film": {"brief": "Find the red box", "requirements": ["Open the box"]},
+                "film": {
+                    "brief": "# Find the red box\n\nKeep  **this**  formatting.",
+                    "requirements": ["Open the box"],
+                    "triggers": "brass lock",
+                    "continuity": "Morning light.",
+                },
                 "assets": [{"id": "box", "kind": "image", "root": "input", "path": "prop.png", "muted": False, "note": "The brass lock"}],
                 "segments": [],
                 "selected": "",
@@ -182,7 +187,7 @@ def test_workbench_routes_reject_untrusted_requests_and_queue_only_preparation(t
                 "segments": segments,
                 "outline": "Arrive and open the box.",
                 "continuity": "Morning light.",
-                "coverage": {"Open the box": ["opening"]},
+                "coverage": {"Show the opening of the red box": ["opening"]},
             }
             calls = []
 
@@ -190,14 +195,21 @@ def test_workbench_routes_reject_untrusted_requests_and_queue_only_preparation(t
                 context = json.loads((directory / "context.json").read_bytes())
                 task = context["director"]
                 calls.append(task["task"])
+                assert set(task["film"]).isdisjoint({"requirements", "triggers", "continuity"})
+                assert context["requirements"] == ""
                 assert context["assets"][0]["note"] == "The brass lock" and "root" not in task["library"][0]
                 assert (directory / context["assets"][0]["file"]).is_file()
                 catalog = {row["id"]: row for row in task["writing_skills"]}
                 assert all((skill / row["path"]).is_file() for row in catalog.values())
                 if task["task"] == "plan":
+                    assert task["film"]["brief"] == (
+                        "# Find the red box\n\nKeep  **this**  formatting.\n\nRequired story elements:\nOpen the box"
+                        "\n\nTrigger words:\nbrass lock\n\nContinuity:\nMorning light."
+                    )
                     assert set(catalog) == {"bundled:no-ref", "bundled:with-ref"}
                     return "```text\n" + json.dumps(plan) + "\n```"
                 assert task["selected"] == "opening" and task["segments"][0]["id"] == "arrival"
+                assert task["film"]["brief"] == document["film"]["brief"] and task["coverage"] == plan["coverage"]
                 assert set(catalog) == {"custom:handwritten"} and not context["motion"]["present"]
                 if task["request"] == "more":
                     return "x" * (256 * 1024 + 33)
@@ -217,7 +229,7 @@ def test_workbench_routes_reject_untrusted_requests_and_queue_only_preparation(t
                     "node_id": "d",
                     "workflow": "director",
                     "director": {"task": task, "request": note},
-                    "options": {"motion_enabled": False},
+                    "options": {"motion_enabled": False, "requirements": "Stale Prompt Workbench input"},
                     "prompt": {"d": {"class_type": "ArisuMiniMaxH3DirectorWorkbench", "inputs": {"film_json": json.dumps(document)}}},
                 }
                 accepted = await client.post("/arisu/workbench/generate", json=value)
@@ -235,15 +247,21 @@ def test_workbench_routes_reject_untrusted_requests_and_queue_only_preparation(t
                 local.setattr(owner, "execute", real_execute)
                 local.setattr(workbench_routes, "image_roots", lambda *args: {"input": str(root)})
                 local.setattr(owner.agents, "generate", generate_director)
+                plan["coverage"]["Keep the morning light"] = ["missing"]
+                invalid = await director_job("plan", "")
+                assert invalid["state"] == "failed" and "unknown segment in coverage" in invalid["error"] and not invalid["draft"]
+                plan["coverage"]["Keep the morning light"] = ["arrival", "opening"]
                 result = await director_job("plan", "")
                 assert result["state"] == "complete", result["error"]
                 draft = json.loads(result["draft"])
                 assert len(draft["segments"]) == 2 and draft["segments"][1]["prompt"] == "The lock on <Picture:box> opens."
                 assert draft["coverage"] == plan["coverage"] and not document["segments"]
+                document["film"] = {"brief": "## Sound\n\nA bell rings throughout the film.\n"}
                 document.update({key: draft[key] for key in ("segments", "outline", "continuity", "coverage")}, selected="opening")
                 document["segments"][1].update(skill="custom:handwritten", skill_locked=True)
                 result = await director_job("refine", "Slow the action")
                 assert result["state"] == "complete", result["error"]
+                assert result["director_tail_frames"] is False
                 assert json.loads(result["draft"])["segment"]["id"] == "opening" and document["segments"][0] == segments[0]
                 result = await director_job("refine", "more")
                 assert result["state"] == "failed" and "budget" in result["error"] and not result["draft"]
@@ -252,7 +270,7 @@ def test_workbench_routes_reject_untrusted_requests_and_queue_only_preparation(t
                 assert not result["draft"] and document["segments"][1]["bindings"] == segments[1]["bindings"]
                 result = await director_job("refine", "long chime")
                 assert result["state"] == "failed" and "asset chime" in result["error"] and not result["draft"]
-                assert calls == ["plan", "refine", "refine", "refine", "refine"] and not queued
+                assert calls == ["plan", "plan", "refine", "refine", "refine", "refine"] and not queued
             # Real operations still refuse concurrent generation immediately.
             owner.agents.guard.acquire()
             try:

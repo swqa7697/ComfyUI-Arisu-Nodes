@@ -989,12 +989,16 @@ class PreparationError(ValueError):
     """A safe, actionable preparation error that may be displayed to the user."""
 
 
+class MotionFootageError(PreparationError):
+    """A selected latent or its decoded pixels cannot supply usable tail observations."""
+
+
 def motion_tail(total_steps: int) -> Tuple[int, int]:
     """Return the starting latent step and decoded frame count for the observation tail."""
     try:
         total_frames = video_frame_count(total_steps)
     except ValueError as error:
-        raise PreparationError("context latent has an invalid temporal phase") from error
+        raise MotionFootageError("context latent has an invalid temporal phase") from error
     decoded_frames = min(total_frames, align_frame_count(MOTION_SAMPLE_LIMIT * MOTION_SAMPLE_STRIDE))
     return total_steps - video_latent_t(decoded_frames), decoded_frames
 

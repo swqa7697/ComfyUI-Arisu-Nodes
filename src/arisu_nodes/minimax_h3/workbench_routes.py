@@ -149,7 +149,11 @@ def register_routes(server: Any, owner: Workbench):
                 director, graph = await asyncio.to_thread(
                     DirectorTask.capture, value["director"], value.get("prompt"), node_id, options, skills
                 )
-                options["skill"] = DIRECTOR_SKILL
+                # Director owns the film brief, local request and library notes. Only the
+                # verified tail images contribute observed motion to a revision.
+                options.update(
+                    skill=DIRECTOR_SKILL, requirements="", trigger_words="", reference_notes={}, motion_notes="", motion_audio_notes=""
+                )
             else:
                 graph = preparation_graph(value.get("prompt"), node_id, options["motion_enabled"])
             reservation = asyncio.create_task(asyncio.to_thread(owner.create, node_id, workflow, options, graph, director))

@@ -31,9 +31,6 @@ RESULT_LIMIT = 256 * 1024
 MAX_SEGMENTS = 128
 FILM_DEFAULTS = {
     "brief": "",
-    "requirements": [],
-    "triggers": "",
-    "continuity": "",
     "aspect_ratio": "16:9 (Widescreen)",
     "megapixels": 1.0,
     "min_seconds": 5.0,
@@ -176,16 +173,23 @@ def parse_document(text: str) -> Dict[str, Any]:
     doc = read_json(text, DOCUMENT_LIMIT, "film")
     if set(doc) - {"version", "film", "assets", "segments", "selected", "outline", "continuity", "coverage"}:
         raise ValueError("unknown film document field")
-    if not isinstance(doc.get("film"), dict) or set(doc["film"]) - FILM_DEFAULTS.keys():
+    if not isinstance(doc.get("film"), dict) or set(doc["film"]) - FILM_DEFAULTS.keys() - {"requirements", "triggers", "continuity"}:
         raise ValueError("invalid film settings")
     film = doc["film"] = {**FILM_DEFAULTS, **doc["film"]}
-    for field, limit in (("brief", 32768), ("triggers", 16384), ("continuity", 16384), ("target_runtime", 256), ("writing_skill", 160)):
+    # Older v1 workflows stored the author's directions in four fields. Fold them into
+    # the editable brief once; the top-level continuity and coverage belong to the applied plan.
+    brief = _text(film["brief"], "film brief", DOCUMENT_LIMIT)
+    parts = [brief] if brief else []
+    requirements = _list(film.pop("requirements", []), "requirements", 128)
+    if requirements:
+        parts.append("Required story elements:\n" + "\n".join(_text(req, "requirement", 1024, True) for req in requirements))
+    for key, title in (("triggers", "Trigger words"), ("continuity", "Continuity")):
+        value = _text(film.pop(key, ""), key, 16384)
+        if value:
+            parts.append(f"{title}:\n{value}")
+    film["brief"] = "\n\n".join(parts)
+    for field, limit in (("target_runtime", 256), ("writing_skill", 160)):
         _text(film[field], field, limit)
-    requirements = _list(film["requirements"], "requirements", 128)
-    for req in requirements:
-        _text(req, "requirement", 1024, True)
-    if len(set(requirements)) != len(requirements):
-        raise ValueError("duplicate story requirement")
     if film["aspect_ratio"] not in ASPECT_RATIO_LABELS or film["frame_picture_tags"] not in FRAME_TAG_MODES:
         raise ValueError("invalid film canvas ratio or keyframe tag setting")
     _number(film["megapixels"], "megapixels", 0.1, 16)
@@ -322,13 +326,16 @@ def validate_draft(doc: Dict[str, Any], task: str, result: Dict[str, Any]) -> Di
         if not ids:
             raise ValueError("the plan must contain at least one segment")
         coverage = result["coverage"]
-        if not isinstance(coverage, dict) or set(coverage) != set(doc["film"]["requirements"]):
-            raise ValueError("provide coverage for each required story element")
+        if not isinstance(coverage, dict) or len(coverage) > 128:
+            raise ValueError("provide coverage for at most 128 requirements from the film brief")
         for req, positions in coverage.items():
+            _text(req, "coverage requirement", 1024, True)
             if not _list(positions, "coverage positions", MAX_SEGMENTS):
                 raise ValueError(f"No segment covers requirement {req}")
             if any(not isinstance(v, str) or v not in ids for v in positions):
                 raise ValueError(f"unknown segment in coverage for {req}")
+            if len(set(positions)) != len(positions):
+                raise ValueError(f"duplicate segment in coverage for {req}")
         for segment_id, prior in old.items():
             if prior.get("skill_locked") and segment_id not in ids:
                 raise ValueError(f"Segment {segment_id}: plan removes a locked writing skill")

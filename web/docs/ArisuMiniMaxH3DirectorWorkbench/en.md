@@ -4,10 +4,10 @@ Add **MiniMax H3 Director Workbench** to plan a film and render its segments in 
 
 ## Plan the film
 
-1. Enter the creative brief on the node. Open **Film setup** to edit the story requirements, trigger words, continuity notes, canvas, and generation range together. An optional target runtime can be approximate.
+1. Write the **Film requirements** on the node or in **Film setup**. Both edit the same text. Use your own format, including Markdown, for the story, required events, exact words, or continuity instructions. Film setup also holds the canvas, generation range, and optional target runtime.
 2. Open **Asset library** to add images, videos, or audio. Give each asset a note. Select its thumbnail to edit the default crop or clip. For video, choose whether to include its soundtrack.
 3. Choose **Plan the film**. The selected Workbench agent prepares the outline, continuity decisions, requirement coverage, and all segment prompts in one task. Agent setup is shared with Prompt Workbench.
-4. Review the plan and its estimated runtime, then apply it in one edit. Undo restores the previous plan. If a plan exceeds the agent budget, reduce the brief or the requested scope and try again.
+4. Compare the submitted requirements with the coverage the Director identified, the segments that cover each item, and the estimated runtime. Apply the plan in one edit. To change the whole sequence, edit **Film requirements** and choose **Replan the film**. Undo restores the previous plan. If a plan exceeds the agent budget, reduce the brief or the requested scope and try again.
 5. A film-wide writing skill applies to all segments except those with a locked choice. Automatic selection records the skill and its reason for each segment.
 
 A film can contain up to 128 segments and 256 library assets. The saved film document is limited to 1 MiB. Each structured agent result is limited to 256 KiB of UTF-8 text. The provider’s context and output limits can be lower.
@@ -18,7 +18,7 @@ Choose a row in **Sequence** to edit its finalized prompt or render that segment
 
 Prompt tags follow the segment’s input order. For example, `<Picture 1>` refers to the first numbered picture for the selected keyframe tag setting. A saved stable tag such as `<Picture:umbrella>` follows the asset with ID `umbrella` as bindings move. Reselect missing or changed sources before rendering.
 
-To revise one segment, open **Revise prompt**, enter a revision request, and choose **Refine current segment**. For a continuation, you can include tail images from its predecessor’s render and supply written audio notes. Review the proposed replacement and apply it to the target segment. Neighbor suggestions are advisory.
+To revise one segment, select it and open **Revise prompt**. Describe the change for that segment and choose **Refine current segment**. The Director reads the whole plan and uses this request for the selected segment only. For a continuation, it automatically requests tail images when the previous take can be verified, **context_latent** is connected to Motion Context Load Latent, and **vae** is connected to the video VAE loader. With no usable tail images it can work from the plan. The draft review shows which context it used. You can describe any sound you heard or want to change in the same request. The agent receives still images and text. Review the proposed replacement before applying it. Neighbor suggestions are advisory.
 
 ## Render and resume
 

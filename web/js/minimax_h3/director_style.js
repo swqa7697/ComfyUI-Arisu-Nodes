@@ -76,6 +76,8 @@ dialog.arisu-director-dialog[open]{display:flex;flex-direction:column}
 .arisu-director-dialog .stack>section+section{padding-top:12px;border-top:1px solid var(--edge)}
 .arisu-director-dialog .paired{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(135px,100%),1fr));gap:8px}
 .arisu-director-dialog .field>span,.arisu-director-dialog button{font-weight:400}
+.arisu-director-dialog .film-requirements{align-self:stretch;grid-template-rows:auto 1fr}
+.arisu-director-dialog .film-requirements>span{font-size:13px;font-weight:650;color:var(--fg-color,#eee)}
 .arisu-director-dialog .dialog-foot .field{display:flex;align-items:center;gap:6px}
 .arisu-director-dialog .dialog-foot .field>select{width:auto}
 .arisu-director-dialog .library{display:grid;gap:8px}

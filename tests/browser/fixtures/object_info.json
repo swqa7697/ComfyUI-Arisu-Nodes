@@ -2206,7 +2206,7 @@
         "film_json": [
           "STRING",
           {
-            "default": "{\"version\":1,\"film\":{\"brief\":\"\",\"requirements\":[],\"triggers\":\"\",\"continuity\":\"\",\"aspect_ratio\":\"16:9 (Widescreen)\",\"megapixels\":1.0,\"min_seconds\":5.0,\"max_seconds\":15.0,\"target_runtime\":\"\",\"writing_skill\":\"\",\"frame_picture_tags\":\"after_refs\"},\"assets\":[],\"segments\":[],\"selected\":\"\",\"outline\":\"\",\"continuity\":\"\",\"coverage\":{}}",
+            "default": "{\"version\":1,\"film\":{\"brief\":\"\",\"aspect_ratio\":\"16:9 (Widescreen)\",\"megapixels\":1.0,\"min_seconds\":5.0,\"max_seconds\":15.0,\"target_runtime\":\"\",\"writing_skill\":\"\",\"frame_picture_tags\":\"after_refs\"},\"assets\":[],\"segments\":[],\"selected\":\"\",\"outline\":\"\",\"continuity\":\"\",\"coverage\":{}}",
             "socketless": true,
             "multiline": false
           }

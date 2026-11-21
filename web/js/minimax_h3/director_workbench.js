@@ -24,7 +24,21 @@ import { generationTime, workbenchSessions } from './workbench_sessions.js';
 
 const TYPE = 'ArisuMiniMaxH3DirectorWorkbench';
 const nodes = new WeakMap();
-const sessions = workbenchSessions(nodes, render, notify, { generating: 'Directing the film…', ready: 'Director draft ready to review.' });
+const sessions = workbenchSessions(
+  nodes,
+  render,
+  notify,
+  { generating: 'Directing the film…', ready: 'Director draft ready to review.' },
+  (run, job) => {
+    const submitted = run.directorSubmission;
+    if (typeof job.director_tail_frames !== 'boolean' || !submitted?.request) return;
+    submitted.context = job.director_tail_frames
+      ? `Used tail frames from segment ${submitted.previousSegment}.`
+      : submitted.previousSegment
+        ? 'Used the film plan. Previous tail frames were unavailable.'
+        : 'Used the film plan.';
+  },
+);
 const filmWidget = (node) => node.widgets.find((w) => w.name === 'film_json');
 const read = (node) => readDocument(filmWidget(node).value);
 const selected = (doc) => doc.segments.find((segment) => segment.id === doc.selected);
@@ -125,6 +139,28 @@ function skillChoices(state, current) {
     ...(current && !catalog.some((s) => s.id === current) ? [[current, current + ' (unavailable)']] : []),
   ];
 }
+function hasInstructions(input, message) {
+  input.setCustomValidity(input.value.trim() ? '' : message);
+  return input.reportValidity();
+}
+
+function filmRequirements(ui, doc) {
+  const field = ui.field(
+    'Film requirements',
+    doc.film.brief,
+    (value) =>
+      ui.change((next) => {
+        next.film.brief = value;
+      }, false),
+    { multiline: true },
+  );
+  field.classList.add('film-requirements');
+  const input = field.querySelector('textarea');
+  input.rows = 11;
+  input.placeholder = 'Describe the film in your own words, or paste a Markdown brief.';
+  return field;
+}
+
 function filmView(ui, doc) {
   const f = doc.film;
   const warning = el('p', {
@@ -140,23 +176,7 @@ function filmView(ui, doc) {
     }, false);
   return [
     columns(
-      group('Story direction', [
-        ui.field('Creative brief', f.brief, update('brief'), { multiline: true }),
-        ui.field(
-          'Required story elements (one per line)',
-          f.requirements.join('\n'),
-          (v) =>
-            update('requirements')(
-              v
-                .split('\n')
-                .map((r) => r.trim())
-                .filter(Boolean),
-            ),
-          { multiline: true },
-        ),
-        ui.field('Trigger words', f.triggers, update('triggers')),
-        ui.field('Character, picture and sound continuity', f.continuity, update('continuity'), { multiline: true }),
-      ]),
+      filmRequirements(ui, doc),
       el('div', { className: 'stack' }, [
         group('Canvas & timing', [
           paired(
@@ -189,14 +209,6 @@ function filmView(ui, doc) {
               update('frame_picture_tags'),
             ),
           ),
-          ui.field(
-            'Whole-film revision request',
-            ui.state.filmRequest,
-            (v) => {
-              ui.state.filmRequest = v;
-            },
-            { multiline: true },
-          ),
         ]),
       ]),
     ),
@@ -206,9 +218,10 @@ function filmView(ui, doc) {
             el('summary', { textContent: 'Applied plan and coverage' }),
             el('p', { textContent: doc.outline }),
             el('p', { textContent: doc.continuity }),
-            ...f.requirements.map((r) =>
-              el('p', { textContent: r + ' — ' + ((Array.isArray(doc.coverage[r]) && doc.coverage[r].join(', ')) || 'Uncovered') }),
-            ),
+            ...Object.entries(doc.coverage).map(([requirement, ids]) => {
+              const segments = doc.segments.flatMap((segment, i) => (ids.includes(segment.id) ? [i + 1] : []));
+              return el('p', { textContent: requirement + ' — ' + (segments.length ? 'Segment ' + segments.join(', ') : 'Uncovered') });
+            }),
           ]),
         ]
       : []),
@@ -334,50 +347,45 @@ function directionView(ui, doc, seg) {
   ];
 }
 
-function revisionView(ui, seg) {
-  const { state } = ui;
-  const children = [
+// Capture the preparation graph before file verification yields to other graph edits.
+async function revisionMotion(node, doc, index) {
+  if (index <= 0 || doc.segments[index].transition !== 'continuation' || !renderTake(node, doc.segments[index - 1].id)) return null;
+  try {
+    const prompt = captureWorkbenchPrompt(node);
+    const inputs = prompt.output[prompt.nodeId].inputs;
+    const loader = prompt.output[inputs.context_latent?.[0]];
+    if (loader?.class_type !== 'MiniMaxH3MotionContextLoadLatent' || prompt.output[inputs.vae?.[0]]?.class_type !== 'VAELoader')
+      return null;
+    const path = await verifiedPredecessor(node, doc, doc.segments[index].id);
+    Object.assign(loader.inputs, { latent_path: path, clip_index: 1, folder: 'output', stock_format: false });
+    return prompt;
+  } catch {
+    // A missing receipt or unusable preparation graph still allows a storyboard revision.
+    return null;
+  }
+}
+
+function revisionView(ui, doc, seg) {
+  const index = doc.segments.indexOf(seg);
+  const requests = ui.state.revisions;
+  const draft = requests.get(seg.id) ?? {};
+  const update = (key, value) => requests.set(seg.id, { ...requests.get(seg.id), [key]: value });
+  const context = meta('Using the film plan.');
+  context.setAttribute('role', 'status');
+  if (index > 0 && seg.transition === 'continuation') {
+    context.textContent = 'Checking previous tail frames…';
+    void revisionMotion(ui.node, doc, index).then((prompt) => {
+      context.textContent = prompt
+        ? `Tail frames from segment ${index} are available for this revision.`
+        : 'Using the film plan. Previous tail frames are unavailable.';
+    });
+  }
+  return [
     group('Current prompt', [text('p', seg.prompt || 'No finalized prompt yet.', 'current-prompt')]),
-    ui.field(
-      'Revision request',
-      state.request,
-      (v) => {
-        state.request = v;
-      },
-      { multiline: true },
-    ),
-    ui.check(
-      'Reselect writing skill',
-      state.reselect,
-      (v) => {
-        state.reselect = v;
-      },
-      seg.skill_locked,
-    ),
-    ui.select(
-      'Actual tail frames',
-      state.motion ?? '',
-      [
-        ['', 'None'],
-        ['wired', 'Connected Motion Context'],
-        ...(seg.transition === 'continuation' ? [['previous', 'Verified predecessor take']] : []),
-      ],
-      (v) => {
-        state.motion = v;
-        render(ui.node);
-      },
-    ),
+    ui.field(`What should change in segment ${index + 1}?`, draft.request, (v) => update('request', v), { multiline: true }),
+    context,
+    ui.check('Reselect writing skill', !seg.skill_locked && draft.reselect, (v) => update('reselect', v), seg.skill_locked),
   ];
-  if (state.motion)
-    children.push(
-      ui.field('Actual visual notes', state.visual, (v) => {
-        state.visual = v;
-      }),
-      ui.field('Actual audio notes', state.audio, (v) => {
-        state.audio = v;
-      }),
-    );
-  return children;
 }
 async function startRender(ui, remaining) {
   ui.state.rendering = true;
@@ -393,44 +401,43 @@ async function startRender(ui, remaining) {
   }
 }
 
-function generate(ui, task) {
-  return sessions.generate(ui.node, (node) => {
-    const doc = read(node),
-      state = nodes.get(node);
-    const motion = task === 'refine' ? state.motion : '';
+async function generate(ui, task) {
+  const { state, node } = ui;
+  const doc = read(node);
+  const index = doc.segments.findIndex((seg) => seg.id === doc.selected);
+  const refine = task === 'refine';
+  const draft = refine ? state.revisions.get(doc.selected) : null;
+  let submittedRun;
+  await sessions.generate(node, async (_, run) => {
+    submittedRun = run;
+    const previousSegment = index > 0 && doc.segments[index].transition === 'continuation' ? index : null;
+    const submitted = refine ? { request: draft.request, previousSegment } : { brief: doc.film.brief };
+    run.directorSubmission = submitted;
+    state.message = '';
     const target = executionTarget(node);
     if (!target) throw new Error('The Director is absent from this workflow.');
-    const prompt = motion
-      ? captureWorkbenchPrompt(node)
-      : {
-          nodeId: target.id,
-          output: { [target.id]: { class_type: TYPE, inputs: {} } },
-        };
-    const source = prompt.output[prompt.nodeId];
-    source.inputs.film_json = JSON.stringify(doc);
-    if (motion && (!source.inputs.vae || !source.inputs.context_latent))
-      throw new Error('Connect a Motion Context loader and a video VAE.');
-    const payload = {
+    const agent = state.agent;
+    const motion = refine && (await revisionMotion(node, doc, index));
+    const prompt = motion || { nodeId: target.id, output: { [target.id]: { class_type: TYPE, inputs: {} } } };
+    prompt.output[prompt.nodeId].inputs.film_json = JSON.stringify(doc);
+    if (refine) submitted.context = motion ? `Requested tail frames from segment ${index}.` : 'Using the film plan.';
+    return {
       node_id: prompt.nodeId,
       prompt: prompt.output,
-      director: { task, request: (task === 'plan' ? state.filmRequest : state.request) ?? '', reselect_skill: !!state.reselect },
+      director: { task, request: draft?.request ?? '', reselect_skill: !!draft?.reselect && !doc.segments[index]?.skill_locked },
       options: {
-        agent: state.agent,
+        agent,
         skill: 'bundled:sequence-director',
         motion_enabled: !!motion,
-        motion_notes: state.visual ?? '',
-        motion_audio_notes: state.audio ?? '',
-        context_length: String(selected(doc)?.overlap_frames || 22),
+        context_length: String(doc.segments[index]?.overlap_frames || 22),
       },
     };
-    if (motion !== 'previous') return payload;
-    const loader = prompt.output[source.inputs.context_latent[0]];
-    if (loader?.class_type !== 'MiniMaxH3MotionContextLoadLatent') throw new Error('Connect the supported Motion Context loader.');
-    return verifiedPredecessor(node, doc, doc.selected).then((path) => {
-      Object.assign(loader.inputs, { latent_path: path, clip_index: 1, folder: 'output', stock_format: false });
-      return payload;
-    });
   });
+  // Keep failed requests for a retry, and preserve edits made while the submitted revision was running.
+  if (draft && submittedRun?.hasOutput && state.revisions.get(doc.selected) === draft) {
+    state.revisions.delete(doc.selected);
+    if (nodes.get(node) === state) render(node);
+  }
 }
 function review(ui) {
   const run = ui.state.run;
@@ -441,7 +448,9 @@ function review(ui) {
     () => {
       if (!run.node) return;
       try {
-        change(run.node, (doc) => applyDraft(doc, JSON.parse(run.draft)));
+        const draft = JSON.parse(run.draft);
+        change(run.node, (doc) => applyDraft(doc, draft));
+        if (draft.segments) nodes.get(run.node)?.revisions.clear();
         run.status = 'Draft applied';
         sessions.updateRun(run);
       } catch (e) {
@@ -529,7 +538,7 @@ function openEditor(ui, title) {
     if (title === FILM) body.replaceChildren(...filmView(ui, doc));
     if (title === LIBRARY) body.replaceChildren(...libraryView(ui, doc));
     if (title === DIRECTION) body.replaceChildren(...directionView(ui, doc, seg));
-    if (title === REVISION) body.replaceChildren(...revisionView(ui, seg));
+    if (title === REVISION) body.replaceChildren(...revisionView(ui, doc, seg));
     const planning = title === FILM;
     if (planning || title === REVISION) {
       const ready = state.agents?.agents?.[state.agent]?.ready;
@@ -552,8 +561,10 @@ function openEditor(ui, title) {
         ]),
         action(
           ui,
-          planning ? 'Plan the film' : 'Refine current segment',
+          planning ? (doc.segments.length ? 'Replan the film' : 'Plan the film') : 'Refine current segment',
           () => {
+            const message = planning ? 'Enter the film requirements.' : 'Enter a revision request for this segment.';
+            if (!hasInstructions(body.querySelector('textarea'), message)) return;
             dialog.close();
             return generate(ui, planning ? 'plan' : 'refine');
           },
@@ -620,21 +631,22 @@ function editorView(ui, doc, times) {
   if (!seg) {
     if (doc.segments.length) editor.append(meta('Select a segment to edit its prompt.'));
     else {
-      const brief = ui.field(
-        'Creative brief',
-        doc.film.brief,
-        (v) =>
-          ui.change((next) => {
-            next.film.brief = v;
-          }, false),
-        { multiline: true },
-      );
+      const brief = filmRequirements(ui, doc);
       brief.classList.add('prompt');
       editor.append(
         text('h2', 'Plan your film'),
         meta('Describe the film to draft a sequence, or add a segment to write it yourself.'),
         brief,
-        row([action(ui, 'Plan the film', () => generate(ui, 'plan'), !state.agents?.agents?.[state.agent]?.ready || state.run?.running)]),
+        row([
+          action(
+            ui,
+            'Plan the film',
+            () => {
+              if (hasInstructions(brief.querySelector('textarea'), 'Enter the film requirements.')) return generate(ui, 'plan');
+            },
+            !state.agents?.agents?.[state.agent]?.ready || state.run?.running,
+          ),
+        ]),
       );
     }
     return editor;
@@ -745,11 +757,12 @@ function render(node) {
   library.ariaLabel = LIBRARY;
   library.append(text('span', String(doc.assets.length), 'count'));
   const ready = state.agents?.agents?.[state.agent]?.ready;
+  const message = state.message || ((run.running || run.hasOutput) && run.directorSubmission?.context);
   const feedback = el('div', { className: 'status', role: 'status' }, [
     ...(!run.status && !state.message ? [label((state.agent === 'codex' ? 'Codex' : 'Grok') + (ready ? ' ready' : ' unavailable'))] : []),
     status,
     elapsed,
-    ...(state.message ? [label(' ' + state.message)] : []),
+    ...(message ? [label(' ' + message)] : []),
   ]);
   const reviewButton = ui.button('Review draft', () => review(ui), !run.started && !run.running && !run.hasOutput);
   if (run.hasOutput) reviewButton.className = 'review';
@@ -792,6 +805,7 @@ async function refresh(node) {
 }
 function invalidate(node) {
   nodes.get(node)?.dialog?.close();
+  nodes.get(node)?.revisions.clear();
   nodes.get(node)?.media?.abort();
   stopRender(node, true);
 }
@@ -816,7 +830,7 @@ app.registerExtension({
     chain('onNodeCreated', function () {
       const body = el('div', { className: 'arisu-director' });
       forwardToCanvas(body);
-      nodes.set(this, { body, agent: 'codex', message: '' });
+      nodes.set(this, { body, agent: 'codex', message: '', revisions: new Map() });
       sessions.views.add(this);
       sessions.bindSession(this);
       const w = filmWidget(this);

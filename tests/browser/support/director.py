@@ -8,8 +8,10 @@ from urllib.parse import parse_qs, urlsplit
 
 from playwright.sync_api import Page, Route, expect
 
+from tests.browser.support.harness import FixtureServer
 
-def inspect_render_recovery(page: Page, director_id: str):
+
+def inspect_render_recovery(page: Page, director_id: str, server: FixtureServer):
     """Exercise render recovery with the execution links consumed by the Director controls."""
 
     def node(kind: str, **inputs: Any) -> Dict[str, Any]:
@@ -128,7 +130,58 @@ def inspect_render_recovery(page: Page, director_id: str):
             [director_id, save],
         )
         assert len(normal_runs) == 1 and normal_runs[0]["latent_path"] == jobs[2]["previous"]["latent_path"]
+        # Use the same predecessor receipt for the revision. The agent may see its actual tail only with valid wiring.
+        revise = page.get_by_role("button", name="Revise prompt", exact=True)
+        revise.click()
+        revision = page.get_by_role("dialog", name="Revise prompt", exact=True)
+        unavailable = revision.get_by_text("Using the film plan. Previous tail frames are unavailable.", exact=True)
+        expect(unavailable).to_be_visible()
+        page.keyboard.press("Escape")
+        page.evaluate(
+            """id => {
+                const graph = window.comfyAPI.app.app.graph, target = graph.getNodeById(id);
+                for (const [type, port] of [['MiniMaxH3MotionContextLoadLatent','context_latent'], ['VAELoader','vae']]) {
+                    const slot = target.inputs.findIndex(input => input.name === port);
+                    class Source extends LGraphNode {
+                        constructor() { super(); this.comfyClass = type; this.addOutput(port, target.inputs[slot].type); }
+                    }
+                    const fixture = 'FixtureDirector' + type;
+                    LiteGraph.registerNodeType(fixture, Source);
+                    const source = LiteGraph.createNode(fixture);
+                    source.pos = [-1000, -1000]; graph.add(source); source.connect(0, target, slot);
+                }
+            }""",
+            director_id,
+        )
+        revise.click()
+        expect(revision.get_by_text("Tail frames from segment 1 are available for this revision.", exact=True)).to_be_visible()
+        instructions = revision.get_by_label("What should change in segment 2?", exact=True)
+        instructions.fill("Match the bow position in the preceding take.")
+        submit_revision = revision.get_by_role("button", name="Refine current segment", exact=True)
+        with page.expect_response("**/arisu/workbench/generate"):
+            submit_revision.click()
+        expect(status).to_contain_text("Output ready to apply")
+        refinement = server.generation_requests[-1]
+        assert refinement["options"]["motion_enabled"] and refinement["options"]["context_length"] == "22"
+        assert not refinement["options"].get("motion_audio_notes") and not refinement["options"].get("motion_notes")
+        graph = refinement["prompt"]
+        source = graph[refinement["node_id"]]["inputs"]["context_latent"][0]
+        assert graph[source]["inputs"]["latent_path"] == jobs[2]["previous"]["latent_path"]
+        revise.click()
+        expect(instructions).to_have_value("")
+        expect(revision.get_by_text("Tail frames from segment 1 are available for this revision.", exact=True)).to_be_visible()
+        # The take can change while the editor is open. Submission must recheck it and fall back to the film.
         files[saved]["video"] = "replaced"
+        instructions.fill("Continue from the planned closing pose.")
+        with page.expect_response("**/arisu/workbench/generate"):
+            submit_revision.click()
+        expect(status).to_contain_text("Output ready to apply")
+        fallback = server.generation_requests[-1]
+        assert not fallback["options"]["motion_enabled"]
+        assert set(fallback["prompt"]) == {fallback["node_id"]}
+        revise.click()
+        expect(unavailable).to_be_visible()
+        page.keyboard.press("Escape")
         second.click()
         current.click()
         expect(status).to_contain_text("missing or has changed")

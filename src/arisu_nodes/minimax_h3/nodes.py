@@ -53,6 +53,7 @@ from .core import (
     VIDEO_LATENT_CHANNELS,
     H3Plan,
     H3Source,
+    MotionFootageError,
     PreparationError,
     ResourceBundle,
     VideoSettings,
@@ -84,7 +85,7 @@ from .director_media import render_fingerprint, render_outputs
 from .media import build_bundle, read_audio, read_image, read_video, source_fingerprint, validate_source
 from .selflift_sampling import progressive_sample
 from .selflift_upscaler import learned_latent_lift, list_upscaler_models
-from .workbench import motion_key
+from .workbench import Generation, Workbench, motion_key
 from .workbench import service as workbench_service
 
 # ComfyUI's public audio API replaces torchaudio; older releases still need it.
@@ -1392,6 +1393,58 @@ class ArisuMiniMaxH3DirectorWorkbench(io.ComfyNode):
         return render_fingerprint(film_json, _resource_roots())
 
 
+def _prepare_workbench_motion(owner: Workbench, job: Generation, context_latent: Dict[str, Any], vae: Optional[comfy.sd.VAE]):
+    """Validate and decode the selected tail before committing its observations to the cache."""
+    if vae is None:
+        raise MotionFootageError("connect a video VAE for motion context")
+    samples = context_latent.get("samples") if isinstance(context_latent, dict) else None
+    if not isinstance(samples, (list, tuple)) or not samples:
+        raise MotionFootageError("expected H3 Motion Context Load Latent output")
+    video = samples[0]
+    if not isinstance(video, torch.Tensor) or video.ndim not in (4, 5):
+        raise MotionFootageError("invalid H3 context video tensor")
+    if video.ndim == 4:
+        video = video.unsqueeze(0)
+    if video.shape[0] != 1:
+        raise MotionFootageError("motion context requires one video")
+    start, frame_count = motion_tail(video.shape[2])
+    tail = video[:, :, start:].detach().cpu().contiguous()
+    if not all(tail.shape) or not torch.isfinite(tail).all():
+        raise MotionFootageError("motion context contains empty dimensions or non-finite values")
+    digest = hashlib.sha256(tail.detach().float().cpu().contiguous().numpy().tobytes()).hexdigest()
+    if job.cpu_context:
+        from .workbench_execution import vae_identity
+
+        if vae_identity(job) != job.vae_revision:
+            raise PreparationError("video VAE changed during preparation; generate again")
+    key = motion_key(job, tail.shape, job.vae_revision + digest)
+    if not owner.cache_motion(job, key):
+        if job.cancelled.is_set():
+            raise PreparationError("generation cancelled")
+        try:
+            decoded = vae.decode(tail)
+        except (RuntimeError, ValueError, TypeError) as error:
+            if comfy.model_management.is_oom(error):
+                raise
+            raise MotionFootageError("video VAE could not decode the motion tail") from error
+        finally:
+            if job.cpu_context and vae_identity(job) != job.vae_revision:
+                raise PreparationError("video VAE changed during decoding; generate again")
+        if not isinstance(decoded, torch.Tensor):
+            raise MotionFootageError("video VAE returned an unexpected motion shape")
+        if decoded.ndim == 5 and decoded.shape[0] == 1:
+            decoded = decoded[0]
+        if decoded.ndim != 4 or decoded.shape[0] != frame_count or decoded.shape[-1] != 3 or not all(decoded.shape):
+            raise MotionFootageError("video VAE returned an unexpected motion shape")
+        decoded = decoded.detach().cpu()
+        indices = motion_samples(decoded.shape[0])
+        observations = decoded[indices].float()
+        if not torch.isfinite(observations).all():
+            raise MotionFootageError("video VAE returned non-finite motion pixels")
+        images = (observations.clamp(0, 1).numpy() * 255).round().astype("uint8")
+        owner.cache_motion(job, key, [Image.fromarray(image) for image in images])
+
+
 class ArisuMiniMaxH3PromptWorkbench(io.ComfyNode):
     """Editable text on normal runs; explicitly authorized preparation on button clicks."""
 
@@ -1466,44 +1519,19 @@ class ArisuMiniMaxH3PromptWorkbench(io.ComfyNode):
             if not job.cpu_context:
                 job.settings, job.resources, job.roots = video_settings, resources, _resource_roots()
             if context_latent is not None:
-                if vae is None:
-                    raise PreparationError("connect a video VAE for motion context")
-                samples = context_latent.get("samples") if isinstance(context_latent, dict) else None
-                if not isinstance(samples, (list, tuple)) or not samples:
-                    raise PreparationError("expected H3 Motion Context Load Latent output")
-                video = samples[0]
-                if not isinstance(video, torch.Tensor) or video.ndim not in (4, 5):
-                    raise PreparationError("invalid H3 context video tensor")
-                if video.ndim == 4:
-                    video = video.unsqueeze(0)
-                if video.shape[0] != 1:
-                    raise PreparationError("motion context requires one video")
-                start, frame_count = motion_tail(video.shape[2])
-                tail = video[:, :, start:].detach().cpu().contiguous()
-                if not all(tail.shape) or not torch.isfinite(tail).all():
-                    raise PreparationError("motion context contains empty dimensions or non-finite values")
-                digest = hashlib.sha256(tail.detach().float().cpu().contiguous().numpy().tobytes()).hexdigest()
-                if job.cpu_context:
-                    from .workbench_execution import vae_identity
-
-                    if vae_identity(job) != job.vae_revision:
-                        raise PreparationError("video VAE changed during preparation; generate again")
-                key = motion_key(job, tail.shape, job.vae_revision + digest)
-                if not owner.cache_motion(job, key):
-                    if job.cancelled.is_set():
-                        raise PreparationError("generation cancelled")
-                    decoded = vae.decode(tail)
-                    if job.cpu_context and vae_identity(job) != job.vae_revision:
-                        raise PreparationError("video VAE changed during decoding; generate again")
-                    if decoded.ndim == 5 and decoded.shape[0] == 1:
-                        decoded = decoded[0]
-                    if decoded.ndim != 4 or decoded.shape[0] != frame_count or decoded.shape[-1] != 3:
-                        raise PreparationError("video VAE returned an unexpected motion shape")
-                    decoded = decoded.detach().cpu()
-                    indices = motion_samples(decoded.shape[0])
-                    images = (decoded[indices].detach().float().cpu().clamp(0, 1).numpy() * 255).round().astype("uint8")
-                    owner.cache_motion(job, key, [Image.fromarray(image) for image in images])
+                try:
+                    _prepare_workbench_motion(owner, job, context_latent, vae)
+                except MotionFootageError:
+                    if not job.director or job.director.task != "refine":
+                        raise
+                    # Every recoverable error occurs before writing any observations. Cache,
+                    # model-identity and execution failures follow the usual preparation error path.
+                    owner.preparation(job.id, job.node_id)
+                    _LOGGER.warning("Director revision will use the film plan because its tail frames are unavailable", exc_info=True)
             owner.enforce_budget()
+        except comfy.model_management.InterruptProcessingException:
+            job.cancelled.set()
+            raise
         except Exception as error:
             job.error = (
                 str(error)

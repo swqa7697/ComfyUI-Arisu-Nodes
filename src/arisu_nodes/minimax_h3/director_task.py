@@ -92,7 +92,7 @@ class DirectorTask:
     def capture(
         cls, value: Any, prompt: Any, node_id: str, options: Dict[str, Any], skills: Dict[str, Path]
     ) -> Tuple[DirectorTask, Dict[str, Any]]:
-        """Capture the Director document and project only explicitly selected motion onto a preparation graph."""
+        """Capture the Director document and project available continuation footage onto a preparation graph."""
         if not isinstance(value, dict) or set(value) - {"task", "request", "reselect_skill"} or value.get("task") not in ("plan", "refine"):
             raise ValueError("Choose a whole-film plan or a segment revision.")
         task = value["task"]
@@ -108,8 +108,10 @@ class DirectorTask:
             raise ValueError("Select a Director Workbench.")
         inputs = node["inputs"]
         document = director.parse_document(inputs.get("film_json"))
-        if not document["film"]["brief"].strip() and task == "plan":
-            raise ValueError("Enter a creative brief before planning the film.")
+        if task == "plan" and not document["film"]["brief"].strip():
+            raise ValueError("Enter the film requirements before planning.")
+        if task == "plan" and request.strip():
+            raise ValueError("Edit the film requirements before replanning. Revision requests apply to one segment.")
         if task == "refine" and (not document["selected"] or not request.strip()):
             raise ValueError("Select a segment and enter a revision request.")
         catalog = writing_catalog(skills)
@@ -130,7 +132,11 @@ class DirectorTask:
             "reference_notes": "{}",
             "requirements": "",
         }
-        if task == "refine" and options["motion_enabled"]:
+        if (
+            task == "refine"
+            and options["motion_enabled"]
+            and any(s["id"] == document["selected"] and s["transition"] == "continuation" for s in document["segments"][1:])
+        ):
             prep.update({key: inputs[key] for key in ("vae", "context_latent") if key in inputs})
         graph = preparation_graph({**prompt, node_id: {"class_type": WORKBENCH_ID, "inputs": prep}}, node_id)
         return selected, graph

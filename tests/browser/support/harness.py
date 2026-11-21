@@ -146,7 +146,7 @@ class FixtureServer:
                 "version": 1,
                 "outline": "A paper boat crosses the pond.",
                 "continuity": "Soft morning light.",
-                "coverage": {req: ["launch"] for req in doc["film"]["requirements"]},
+                "coverage": {"Launch the boat": ["launch"]},
                 "segments": segments,
             }
         )
@@ -354,11 +354,13 @@ class FixtureServer:
             self.polls += 1
             if self.fail_generation:
                 return web.json_response({"state": "failed", "error": "Simulated provider unavailable", "generation_elapsed_ms": 12500})
-            return web.json_response(
-                {"state": "generating", "generation_elapsed_ms": 42000}
-                if self.hold_generation or self.polls < 3
-                else {"state": "complete", "draft": self.draft(), "generation_elapsed_ms": 78000}
-            )
+            if self.hold_generation or self.polls < 3:
+                return web.json_response({"state": "generating", "generation_elapsed_ms": 42000})
+            completed = {"state": "complete", "draft": self.draft(), "generation_elapsed_ms": 78000}
+            generation = self.generation_requests[-1]
+            if generation.get("director", {}).get("task") == "refine":
+                completed["director_tail_frames"] = generation["options"]["motion_enabled"]
+            return web.json_response(completed)
         if path in ("/arisu/workbench/release", "/arisu/workbench/cancel", "/arisu/workbench/action") and method == "POST":
             return web.json_response({"accepted": True})
         if path in ("/arisu/resources/browse", "/arisu/browse"):
@@ -435,6 +437,9 @@ def browser_page(browser: Browser, server: FixtureServer, name: str, width: int 
     def route_request(route: Route):
         if route.request.url.startswith(server.url + "/"):
             route.continue_()
+        elif route.request.method == "GET" and route.request.url == "https://cloud.comfy.org/api/features":
+            # Recent local frontends read their Open on Cloud rollout on startup. Fulfill it entirely in the fixture.
+            route.fulfill(json={"open_on_cloud_enabled": False})
         else:
             errors.append("Blocked external request: " + route.request.url)
             route.abort()

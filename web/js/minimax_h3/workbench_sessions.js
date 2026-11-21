@@ -18,7 +18,7 @@ export function generationTime(run) {
   return `Agent time ${duration}${run.timingUnavailable ? ' (updates unavailable)' : ''}`;
 }
 
-export function workbenchSessions(nodes, render, notify, messages) {
+export function workbenchSessions(nodes, render, notify, messages, onComplete) {
   // Sessions belong to frontend workflow objects, never serialized workflow IDs or node objects.
   const sessions = new Map();
   const views = new Set();
@@ -213,6 +213,7 @@ export function workbenchSessions(nodes, render, notify, messages) {
         if (job.state === 'complete') {
           run.draft = job.draft;
           run.hasOutput = true;
+          onComplete?.(run, job);
           notify('success', messages.ready);
           break;
         }
