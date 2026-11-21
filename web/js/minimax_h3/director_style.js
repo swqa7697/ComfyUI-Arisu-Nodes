@@ -88,7 +88,23 @@ dialog.arisu-director-dialog[open]{display:flex;flex-direction:column}
 .arisu-director-dialog .card[data-kind=image]{--kind:var(--arisu-image)}
 .arisu-director-dialog .card[data-kind=video]{--kind:var(--arisu-video)}
 .arisu-director-dialog .card[data-kind=audio]{--kind:var(--arisu-audio)}
-.arisu-director-dialog .library .card{grid-template-columns:minmax(0,1fr) minmax(0,1fr);align-items:center}
+.arisu-director-dialog .range input{accent-color:var(--accent);padding:0;cursor:pointer;height:22px}
+.arisu-director-dialog .range .bar span:last-child{color:var(--ink);font-variant-numeric:tabular-nums}
+.arisu-director-dialog .library .card{grid-template-columns:auto minmax(135px,1fr) minmax(110px,.9fr) auto;align-items:center;gap:8px;padding:8px}
+.arisu-director-dialog .asset-action{display:inline-grid;place-items:center;width:28px;height:30px;min-height:0;padding:0;background:transparent;border-color:transparent}
+.arisu-director-dialog .asset-action .pi{font-size:14px}
+.arisu-director-dialog .dialog-head .asset-action{width:32px;border-color:var(--line);background:var(--well)}
+.arisu-director-dialog .asset-action:hover:enabled{background:var(--well);border-color:var(--line)}
+.arisu-director-dialog .asset-action:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.arisu-director-dialog .asset-handle{width:20px;cursor:grab;font-size:18px;color:var(--muted)}
+.arisu-director-dialog .asset-handle:active{cursor:grabbing}
+.arisu-director-dialog .library [data-dragging]{opacity:.5}
+.arisu-director-dialog .library [data-drop=before]{box-shadow:0 -3px var(--accent)}
+.arisu-director-dialog .library [data-drop=after]{box-shadow:0 3px var(--accent)}
+.arisu-director-dialog .library .mute[aria-pressed=false]{color:var(--kind)}
+.arisu-director-dialog .library .mute .pi-circle-fill{font-size:10px}
+.arisu-director-dialog .library .media-preview{position:relative}
+.arisu-director-dialog .library .media-preview .pi{position:absolute;right:0;bottom:0;padding:3px;font-size:9px;color:var(--ink);background:var(--well);border-start-start-radius:3px}
 .arisu-director-dialog .asset-title{display:grid;grid-template-columns:66px minmax(0,1fr);gap:10px}
 .arisu-director-dialog .asset-info{display:grid;gap:2px}
 .arisu-director-dialog strong{overflow-wrap:anywhere}
@@ -97,15 +113,21 @@ dialog.arisu-director-dialog[open]{display:flex;flex-direction:column}
 .arisu-director-dialog .media-preview>span:last-child{padding:2px 0}
 .arisu-director-dialog .asset-thumb{width:100%;height:40px;object-fit:contain;background:color-mix(in srgb,var(--kind) 12%,var(--base))}
 .arisu-director-dialog .asset-thumb.audio{display:grid;place-items:center;color:var(--kind);font-size:19px}
-.arisu-director-dialog .card-tools{grid-column:1/-1;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px}
+.arisu-director-dialog .asset-thumb.audio svg{width:19px;height:19px}
+.arisu-director-dialog .card-tools{display:flex;align-items:center;gap:1px}
 .arisu-director-dialog .card.muted .asset-info strong{text-decoration:line-through}
 .arisu-director-dialog .empty-library{display:grid;place-items:center;text-align:center;min-height:100px;padding:12px;background:var(--well);border:1px solid var(--edge);border-radius:4px}
 .arisu-director-dialog .check{display:inline-flex;align-items:center;gap:6px;cursor:pointer}
 .arisu-director-dialog .current-prompt{white-space:pre-wrap;max-height:25dvh;overflow:auto;background:var(--panel);padding:10px 12px;border-inline-start:2px solid var(--accent)}
 .arisu-director-dialog details{border-top:1px solid var(--edge);padding-top:8px}
 .arisu-director-dialog details p{white-space:pre-wrap;margin-block-start:6px}
+@media(max-width:580px){
+ .arisu-director-dialog .library .card{grid-template-columns:auto minmax(0,1fr) auto}
+ .arisu-director-dialog .library .field{grid-column:2/-1;grid-row:2}
+ .arisu-director-dialog .card-tools{grid-column:3;grid-row:1}
+}
 @media(max-width:640px){
- .arisu-director-dialog .columns,.arisu-director-dialog .library .card{grid-template-columns:minmax(0,1fr)}
+ .arisu-director-dialog .columns{grid-template-columns:minmax(0,1fr)}
  .arisu-director-dialog .columns>:nth-child(2){border-inline-start:0;padding:12px 0 0;border-top:1px solid var(--edge)}
 }
 `;

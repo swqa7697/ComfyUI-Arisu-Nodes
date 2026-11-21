@@ -76,7 +76,7 @@ export function openDirectorReview(run, read, apply) {
     undefined,
     apply,
     {
-      label: 'Review draft',
+      label: 'Review Draft',
       hint: 'Apply saves the reviewed changes as one undoable edit.',
       element,
       refresh(state) {
@@ -96,25 +96,25 @@ export function openDirectorReview(run, read, apply) {
           const runtime = secondsLabel(times.at(-1)?.end ?? 0);
           children.push(
             grid(
-              section('Film outline', data.outline),
+              section('Film Outline', data.outline),
               section('Continuity', data.continuity),
-              section('Estimated runtime', runtime + (doc.film.target_runtime ? ' · Target ' + doc.film.target_runtime : '')),
+              section('Estimated Runtime', runtime + (doc.film.target_runtime ? ' · Target ' + doc.film.target_runtime : '')),
             ),
           );
           if (run.directorSubmission?.brief)
             children.push(
               el('details', {}, [
-                el('summary', { textContent: 'Submitted film requirements' }),
+                el('summary', { textContent: 'Submitted Film Requirements' }),
                 el('p', { textContent: run.directorSubmission.brief }),
               ]),
             );
           const coverage = Object.entries(data.coverage).map(([req, ids]) =>
             section(req, ids.length ? ids.map((id) => 'Segment ' + (segments.findIndex((s) => s.id === id) + 1)).join(', ') : 'Uncovered'),
           );
-          if (coverage.length) children.push(el('section', {}, [el('h3', { textContent: 'Story coverage' }), grid(...coverage)]));
+          if (coverage.length) children.push(el('section', {}, [el('h3', { textContent: 'Story Coverage' }), grid(...coverage)]));
         } else if (run.directorSubmission?.request) {
           children.push(
-            grid(section('Revision request', run.directorSubmission.request), section('Revision context', run.directorSubmission.context)),
+            grid(section('Revision Request', run.directorSubmission.request), section('Revision Context', run.directorSubmission.context)),
           );
         }
         for (const segment of segments) {
@@ -131,8 +131,8 @@ export function openDirectorReview(run, read, apply) {
                   ' generated',
               }),
               el('div', { className: 'review-grid prompts' }, [
-                ...(old ? [section('Current prompt', old.prompt)] : []),
-                section('Proposed prompt', segment.prompt),
+                ...(old ? [section('Current Prompt', old.prompt)] : []),
+                section('Proposed Prompt', segment.prompt),
               ]),
               el('div', { className: 'review-grid shot-info' }, [
                 section(
@@ -142,12 +142,12 @@ export function openDirectorReview(run, read, apply) {
                 section('Opening', segment.opening),
                 section('Closing', segment.closing),
                 section('Bindings', segment.bindings.map((b) => b.role + ' · ' + b.asset_id).join('\n') || 'None'),
-                section('Writing skill', segment.skill + ' · ' + segment.skill_reason),
+                section('Writing Skill', segment.skill + ' · ' + segment.skill_reason),
               ]),
             ]),
           );
         }
-        if (data.suggestions?.length) children.push(section('Suggestions for neighbors', data.suggestions.join('\n')));
+        if (data.suggestions?.length) children.push(section('Suggestions for Neighbors', data.suggestions.join('\n')));
         element.replaceChildren(style, ...children);
       },
     },

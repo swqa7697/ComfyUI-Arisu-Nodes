@@ -2,25 +2,25 @@
 
 Add **MiniMax H3 Director Workbench** to plan a film and render its segments in order. Connect its `prompt`, `video_settings`, and `resources` outputs to the matching inputs on **MiniMax H3 Hybrid to Video**.
 
-## Plan the film
+## Plan the Film
 
-1. Write the **Film requirements** on the node or in **Film setup**. Both edit the same text. Use your own format, including Markdown, for the story, required events, exact words, or continuity instructions. Film setup also holds the canvas, generation range, and optional target runtime.
-2. Open **Asset library** to add images, videos, or audio. Give each asset a note. Select its thumbnail to edit the default crop or clip. For video, choose whether to include its soundtrack.
+1. Write the **Film Requirements** on the node or in **Film Setup**. Both edit the same text. Use your own format, including Markdown, for the story, required events, exact words, or continuity instructions. Set the canvas size in megapixels and use the two sliders to choose a generation range within 5–15 seconds per segment. Enter an optional target in minutes, including fractional minutes, to guide the approximate length of the whole film.
+2. Open **Asset Library** to add images, videos, or audio and give each asset a note. Drag an asset by its handle to reorder the library, or focus the handle and press the up or down arrow key. Each asset keeps its notes and segment bindings when moved. Select its thumbnail to edit the default crop or clip. For video, choose whether to include its soundtrack.
 3. Choose **Plan the film**. The selected Workbench agent prepares the outline, continuity decisions, requirement coverage, and all segment prompts in one task. Agent setup is shared with Prompt Workbench.
-4. Compare the submitted requirements with the coverage the Director identified, the segments that cover each item, and the estimated runtime. Apply the plan in one edit. To change the whole sequence, edit **Film requirements** and choose **Replan the film**. Undo restores the previous plan. If a plan exceeds the agent budget, reduce the brief or the requested scope and try again.
+4. Compare the submitted requirements with the coverage the Director identified, the segments that cover each item, and the estimated runtime. Apply the plan in one edit. To change the whole sequence, edit **Film Requirements** and choose **Replan the film**. Undo restores the previous plan. If a plan exceeds the agent budget, reduce the brief or the requested scope and try again.
 5. A film-wide writing skill applies to all segments except those with a locked choice. Automatic selection records the skill and its reason for each segment.
 
 A film can contain up to 128 segments and 256 library assets. The saved film document is limited to 1 MiB. Each structured agent result is limited to 256 KiB of UTF-8 text. The provider’s context and output limits can be lower.
 
-## Review a segment
+## Review a Segment
 
-Choose a row in **Sequence** to edit its finalized prompt or render that segment. Use **+ Add** to write a segment manually. Open **Direction & bindings** to edit the intent, opening and closing states, timing, transition, and bound assets, or to reorder the segment. Edits in these dialogs are saved as you work. Close the dialog or press Escape to return to the sequence. Library assets are available to the director during planning. Only the current segment’s bindings are sent to Hybrid. Select a bound thumbnail to override the crop or clip interval for that segment. Video bindings also have a segment soundtrack setting.
+Choose a row in **Sequence** to edit its finalized prompt or render that segment. Use **+ Add** to write a segment manually. Open **Direction & Bindings** to edit the intent, opening and closing states, timing, transition, and bound assets, or to reorder the segment. Edits in these dialogs are saved as you work. Close the dialog or press Escape to return to the sequence. Library assets are available to the director during planning. Only the current segment’s bindings are sent to Hybrid. Select a bound thumbnail to override the crop or clip interval for that segment. Video bindings also have a segment soundtrack setting.
 
 Prompt tags follow the segment’s input order. For example, `<Picture 1>` refers to the first numbered picture for the selected keyframe tag setting. A saved stable tag such as `<Picture:umbrella>` follows the asset with ID `umbrella` as bindings move. Reselect missing or changed sources before rendering.
 
-To revise one segment, select it and open **Revise prompt**. Describe the change for that segment and choose **Refine current segment**. The Director reads the whole plan and uses this request for the selected segment only. For a continuation, it automatically requests tail images when the previous take can be verified, **context_latent** is connected to Motion Context Load Latent, and **vae** is connected to the video VAE loader. With no usable tail images it can work from the plan. The draft review shows which context it used. You can describe any sound you heard or want to change in the same request. The agent receives still images and text. Review the proposed replacement before applying it. Neighbor suggestions are advisory.
+To revise one segment, select it and open **Revise Prompt**. Describe the change for that segment and choose **Refine current segment**. The Director reads the whole plan and uses this request for the selected segment only. For a continuation, it automatically requests tail images when the previous take can be verified, **context_latent** is connected to Motion Context Load Latent, and **vae** is connected to the video VAE loader. With no usable tail images it can work from the plan. The draft review shows which context it used. You can describe any sound you heard or want to change in the same request. The agent receives still images and text. Review the proposed replacement before applying it. Neighbor suggestions are advisory.
 
-## Render and resume
+## Render and Resume
 
 To use the render controls, connect one Motion Context Load Latent to Motion Context. Feed Hybrid’s conditioning and latent into Motion Context, then connect its conditioning and Hybrid’s latent to the sampler. Connect the sampled latent to Motion Context Save Latent and to both VAE decoders. Feed the decoded picture and sound through Motion Context Trim using the Motion Context `trim_frames` output. Connect both trimmed outputs to Create Video at 24 fps, then connect Create Video to Save Video.
 

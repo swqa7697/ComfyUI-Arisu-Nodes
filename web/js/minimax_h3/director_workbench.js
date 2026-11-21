@@ -6,7 +6,7 @@ import { installSelectionGuards, preservingSelections, registerSelectionOwner } 
 import { hideWidget, setWidget } from '../common/widgets.js';
 import { agentStatus, openAgentSettings } from './agent_settings.js';
 import { ASPECTS, clearLocations, readDocument, secondsLabel, stableTags, timeline, timing } from './director_document.js';
-import { bindingView, browseAssets, libraryView, moveItem } from './director_media.js';
+import { assetButton, bindingView, browseAssets, libraryView, moveItem } from './director_media.js';
 import {
   installDirectorQueue,
   refreshRenderTakes,
@@ -146,7 +146,7 @@ function hasInstructions(input, message) {
 
 function filmRequirements(ui, doc) {
   const field = ui.field(
-    'Film requirements',
+    'Film Requirements',
     doc.film.brief,
     (value) =>
       ui.change((next) => {
@@ -161,45 +161,123 @@ function filmRequirements(ui, doc) {
   return field;
 }
 
+// Keep the host's unit-bearing text contract, including free-form goals from saved films.
+function runtimeMinutes(target) {
+  const match = /^(?:about\s+)?(\d+(?:\.\d+)?(?:e[+-]?\d+)?)\s*(min(?:ute)?s?|m|s(?:ec(?:ond)?s?)?|h(?:ours?)?)$/i.exec(target.trim());
+  if (!match) return '';
+  const unit = match[2][0].toLowerCase();
+  const minutes = Number(match[1]) * (unit === 's' ? 1 / 60 : unit === 'h' ? 60 : 1);
+  return Number.isFinite(minutes) && minutes > 0 ? minutes : '';
+}
+
+function filmNumber(name, value, attributes, save) {
+  const input = el('input', { type: 'number', step: 'any', inputMode: 'decimal', ariaLabel: name, ...attributes, value });
+  const error = meta('');
+  error.hidden = true;
+  error.setAttribute('role', 'alert');
+  input.oninput = () => {
+    error.hidden = true;
+  };
+  let saved = input.value;
+  input.onchange = () => {
+    if (!input.validity.valid || (input.value && input.valueAsNumber <= 0)) {
+      error.textContent = input.validationMessage || 'Enter a positive number.';
+      error.hidden = false;
+      input.value = saved;
+      return;
+    }
+    saved = input.value;
+    save(saved ? input.valueAsNumber : null);
+  };
+  return el('label', { className: 'field' }, [label(name), input, error]);
+}
+
+function generationRange(ui, film) {
+  const warning = meta('');
+  warning.setAttribute('role', 'status');
+  function slider(name, value) {
+    const input = el('input', { type: 'range', min: '5', max: '15', step: '0.1', value, ariaLabel: name });
+    const display = label('');
+    const show = () => {
+      display.textContent = input.value + ' s';
+      input.setAttribute('aria-valuetext', display.textContent);
+    };
+    show();
+    return {
+      input,
+      show,
+      field: el('label', { className: 'field range' }, [el('span', { className: 'bar' }, [label(name), display]), input]),
+    };
+  }
+  const low = slider('Minimum Generation', film.min_seconds);
+  const high = slider('Maximum Generation', film.max_seconds);
+  function feedback(min, max) {
+    const legacy = min < 5 || max > 15;
+    warning.hidden = !legacy && !!timing({ min_seconds: min, max_seconds: max }, min);
+    warning.textContent = legacy
+      ? 'Saved range: ' + min + '–' + max + ' s. Move a slider to use the 5–15 s range.'
+      : 'No valid H3 frame count fits. Widen the generation range.';
+  }
+  feedback(film.min_seconds, film.max_seconds);
+  let lastLow = low.input.valueAsNumber;
+  let lastHigh = high.input.valueAsNumber;
+  for (const control of [low, high]) {
+    control.input.oninput = () => {
+      if (control === low) high.input.value = Math.max(lastHigh, low.input.valueAsNumber);
+      else low.input.value = Math.min(lastLow, high.input.valueAsNumber);
+      low.show();
+      high.show();
+      feedback(low.input.valueAsNumber, high.input.valueAsNumber);
+    };
+    control.input.onchange = () =>
+      ui.change((next) => {
+        lastLow = low.input.valueAsNumber;
+        lastHigh = high.input.valueAsNumber;
+        next.film.min_seconds = lastLow;
+        next.film.max_seconds = lastHigh;
+      }, false);
+  }
+  return [paired(low.field, high.field), warning];
+}
+
 function filmView(ui, doc) {
   const f = doc.film;
-  const warning = el('p', {
-    role: 'status',
-    className: 'meta',
-    textContent: 'No valid H3 frame count fits. Adjust the generation range.',
-    hidden: !!timing(f, f.min_seconds),
-  });
   const update = (key) => (value) =>
     ui.change((next) => {
       next.film[key] = value;
-      warning.hidden = !!timing(next.film, next.film.min_seconds);
     }, false);
+  const minutes = runtimeMinutes(f.target_runtime);
+  const legacyTarget =
+    f.target_runtime && minutes === ''
+      ? row([meta('Saved target: ' + f.target_runtime), ui.button('Clear target', () => saveTarget(null))])
+      : null;
+  const saveTarget = (value) => {
+    update('target_runtime')(value === null ? '' : value + ' min');
+    legacyTarget?.remove();
+  };
   return [
     columns(
       filmRequirements(ui, doc),
       el('div', { className: 'stack' }, [
-        group('Canvas & timing', [
+        group('Canvas & Timing', [
           paired(
             ui.select(
-              'Film aspect ratio',
+              'Film Aspect Ratio',
               f.aspect_ratio,
               ASPECTS.map((k) => [k, k]),
               update('aspect_ratio'),
             ),
-            ui.field('Megapixels', f.megapixels, update('megapixels'), { number: true }),
+            filmNumber('Megapixels', f.megapixels, { min: '0.1', max: '16', required: true }, update('megapixels')),
           ),
-          paired(
-            ui.field('Minimum generation (s)', f.min_seconds, update('min_seconds'), { number: true }),
-            ui.field('Maximum generation (s)', f.max_seconds, update('max_seconds'), { number: true }),
-          ),
-          warning,
-          ui.field('Target film runtime (optional)', f.target_runtime, update('target_runtime')),
+          ...generationRange(ui, f),
+          filmNumber('Target Film Runtime (min, optional)', minutes, { min: '0', placeholder: 'Approximate total length' }, saveTarget),
+          ...(legacyTarget ? [legacyTarget] : []),
         ]),
         group('Planning', [
           paired(
-            ui.select('Writing skill for the film', f.writing_skill, skillChoices(ui.state, f.writing_skill), update('writing_skill')),
+            ui.select('Writing Skill for the Film', f.writing_skill, skillChoices(ui.state, f.writing_skill), update('writing_skill')),
             ui.select(
-              'Keyframe picture tags',
+              'Keyframe Picture Tags',
               f.frame_picture_tags,
               [
                 ['after_refs', 'After references'],
@@ -215,7 +293,7 @@ function filmView(ui, doc) {
     ...(doc.outline
       ? [
           el('details', {}, [
-            el('summary', { textContent: 'Applied plan and coverage' }),
+            el('summary', { textContent: 'Applied Plan and Coverage' }),
             el('p', { textContent: doc.outline }),
             el('p', { textContent: doc.continuity }),
             ...Object.entries(doc.coverage).map(([requirement, ids]) => {
@@ -233,7 +311,7 @@ function addSegment(ui) {
     const id = resourceId();
     doc.segments.push({
       id,
-      intent: 'New segment',
+      intent: 'New Segment',
       seconds: doc.film.min_seconds,
       transition: 'cut',
       overlap_frames: 0,
@@ -269,10 +347,10 @@ function directionView(ui, doc, seg) {
   return [
     columns(
       el('div', { className: 'stack' }, [
-        group('Shot direction', [
+        group('Shot Direction', [
           field('Intent', 'intent'),
           paired(
-            field('Generation length (s)', 'seconds', { number: true }),
+            field('Generation Length (s)', 'seconds', { number: true }),
             ui.select(
               'Transition',
               seg.transition,
@@ -300,10 +378,10 @@ function directionView(ui, doc, seg) {
                 ),
               ]
             : []),
-          field('Opening state', 'opening'),
-          field('Closing state', 'closing'),
+          field('Opening State', 'opening'),
+          field('Closing State', 'closing'),
         ]),
-        group('Sequence order', [
+        group('Sequence Order', [
           row([
             ...ui.moves(doc.segments, index, (delta) => ui.change((next) => moveItem(next.segments, index, delta))),
             ui.button('Remove segment', () => {
@@ -322,9 +400,9 @@ function directionView(ui, doc, seg) {
         ]),
       ]),
       el('section', { className: 'stack' }, [
-        group('Asset bindings', [bindingView(ui, doc, seg)]),
-        group('Writing skill', [
-          ui.select('Segment writing skill', seg.skill, skillChoices(ui.state, seg.skill), (v) =>
+        group('Asset Bindings', [bindingView(ui, doc, seg)]),
+        group('Writing Skill', [
+          ui.select('Segment Writing Skill', seg.skill, skillChoices(ui.state, seg.skill), (v) =>
             modify((s) => {
               s.skill = v;
               s.skill_locked = !!v;
@@ -381,7 +459,7 @@ function revisionView(ui, doc, seg) {
     });
   }
   return [
-    group('Current prompt', [text('p', seg.prompt || 'No finalized prompt yet.', 'current-prompt')]),
+    group('Current Prompt', [text('p', seg.prompt || 'No finalized prompt yet.', 'current-prompt')]),
     ui.field(`What should change in segment ${index + 1}?`, draft.request, (v) => update('request', v), { multiline: true }),
     context,
     ui.check('Reselect writing skill', !seg.skill_locked && draft.reselect, (v) => update('reselect', v), seg.skill_locked),
@@ -466,10 +544,10 @@ function action(ui, name, fn, disabled = false) {
   return button;
 }
 
-const FILM = 'Film setup',
-  LIBRARY = 'Asset library',
-  DIRECTION = 'Direction & bindings',
-  REVISION = 'Revise prompt';
+const FILM = 'Film Setup',
+  LIBRARY = 'Asset Library',
+  DIRECTION = 'Direction & Bindings',
+  REVISION = 'Revise Prompt';
 
 function launcher(ui, title) {
   const button = ui.button(title, () => openEditor(ui, title));
@@ -513,7 +591,7 @@ function openEditor(ui, title) {
   const foot = el('div', { className: 'dialog-foot bar' });
   const heading = text('h2', title);
   const context = text('small', '');
-  const browse = title === LIBRARY ? ui.button('Browse assets', () => browseAssets(ui)) : null;
+  const browse = title === LIBRARY ? assetButton(ui, 'Browse assets', 'plus', () => browseAssets(ui)) : null;
   const headActions = row(browse ? [browse, close] : [close]);
   const head = el('header', { className: 'dialog-head bar' }, [el('div', { className: 'dialog-title' }, [heading, context]), headActions]);
   const segmentId = ui.read().selected;
@@ -634,7 +712,7 @@ function editorView(ui, doc, times) {
       const brief = filmRequirements(ui, doc);
       brief.classList.add('prompt');
       editor.append(
-        text('h2', 'Plan your film'),
+        text('h2', 'Plan Your Film'),
         meta('Describe the film to draft a sequence, or add a segment to write it yourself.'),
         brief,
         row([
@@ -653,7 +731,7 @@ function editorView(ui, doc, times) {
   }
   const index = doc.segments.indexOf(seg);
   const prompt = ui.field(
-    'Finalized prompt',
+    'Finalized Prompt',
     seg.prompt,
     (v) =>
       ui.change((next) => {
@@ -674,7 +752,7 @@ function editorView(ui, doc, times) {
           secondsLabel(duration.frames ?? 0) +
           ' generated',
       ),
-      text('h2', seg.intent || 'Untitled segment'),
+      text('h2', seg.intent || 'Untitled Segment'),
     ]),
     ...(seg.opening || seg.closing
       ? [
@@ -706,7 +784,7 @@ function editorView(ui, doc, times) {
   )
     editor.append(
       el('details', {}, [
-        el('summary', { textContent: 'Rendered footage' }),
+        el('summary', { textContent: 'Rendered Footage' }),
         el('video', {
           controls: true,
           preload: 'none',
@@ -764,11 +842,11 @@ function render(node) {
     elapsed,
     ...(message ? [label(' ' + message)] : []),
   ]);
-  const reviewButton = ui.button('Review draft', () => review(ui), !run.started && !run.running && !run.hasOutput);
+  const reviewButton = ui.button('Review Draft', () => review(ui), !run.started && !run.running && !run.hasOutput);
   if (run.hasOutput) reviewButton.className = 'review';
   body.replaceChildren(
     el('header', { className: 'film-head bar' }, [
-      el('div', {}, [text('h2', 'Film overview'), meta(summary.join(' · '))]),
+      el('div', {}, [text('h2', 'Film Overview'), meta(summary.join(' · '))]),
       row([launcher(ui, FILM), library]),
     ]),
     el('div', { className: 'workspace' }, [timelinePane, editor]),

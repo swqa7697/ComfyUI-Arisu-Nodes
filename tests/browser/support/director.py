@@ -131,9 +131,9 @@ def inspect_render_recovery(page: Page, director_id: str, server: FixtureServer)
         )
         assert len(normal_runs) == 1 and normal_runs[0]["latent_path"] == jobs[2]["previous"]["latent_path"]
         # Use the same predecessor receipt for the revision. The agent may see its actual tail only with valid wiring.
-        revise = page.get_by_role("button", name="Revise prompt", exact=True)
+        revise = page.get_by_role("button", name="Revise Prompt", exact=True)
         revise.click()
-        revision = page.get_by_role("dialog", name="Revise prompt", exact=True)
+        revision = page.get_by_role("dialog", name="Revise Prompt", exact=True)
         unavailable = revision.get_by_text("Using the film plan. Previous tail frames are unavailable.", exact=True)
         expect(unavailable).to_be_visible()
         page.keyboard.press("Escape")

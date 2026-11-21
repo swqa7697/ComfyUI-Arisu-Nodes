@@ -1,5 +1,5 @@
 import { el } from '../common/dom.js';
-import { browseResources, posterUrl, viewUrl } from '../common/resource_browser.js';
+import { AUDIO_ICON, browseResources, posterUrl, viewUrl } from '../common/resource_browser.js';
 import { cropFor, editMediaSelection, probe, resourceId } from './media_selection.js';
 
 const roles = { first: 'First frame', last: 'Last frame', image: 'Image reference', video: 'Video reference', audio: 'Audio reference' };
@@ -11,7 +11,11 @@ export function moveItem(list, index, offset) {
 
 const filename = (asset) => asset.path.split(/[\\/]/).at(-1);
 function preview(asset) {
-  if (asset.kind === 'audio') return el('span', { className: 'asset-thumb audio', textContent: '♫', ariaHidden: 'true' });
+  if (asset.kind === 'audio') {
+    const thumb = el('span', { className: 'asset-thumb audio', ariaHidden: 'true' });
+    thumb.innerHTML = AUDIO_ICON;
+    return thumb;
+  }
   const crop = asset.crop && ['left', 'top', 'width', 'height'].map((k) => asset.crop[k]).join(',');
   return el('img', {
     className: 'asset-thumb',
@@ -119,7 +123,7 @@ function mediaHeading(ui, asset, detail, binding, segmentId) {
   const editButton = ui.button('', () => edit(ui, asset, binding, segmentId));
   editButton.className = 'media-preview';
   editButton.title = editButton.ariaLabel = command + ' · ' + filename(asset);
-  editButton.append(preview(boundMedia(asset, binding)), el('span', { textContent: command }));
+  editButton.append(preview(boundMedia(asset, binding)), binding ? el('span', { textContent: command }) : glyph('pencil'));
   return el('div', { className: 'asset-title' }, [
     editButton,
     el('div', { className: 'asset-info' }, [
@@ -130,51 +134,137 @@ function mediaHeading(ui, asset, detail, binding, segmentId) {
   ]);
 }
 
+const glyph = (name) => el('span', { className: 'pi pi-' + name, ariaHidden: 'true' });
+
+export function assetButton(ui, name, icon, action) {
+  const button = ui.button('', action);
+  button.className = 'asset-action';
+  button.title = button.ariaLabel = name;
+  button.append(glyph(icon));
+  return button;
+}
+
+// Track the dragged DOM row locally. External drops and cancelled drags never edit the film.
+function sortableLibrary(ui, list) {
+  let source, target;
+  function clearTarget() {
+    if (target) delete target.dataset.drop;
+    target = null;
+  }
+  function end() {
+    clearTarget();
+    if (source) delete source.dataset.dragging;
+    source = null;
+  }
+  const move = (id, delta) =>
+    ui.change((next) =>
+      moveItem(
+        next.assets,
+        next.assets.findIndex((asset) => asset.id === id),
+        delta,
+      ),
+    );
+  list.onkeydown = (event) => {
+    if (!event.target.closest('.asset-handle') || !['ArrowUp', 'ArrowDown'].includes(event.key)) return;
+    event.preventDefault();
+    move(event.target.closest('[data-asset]').dataset.asset, event.key === 'ArrowUp' ? -1 : 1);
+  };
+  list.ondragstart = (event) => {
+    const handle = event.target.closest('.asset-handle');
+    if (!handle) return;
+    handle.focus({ preventScroll: true });
+    source = handle.closest('[data-asset]');
+    source.dataset.dragging = '';
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('application/x-arisu-asset', source.dataset.asset);
+    event.dataTransfer.setDragImage(source, 12, source.offsetHeight / 2);
+  };
+  list.ondragover = (event) => {
+    if (!source) return;
+    event.preventDefault();
+    const row = event.target.closest('[data-asset]');
+    if (row !== target) clearTarget();
+    if (!row || row === source) return;
+    const rect = row.getBoundingClientRect();
+    target = row;
+    row.dataset.drop = event.clientY < rect.top + rect.height / 2 ? 'before' : 'after';
+  };
+  list.ondragleave = (event) => {
+    if (!list.contains(event.relatedTarget)) clearTarget();
+  };
+  list.ondragend = end;
+  list.ondrop = (event) => {
+    if (!source) return;
+    event.preventDefault();
+    const id = source.dataset.asset;
+    const dest = target?.dataset.asset;
+    const after = target?.dataset.drop === 'after';
+    end();
+    if (!dest) return;
+    ui.change((next) => {
+      const from = next.assets.findIndex((asset) => asset.id === id);
+      const to = next.assets.findIndex((asset) => asset.id === dest);
+      if (from >= 0 && to >= 0) moveItem(next.assets, from, to - from + Number(after) - Number(from < to));
+    });
+  };
+}
+
 export function libraryView(ui, doc) {
-  const rows = doc.assets.map((asset, i) => {
+  const rows = doc.assets.map((asset) => {
     const uses = doc.segments.flatMap((s, index) => (s.bindings.some((b) => b.asset_id === asset.id) ? [String(index + 1)] : []));
-    const update = (key, value) =>
+    const update = (key, value, refresh = true) =>
       ui.change((next) => {
         next.assets.find((a) => a.id === asset.id)[key] = value;
-      }, false);
-    const card = el('article', { className: asset.muted ? 'card muted' : 'card' }, [
+      }, refresh);
+    const handle = el('button', {
+      type: 'button',
+      className: 'asset-action asset-handle',
+      textContent: '⠿',
+      draggable: true,
+      disabled: doc.assets.length < 2,
+      ariaLabel: 'Reorder ' + filename(asset),
+      title: 'Drag to reorder, or use the up and down arrow keys',
+    });
+    handle.setAttribute('aria-keyshortcuts', 'ArrowUp ArrowDown');
+    const mute = assetButton(ui, 'Mute asset', asset.muted ? 'ban' : 'circle-fill', () => update('muted', !asset.muted));
+    mute.ariaPressed = String(asset.muted);
+    mute.title = asset.muted ? 'Unmute asset' : 'Mute asset';
+    mute.classList.add('mute');
+    const actions = [assetButton(ui, 'Reselect asset', 'folder-open', () => browseAssets(ui, asset.id)), mute];
+    if (asset.kind === 'video') {
+      const sound = assetButton(ui, 'Include soundtrack', asset.include_audio ? 'volume-up' : 'volume-off', () =>
+        update('include_audio', !asset.include_audio),
+      );
+      sound.ariaPressed = String(!!asset.include_audio);
+      sound.title = asset.include_audio ? 'Exclude soundtrack' : 'Include soundtrack';
+      actions.push(sound);
+    }
+    actions.push(
+      assetButton(ui, 'Remove asset', 'times', () =>
+        ui.change((next) => {
+          next.assets = next.assets.filter((item) => item.id !== asset.id);
+        }),
+      ),
+    );
+    const card = el('article', { className: asset.muted ? 'card muted' : 'card', ariaLabel: filename(asset) }, [
+      handle,
       mediaHeading(ui, asset, uses.length ? 'Used by segments ' + uses.join(', ') : 'Unbound'),
-      ui.field('Asset notes', asset.note, (value) => update('note', value)),
-      el('div', { className: 'card-tools' }, [
-        el('div', { className: 'actions' }, [
-          ui.button('Reselect', () => browseAssets(ui, asset.id)),
-          ui.check('Mute', asset.muted, (v) =>
-            ui.change((next) => {
-              next.assets[i].muted = v;
-            }),
-          ),
-          ...(asset.kind === 'video'
-            ? [
-                ui.check('Soundtrack', asset.include_audio, (v) =>
-                  ui.change((next) => {
-                    next.assets[i].include_audio = v;
-                  }),
-                ),
-              ]
-            : []),
-        ]),
-        el('div', { className: 'actions' }, [
-          ...ui.moves(doc.assets, i, (delta) => ui.change((next) => moveItem(next.assets, i, delta))),
-          ui.button('Remove', () => ui.change((next) => next.assets.splice(i, 1))),
-        ]),
-      ]),
+      ui.field('Asset Notes', asset.note, (value) => update('note', value, false)),
+      el('div', { className: 'card-tools' }, actions),
     ]);
     card.dataset.kind = asset.kind;
     card.dataset.asset = asset.id;
     return card;
   });
+  const list = el('div', { className: 'library' }, rows);
+  sortableLibrary(ui, list);
   // A retained binding can recover its stable ID after an import or an accidental library deletion.
   const missing = new Set(
     doc.segments.flatMap((s) => s.bindings.map((b) => b.asset_id)).filter((id) => !doc.assets.some((a) => a.id === id)),
   );
   return [
     ...(rows.length
-      ? [el('div', { className: 'library' }, rows)]
+      ? [list]
       : [el('p', { className: 'empty-library meta', textContent: 'Browse images, video or audio to add your first asset.' })]),
     ...[...missing].map((id) => ui.button('Reselect missing asset ' + id, () => browseAssets(ui, id))),
   ];
