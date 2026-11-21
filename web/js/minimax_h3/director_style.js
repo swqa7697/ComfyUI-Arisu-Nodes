@@ -88,6 +88,8 @@ dialog.arisu-director-dialog[open]{display:flex;flex-direction:column}
 .arisu-director-dialog .card[data-kind=image]{--kind:var(--arisu-image)}
 .arisu-director-dialog .card[data-kind=video]{--kind:var(--arisu-video)}
 .arisu-director-dialog .card[data-kind=audio]{--kind:var(--arisu-audio)}
+.arisu-director-dialog .card.muted{--kind:var(--muted);background:var(--base);border-inline-start-color:var(--line);filter:grayscale(1);opacity:.75}
+.arisu-director-dialog .card.muted .asset-info strong{text-decoration:line-through}
 .arisu-director-dialog .range input{accent-color:var(--accent);padding:0;cursor:pointer;height:22px}
 .arisu-director-dialog .range .bar span:last-child{color:var(--ink);font-variant-numeric:tabular-nums}
 .arisu-director-dialog .library .card{grid-template-columns:auto minmax(135px,1fr) minmax(110px,.9fr) auto;align-items:center;gap:8px;padding:8px}
@@ -115,7 +117,6 @@ dialog.arisu-director-dialog[open]{display:flex;flex-direction:column}
 .arisu-director-dialog .asset-thumb.audio{display:grid;place-items:center;color:var(--kind);font-size:19px}
 .arisu-director-dialog .asset-thumb.audio svg{width:19px;height:19px}
 .arisu-director-dialog .card-tools{display:flex;align-items:center;gap:1px}
-.arisu-director-dialog .card.muted .asset-info strong{text-decoration:line-through}
 .arisu-director-dialog .empty-library{display:grid;place-items:center;text-align:center;min-height:100px;padding:12px;background:var(--well);border:1px solid var(--edge);border-radius:4px}
 .arisu-director-dialog .check{display:inline-flex;align-items:center;gap:6px;cursor:pointer}
 .arisu-director-dialog .current-prompt{white-space:pre-wrap;max-height:25dvh;overflow:auto;background:var(--panel);padding:10px 12px;border-inline-start:2px solid var(--accent)}

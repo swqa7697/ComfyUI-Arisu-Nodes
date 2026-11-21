@@ -10,8 +10,6 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from .core import (
     ASPECT_RATIO_LABELS,
-    CLIP_FRAME_STEP,
-    FPS,
     FRAME_TAG_MODES,
     MIN_CLIP_FRAMES,
     MOTION_WINDOWS,
@@ -21,6 +19,7 @@ from .core import (
     VideoSettings,
     canvas_from_megapixels,
     clip_frames,
+    frames_for_duration,
     media_kind,
     order_picture_items,
     parse_resource,
@@ -113,16 +112,11 @@ def _number(value: Any, name: str, low: float, high: float) -> float:
 
 
 def segment_frames(seconds: float, min_seconds: float, max_seconds: float) -> int:
-    """Snap to the nearest available 24 fps H3 grid point, with ties upward."""
+    """Validate the requested seconds before applying the shared H3 Video Settings conversion."""
     _number(min_seconds, "minimum duration", 0.2, 150)
     _number(max_seconds, "maximum duration", min_seconds, 150)
-    first = max(0, math.ceil((min_seconds * FPS - MIN_CLIP_FRAMES) / CLIP_FRAME_STEP))
-    last = math.floor((max_seconds * FPS - MIN_CLIP_FRAMES) / CLIP_FRAME_STEP)
-    if first > last:
-        raise ValueError("No H3 frame count fits this duration range. Adjust the minimum or maximum.")
     _number(seconds, "segment duration", min_seconds, max_seconds)
-    step = math.floor((seconds * FPS - MIN_CLIP_FRAMES) / CLIP_FRAME_STEP + 0.5)
-    return MIN_CLIP_FRAMES + CLIP_FRAME_STEP * max(first, min(last, step))
+    return frames_for_duration(seconds)
 
 
 def asset_resource(asset: Dict[str, Any], binding: Optional[Dict[str, Any]] = None) -> Resource:

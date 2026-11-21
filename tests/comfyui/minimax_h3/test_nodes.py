@@ -328,13 +328,13 @@ def test_studio_bundles_originals_and_rejects_invalid_or_conflicting_resources(t
     # Director binds the same library source to different roles in each segment.
     # Only its selected sources reach Hybrid, in the resolved numbering order.
     film = json.loads(EMPTY_FILM)
-    film["film"].update(frame_picture_tags="before_refs", megapixels=0.1, min_seconds=5, max_seconds=5.8)
+    film["film"].update(frame_picture_tags="before_refs", megapixels=0.1, min_seconds=15, max_seconds=15)
     film["assets"] = [first, *state["references"]]
     film["assets"][1]["muted"] = False  # Unbound and undecodable, but irrelevant to both selected segments.
     segment = {
         "id": "arrival",
         "intent": "arrival",
-        "seconds": 5.8,
+        "seconds": 15,
         "transition": "cut",
         "overlap_frames": 0,
         "prompt": "<Picture:first> by the door",
@@ -356,7 +356,7 @@ def test_studio_bundles_originals_and_rejects_invalid_or_conflicting_resources(t
     film.update(segments=[segment, second], selected="arrival")
     director = h3.ArisuMiniMaxH3DirectorWorkbench
     prompt, settings, resources = director.execute(json.dumps(film))
-    assert prompt == "<Picture 1> by the door" and settings.length == 124
+    assert prompt == "<Picture 1> by the door" and settings.length == 362
     assert [r.id for r in resources.sources()] == ["first"] and resources.first is None
     film.update(selected="inside", assets=list(reversed(film["assets"])))
     prompt, settings, resources = director.execute(json.dumps(film))

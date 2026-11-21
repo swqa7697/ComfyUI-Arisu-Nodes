@@ -82,20 +82,14 @@ export function clearLocations(text) {
 }
 
 export function timing(film, seconds) {
-  const low = Math.max(0, Math.ceil((film.min_seconds * 24 - 5) / 17));
-  const high = Math.floor((film.max_seconds * 24 - 5) / 17);
+  const { min_seconds: min, max_seconds: max } = film;
+  if (!Number.isFinite(min) || !Number.isFinite(max) || !Number.isFinite(seconds) || min < 0.2 || max > 150 || max < min) return null;
 
-  if (
-    !Number.isFinite(low) ||
-    !Number.isFinite(high) ||
-    high < low ||
-    !Number.isFinite(seconds) ||
-    film.min_seconds < 0.2 ||
-    film.max_seconds > 150 ||
-    film.max_seconds < film.min_seconds
-  )
-    return null;
-  return 5 + 17 * Math.max(low, Math.min(high, Math.round((seconds * 24 - 5) / 17)));
+  // Preview the host's frames_for_duration: round to the nearest frame (ties to even), then snap upward on the H3 grid.
+  const requested = Math.max(min, Math.min(max, seconds)) * 24;
+  const lower = Math.floor(requested);
+  const frames = requested - lower === 0.5 && lower % 2 === 0 ? lower : Math.round(requested);
+  return 5 + 17 * Math.max(0, Math.ceil((frames - 5) / 17));
 }
 
 export function timeline(doc) {

@@ -34,12 +34,13 @@ def test_frame_grid_round_trips_between_pixels_and_latents():
         assert video_latent_t(aligned) == latent_t, f"case={aligned!r}"
         assert video_frame_count(latent_t) == aligned, f"case={latent_t!r}"
 
-    # Director first computes legal candidates on both sides of the requested duration.
-    assert segment_frames(5, 5, 15) == 124 and segment_frames(15, 5, 15) == 345
-    assert segment_frames(5.8, 5, 5.8) == 124
+    # Every slider position works as a fixed request, including both endpoints.
+    # Widening the range must not change the length of the same requested clip.
+    for tenths in range(50, 151):
+        seconds = tenths / 10
+        assert segment_frames(seconds, seconds, seconds) == segment_frames(seconds, 5, 15) == frames_for_duration(seconds)
+    assert segment_frames(5.7, 5.6, 5.8) == 141
     assert segment_frames(141 / 24, 141 / 24, 141 / 24) == 141
-    with pytest.raises(ValueError, match="range"):
-        segment_frames(5.7, 5.6, 5.8)
     with pytest.raises(ValueError, match="duration"):
         segment_frames(16, 5, 15)
 

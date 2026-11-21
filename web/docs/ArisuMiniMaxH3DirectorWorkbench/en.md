@@ -24,7 +24,7 @@ To revise one segment, select it and open **Revise Prompt**. Describe the change
 
 To use the render controls, connect one Motion Context Load Latent to Motion Context. Feed Hybrid’s conditioning and latent into Motion Context, then connect its conditioning and Hybrid’s latent to the sampler. Connect the sampled latent to Motion Context Save Latent and to both VAE decoders. Feed the decoded picture and sound through Motion Context Trim using the Motion Context `trim_frames` output. Connect both trimmed outputs to Create Video at 24 fps, then connect Create Video to Save Video.
 
-Each segment generates a full clip at 24 fps with a legal H3 frame count inside the film’s duration range. Hard cuts use all generated frames. A continuation uses the previous take’s Motion Context, then trims the overlap from the delivered picture and soundtrack.
+The generation range applies to requested seconds. Set both sliders to the same value to request a fixed duration. The backend converts each request to frames at 24 fps and aligns it upward on the H3 grid. For example, 15 seconds produces 362 frames (about 15.08 seconds). The timeline uses the aligned frame counts. Hard cuts use all generated frames. A continuation uses the previous take’s Motion Context, then trims the overlap from the delivered picture and soundtrack.
 
 **Render current segment** renders the selected segment. **Render remaining segments** works forward from the selection and checks completed takes before submitting another generation. Stopping lets the current render finish. A changed or missing predecessor must be rendered again before continuing from it.
 

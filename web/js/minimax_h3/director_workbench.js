@@ -5,7 +5,7 @@ import { closeOnBackdropClick, el } from '../common/dom.js';
 import { installSelectionGuards, preservingSelections, registerSelectionOwner } from '../common/selection_context.js';
 import { hideWidget, setWidget } from '../common/widgets.js';
 import { agentStatus, openAgentSettings } from './agent_settings.js';
-import { ASPECTS, clearLocations, readDocument, secondsLabel, stableTags, timeline, timing } from './director_document.js';
+import { ASPECTS, clearLocations, readDocument, secondsLabel, stableTags, timeline } from './director_document.js';
 import { assetButton, bindingView, browseAssets, libraryView, moveItem } from './director_media.js';
 import {
   installDirectorQueue,
@@ -193,8 +193,9 @@ function filmNumber(name, value, attributes, save) {
 }
 
 function generationRange(ui, film) {
-  const warning = meta('');
+  const warning = meta(`Saved range: ${film.min_seconds}–${film.max_seconds} s. Move a slider to use the 5–15 s range.`);
   warning.setAttribute('role', 'status');
+  warning.hidden = film.min_seconds >= 5 && film.max_seconds <= 15;
   function slider(name, value) {
     const input = el('input', { type: 'range', min: '5', max: '15', step: '0.1', value, ariaLabel: name });
     const display = label('');
@@ -211,14 +212,6 @@ function generationRange(ui, film) {
   }
   const low = slider('Minimum Generation', film.min_seconds);
   const high = slider('Maximum Generation', film.max_seconds);
-  function feedback(min, max) {
-    const legacy = min < 5 || max > 15;
-    warning.hidden = !legacy && !!timing({ min_seconds: min, max_seconds: max }, min);
-    warning.textContent = legacy
-      ? 'Saved range: ' + min + '–' + max + ' s. Move a slider to use the 5–15 s range.'
-      : 'No valid H3 frame count fits. Widen the generation range.';
-  }
-  feedback(film.min_seconds, film.max_seconds);
   let lastLow = low.input.valueAsNumber;
   let lastHigh = high.input.valueAsNumber;
   for (const control of [low, high]) {
@@ -227,7 +220,7 @@ function generationRange(ui, film) {
       else low.input.value = Math.min(lastLow, high.input.valueAsNumber);
       low.show();
       high.show();
-      feedback(low.input.valueAsNumber, high.input.valueAsNumber);
+      warning.hidden = true;
     };
     control.input.onchange = () =>
       ui.change((next) => {
