@@ -5,7 +5,7 @@ Run the first Euler steps on a smaller video latent, then finish at the target r
 ## Wiring
 
 1. Connect your H3 model to `model`. To use a different model for the full-resolution stage, connect it to `model_hires`. Both models must use the same architecture and latent format.
-2. Set **MiniMax H3 Hybrid to Video** to the final canvas size. Connect its `positive` output to `positive`, your workflow's negative conditioning to `negative`, and the H3 video VAE to `vae`.
+2. Set **MiniMax H3 Hybrid to Video** to the final canvas size. Connect its `positive` output to `conditioning` and the H3 video VAE to `vae`. Both sampling stages use this single conditioning input at CFG 1.0.
 3. Connect the Hybrid node's `latent` output to the sampler's `latent` input. For a continuation clip, connect `context_latent` and `trim_frames` as described below.
 4. Connect the standard `euler` sampler from **KSamplerSelect** to `sampler` and the model's sigma schedule to `sigmas`. Euler must have `s_churn=0`. Choose a lift mode below and send the output `latent` to the usual H3 video and audio decode path.
 
@@ -25,7 +25,6 @@ Place optional H3 upscaler weights under `models/latent_upscale_models/`. Learne
 | --- | --- | --- |
 | `seed` | 0 | Seed for the low-resolution noise. The video transition uses the next seed, wrapping at 64 bits. |
 | `control after generate` | Randomize | Choose how ComfyUI updates the seed for the next run. |
-| `cfg` | 5.0 | Guidance scale for both stages. |
 | `lowres_scale` | 0.5 | Scales latent height and width. The low-resolution grid rounds each dimension to an even size. |
 | `transition_step` | 6 | Number of low-resolution steps. Leave at least one high-resolution step. The sigma at the start of that step must be below 1. |
 | `rho` | 0.0 | Fraction of spatiotemporal locations selected for correction, per batch item. |
@@ -38,7 +37,7 @@ An initialized latent can carry a noise mask. A value of 1 generates content and
 
 ### Continuing a clip with H3 Motion Context
 
-1. Feed the **current** target latent to Motion Context and to SelfLift's `latent` input. Send Motion Context's conditioning output to SelfLift's `positive`.
+1. Feed the **current** target latent to Motion Context and to SelfLift's `latent` input. Send Motion Context's conditioning output to SelfLift's `conditioning` input.
 2. Feed the **previous** clip's Load Latent output to `context_latent` on **both** nodes. Connect Motion Context's `trim_frames` output to **both** SelfLift and Motion Context Trim. For the first clip, a trim count of zero skips motion-guide preparation.
 3. Decode and trim the sampler output as usual. SelfLift uses the trim count to prepare the guide. Motion Context Trim removes the pinned frames once.
 

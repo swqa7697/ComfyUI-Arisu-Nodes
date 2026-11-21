@@ -100,14 +100,13 @@ def _motion_pixels(parts: Sequence[torch.Tensor], vae: VAE, context_latent: Opti
 
 
 def prepare_keyframes(
-    positive: Conditioning,
-    negative: Conditioning,
+    conditioning: Conditioning,
     vae: VAE,
     h: int,
     w: int,
     context_latent: Optional[Dict[str, Any]],
     trim_frames: int,
-) -> Tuple[Conditioning, Conditioning]:
+) -> Conditioning:
     """Encode available source pixels on the low grid and preserve other conditioning fields."""
     steps = 1 if trim_frames == 1 else video_latent_t(trim_frames)
     if trim_frames and trim_frames != 1 and video_frame_count(steps) != trim_frames:
@@ -115,47 +114,42 @@ def prepare_keyframes(
     motion_cache: Dict[Tuple[int, ...], Tuple[torch.Tensor, ...]] = {}
     still_cache: Dict[Tuple[int, int], torch.Tensor] = {}
 
-    def prepare(cond: Conditioning, use_motion: bool) -> List[Tuple[Any, Dict[str, Any]]]:
-        result = []
-        found_motion = False
-        for embedding, metadata in cond:
-            keys = metadata.get("minimax_keyframes") or []
-            rows = _head_rows(keys, trim_frames, steps) if trim_frames else []
-            replacements = {}
-            if rows:
-                parts = [keys[i]["latent"] for i in rows]
-                signature = tuple(id(p) for p in parts)
-                found_motion = True
-                # The negative branch can share the positive guides (e.g. ConditioningZeroOut),
-                # or carry unrelated keyframes at the same coordinates.
-                if (use_motion or signature in motion_cache) and any(p.shape[-2:] != (h, w) for p in parts):
-                    if signature not in motion_cache:
-                        pixels = _motion_pixels(parts, vae, context_latent, trim_frames)
-                        encoded = _encode_pixels(pixels, vae, h, w, parts[0], steps)
-                        motion_cache[signature] = encoded.split(1, dim=2)
-                    replacements = dict(zip(rows, motion_cache[signature], strict=True))
+    result = []
+    found_motion = False
+    for embedding, metadata in conditioning:
+        keys = metadata.get("minimax_keyframes") or []
+        rows = _head_rows(keys, trim_frames, steps) if trim_frames else []
+        replacements = {}
+        if rows:
+            parts = [keys[i]["latent"] for i in rows]
+            signature = tuple(id(p) for p in parts)
+            found_motion = True
+            if any(p.shape[-2:] != (h, w) for p in parts):
+                if signature not in motion_cache:
+                    pixels = _motion_pixels(parts, vae, context_latent, trim_frames)
+                    encoded = _encode_pixels(pixels, vae, h, w, parts[0], steps)
+                    motion_cache[signature] = encoded.split(1, dim=2)
+                replacements = dict(zip(rows, motion_cache[signature], strict=True))
 
-            pixels_by_id = {id(latent): image for latent, image in metadata.get("arisu_keyframe_pixels", [])}
-            low_keys = []
-            for i, key in enumerate(keys):
-                latent = key.get("latent")
-                if latent is None or latent.shape[-2:] == (h, w):
-                    low_keys.append(key)
-                    continue
-                if i in replacements:
-                    low_latent = replacements[i]
-                elif id(latent) in pixels_by_id:
-                    image = pixels_by_id[id(latent)]
-                    identity = (id(latent), id(image))
-                    if identity not in still_cache:
-                        still_cache[identity] = _encode_pixels(image, vae, h, w, latent, 1)
-                    low_latent = still_cache[identity]
-                else:
-                    low_latent = _resize_latent(latent, h, w)
-                low_keys.append({**key, "latent": low_latent})
-            result.append((embedding, {**metadata, "minimax_keyframes": low_keys} if keys else metadata))
-        if use_motion and trim_frames and not found_motion:
-            raise ValueError("SelfLift: trim_frames does not match the pinned rows in positive conditioning")
-        return result
-
-    return prepare(positive, True), prepare(negative, False)
+        pixels_by_id = {id(latent): image for latent, image in metadata.get("arisu_keyframe_pixels", [])}
+        low_keys = []
+        for i, key in enumerate(keys):
+            latent = key.get("latent")
+            if latent is None or latent.shape[-2:] == (h, w):
+                low_keys.append(key)
+                continue
+            if i in replacements:
+                low_latent = replacements[i]
+            elif id(latent) in pixels_by_id:
+                image = pixels_by_id[id(latent)]
+                identity = (id(latent), id(image))
+                if identity not in still_cache:
+                    still_cache[identity] = _encode_pixels(image, vae, h, w, latent, 1)
+                low_latent = still_cache[identity]
+            else:
+                low_latent = _resize_latent(latent, h, w)
+            low_keys.append({**key, "latent": low_latent})
+        result.append((embedding, {**metadata, "minimax_keyframes": low_keys} if keys else metadata))
+    if trim_frames and not found_motion:
+        raise ValueError("SelfLift: trim_frames does not match the pinned rows in conditioning")
+    return result

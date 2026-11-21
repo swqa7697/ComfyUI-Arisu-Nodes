@@ -83,6 +83,7 @@ def test_progressive_euler_lifts_video_and_continues_audio(monkeypatch: pytest.M
         # Replace the heavyweight model evaluation. ComfyUI still packs the streams,
         # installs the mask hooks, runs Euler and unpacks its callbacks and output.
         model = guider.model_patcher.model
+        assert guider.cfg == 1.0 and set(guider.conds) == {"positive"}
         key = guider.conds["positive"][0]["minimax_keyframes"][0]["latent"]
         assert key.shape[-2:] == latent_shapes[0][-2:]
         if key.shape == keyframe.shape:
@@ -117,14 +118,12 @@ def test_progressive_euler_lifts_video_and_continues_audio(monkeypatch: pytest.M
     vae = VideoVae()
     kwargs = {
         "model": patcher(0.1),
-        "positive": cond,
-        "negative": cond,
+        "conditioning": cond,
         "vae": vae,
         "latent_image": latent,
         "sampler": comfy.samplers.sampler_object("euler"),
         "sigmas": sigmas,
         "seed": (1 << 64) - 1,
-        "cfg": 5.0,
         "transition_step": 2,
         "lowres_scale": 0.5,
         "rho": 0.5,
@@ -197,29 +196,28 @@ def check_motion_guides():
     keys.insert(0, sound)
     cond = [(None, {"minimax_keyframes": keys})]
     context = {"samples": [previous[0], audio]}
-    pos, neg = prepare_keyframes(cond, cond, vae, 2, 4, context, 22)
+    low = prepare_keyframes(cond, vae, 2, 4, context, 22)
     assert len(vae.encoded_frames) == 1
     pixels = vae.encoded_frames[0]
     assert pixels.shape == (22, 2, 4, 3)
     torch.testing.assert_close(pixels[:, 0, 0, 0], torch.arange(17, 39).float())
-    low_keys = pos[0][1]["minimax_keyframes"]
+    low_keys = low[0][1]["minimax_keyframes"]
     assert low_keys[0] is sound and low_keys[1]["audio_latent"] is audio
     for i, offset in enumerate(offsets, start=1):
         assert low_keys[i]["resolved_frame_index"] == offset
-        assert low_keys[i]["latent"] is neg[0][1]["minimax_keyframes"][i]["latent"]
         torch.testing.assert_close(low_keys[i]["latent"], torch.full((1, 3, 1, 2, 4), 17.0 + offset))
         torch.testing.assert_close(keys[i]["latent"], tail[i - 1])
 
     with pytest.raises(ValueError, match="does not match"):
-        prepare_keyframes(cond, cond, vae, 2, 4, {"samples": [previous + 1, audio]}, 22)
-    prepare_keyframes(cond, cond, vae, 2, 4, None, 22)
+        prepare_keyframes(cond, vae, 2, 4, {"samples": [previous + 1, audio]}, 22)
+    prepare_keyframes(cond, vae, 2, 4, None, 22)
     torch.testing.assert_close(vae.encoded_frames[-1][:, 0, 0, 0], torch.arange(22).float())
 
     # A replacement from an external node can reuse the position of an Arisu still.
     # Only the surviving guide's own pixels may replace the latent resize.
     orphan_pixels = [(previous[:, :, :1], torch.zeros(1, 4, 8, 3))]
     legacy = [(None, {"minimax_keyframes": [keys[1]], "arisu_keyframe_pixels": orphan_pixels})]
-    low, _ = prepare_keyframes(legacy, [(None, {"minimax_keyframes": None})], vae, 2, 4, None, 0)
+    low = prepare_keyframes(legacy, vae, 2, 4, None, 0)
     torch.testing.assert_close(low[0][1]["minimax_keyframes"][0]["latent"].mean((-1, -2)), tail[0].mean((-1, -2)))
     assert len(vae.encoded_frames) == 2
     lazy = h3.ArisuMiniMaxH3SelfLiftProgressiveSampler.check_lazy_status

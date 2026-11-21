@@ -1561,8 +1561,7 @@ class ArisuMiniMaxH3SelfLiftProgressiveSampler(io.ComfyNode):
                 io.Model.Input(
                     "model_hires", optional=True, tooltip="Optional high-resolution model with the same architecture and latent format."
                 ),
-                io.Conditioning.Input("positive"),
-                io.Conditioning.Input("negative"),
+                io.Conditioning.Input("conditioning"),
                 io.Vae.Input("vae", tooltip="H3 video VAE for low-resolution guides and optional pixel-anchor correction."),
                 io.Latent.Input(
                     "latent_image",
@@ -1586,7 +1585,6 @@ class ArisuMiniMaxH3SelfLiftProgressiveSampler(io.ComfyNode):
                 io.Sampler.Input("sampler", tooltip="Use the standard Euler sampler with s_churn=0."),
                 io.Sigmas.Input("sigmas"),
                 io.Int.Input("seed", default=0, min=0, max=0xFFFFFFFFFFFFFFFF, control_after_generate=True),
-                io.Float.Input("cfg", default=5.0, min=0.0, max=100.0, step=0.1, round=0.01),
                 io.Float.Input(
                     "lowres_scale", default=0.5, min=0.25, max=1.0, step=0.05, tooltip="Spatial scale of the low-resolution steps."
                 ),
@@ -1643,14 +1641,12 @@ class ArisuMiniMaxH3SelfLiftProgressiveSampler(io.ComfyNode):
     def execute(
         cls,
         model: io.Model.Type,
-        positive: io.Conditioning.Type,
-        negative: io.Conditioning.Type,
+        conditioning: io.Conditioning.Type,
         vae: io.Vae.Type,
         latent_image: io.Latent.Type,
         sampler: io.Sampler.Type,
         sigmas: torch.Tensor,
         seed: int,
-        cfg: float,
         transition_step: int,
         lowres_scale: float,
         rho: float,
@@ -1674,14 +1670,12 @@ class ArisuMiniMaxH3SelfLiftProgressiveSampler(io.ComfyNode):
         return io.NodeOutput(
             progressive_sample(
                 model,
-                positive,
-                negative,
+                conditioning,
                 vae,
                 latent_image,
                 sampler,
                 sigmas,
                 seed,
-                cfg,
                 transition_step,
                 lowres_scale,
                 rho,

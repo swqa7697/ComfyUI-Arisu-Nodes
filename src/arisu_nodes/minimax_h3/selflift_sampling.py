@@ -22,6 +22,7 @@ import comfy.utils
 import latent_preview
 import torch
 from comfy.sd import VAE
+from comfy_extras.nodes_custom_sampler import Guider_Basic
 
 from . import selflift_tiling
 from .selflift_diagnostics import StageTimer, debug_dump, log_memory
@@ -134,14 +135,12 @@ def _euler_step(state: torch.Tensor, denoised: torch.Tensor, sigma: torch.Tensor
 
 def progressive_sample(
     model: comfy.model_patcher.ModelPatcher,
-    positive: Sequence[Sequence[Any]],
-    negative: Sequence[Sequence[Any]],
+    conditioning: Sequence[Sequence[Any]],
     vae: VAE,
     latent_image: Dict[str, Any],
     sampler: comfy.samplers.KSAMPLER,
     sigmas: torch.Tensor,
     seed: int,
-    cfg: float,
     transition_step: int,
     lowres_scale: float,
     rho: float,
@@ -193,7 +192,7 @@ def progressive_sample(
     _LOGGER.info(
         "[SelfLift plan] low_latent=%s target_latent=%s spatial_lift=(%.4f, %.4f) "
         "low_nfe=%d high_nfe=%d sigma_prediction=%.8g sigma_resume=%.8g "
-        "rho=%.4f weights=(%.4f, %.4f) direct_lift=%s pixel_anchor=%s cfg=%.4f mask=%s hires_model=%s",
+        "rho=%.4f weights=(%.4f, %.4f) direct_lift=%s pixel_anchor=%s mask=%s hires_model=%s",
         low_shape,
         tuple(streams[0].shape),
         H / h,
@@ -207,7 +206,6 @@ def progressive_sample(
         w_max,
         "skipped" if rho == 1.0 and w_min == 1.0 else "external" if latent_lifter is not None else latent_upsample,
         rho > 0.0 and w_max > 0.0,
-        cfg,
         "none" if noise_mask is None else f"{tuple(noise_mask.shape)}",
         "custom" if model_hires is not None else "same",
     )
@@ -271,9 +269,9 @@ def progressive_sample(
     callback = latent_preview.prepare_callback(model, total_steps)
     disable_pbar = not comfy.utils.PROGRESS_BAR_ENABLED
     if video:  # keyframe cond latents share the generation grid on MiniMax H3
-        positive_low, negative_low = prepare_keyframes(positive, negative, vae, h, w, context_latent, trim_frames)
+        conditioning_low = prepare_keyframes(conditioning, vae, h, w, context_latent, trim_frames)
     else:
-        positive_low, negative_low = positive, negative
+        conditioning_low = conditioning
 
     transition = {}
     low_evaluations = 0
@@ -309,17 +307,13 @@ def progressive_sample(
     resolution_scale = getattr(model.get_model_object("latent_format"), "spacial_downscale_ratio", 1)
     low_timer = StageTimer("low_resolution", low_model.load_device, (h, w), resolution_scale)
     log_memory("low_resolution start", low_model.load_device)
-    comfy.samplers.sample(
-        low_model,
+    low_guider = Guider_Basic(low_model)
+    low_guider.set_conds(conditioning_low)
+    low_guider.sample(
         noise_low,
-        positive_low,
-        negative_low,
-        cfg,
-        low_model.load_device,
+        low_latent,
         sampler,
         sigmas[: transition_step + 1],
-        low_model.model_options,
-        latent_image=low_latent,
         callback=callback_low,
         disable_pbar=disable_pbar,
         seed=seed,
@@ -340,7 +334,7 @@ def progressive_sample(
     ]
     latent_format = model.get_model_object("latent_format")
     z0_low_vae = latent_format.process_out(x0_streams[0].float()).to(device)
-    del low_latent, noise_low, low_streams, x0_streams, positive_low, negative_low
+    del low_latent, noise_low, low_streams, x0_streams, conditioning_low, low_guider
     transition_timer.mark("prepare_endpoint")
     log_memory("transition endpoint_ready", model.load_device)
 
@@ -401,17 +395,13 @@ def progressive_sample(
     high_timer = StageTimer("high_resolution", model.load_device, (H, W), resolution_scale)
     if highres_tiling:
         _LOGGER.info("[SelfLift plan] automatic high-resolution tiling enabled; preparation selects the tile count")
-    out = comfy.samplers.sample(
-        high_model,
+    high_guider = Guider_Basic(high_model)
+    high_guider.set_conds(conditioning)
+    out = high_guider.sample(
         resume_noise,
-        positive,
-        negative,
-        cfg,
-        model.load_device,
+        resume_latent,
         sampler,
         sigmas[transition_step:],
-        high_model.model_options,
-        latent_image=resume_latent,
         callback=callback_high,
         disable_pbar=disable_pbar,
         seed=seed,

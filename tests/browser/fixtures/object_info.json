@@ -1995,11 +1995,7 @@
           "MODEL",
           {}
         ],
-        "positive": [
-          "CONDITIONING",
-          {}
-        ],
-        "negative": [
+        "conditioning": [
           "CONDITIONING",
           {}
         ],
@@ -2033,16 +2029,6 @@
             "min": 0,
             "max": 18446744073709551615,
             "control_after_generate": true
-          }
-        ],
-        "cfg": [
-          "FLOAT",
-          {
-            "default": 5.0,
-            "min": 0.0,
-            "max": 100.0,
-            "step": 0.1,
-            "round": 0.01
           }
         ],
         "lowres_scale": [
@@ -2148,14 +2134,12 @@
     "input_order": {
       "required": [
         "model",
-        "positive",
-        "negative",
+        "conditioning",
         "vae",
         "latent_image",
         "sampler",
         "sigmas",
         "seed",
-        "cfg",
         "lowres_scale",
         "transition_step",
         "rho",

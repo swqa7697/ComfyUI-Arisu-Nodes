@@ -125,7 +125,7 @@ Click a node name for its full reference, also available through the node's righ
 | [MiniMax H3 Video Settings (Upscale)](web/docs/ArisuMiniMaxH3VideoSettingsUpscale/en.md)    | Include a target size for latent upscaling.                                   |
 | [MiniMax H3 SelfLift Progressive Sampler](web/docs/ArisuMiniMaxH3SelfLiftProgressiveSampler/en.md) | Run early Euler steps at low resolution, lift the video, and continue sampling video and audio at the target size. |
 
-The **MiniMax H3 SelfLift Progressive Sampler** uses ComfyUI's native H3 upscaler with your selected checkpoint. Arisu Hybrid keyframes and Motion Context continuations can use pixel-space guidance during the low-resolution steps. The progressive sampler is adapted from [facok/comfyui-SelfLift](https://github.com/facok/comfyui-SelfLift).
+The **MiniMax H3 SelfLift Progressive Sampler** uses ComfyUI's native H3 upscaler with your selected checkpoint. Connect the Hybrid or Motion Context conditioning output to `conditioning`. Both stages sample at CFG 1.0. Arisu Hybrid keyframes and Motion Context continuations can use pixel-space guidance during the low-resolution steps. The progressive sampler is adapted from [facok/comfyui-SelfLift](https://github.com/facok/comfyui-SelfLift).
 
 See [example workflows](example_workflows) for ready-made graphs and the [changelog](CHANGELOG.md) for release notes.
 
