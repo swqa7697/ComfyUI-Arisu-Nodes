@@ -11,6 +11,13 @@ from playwright.sync_api import Page, Route, expect
 from tests.browser.support.harness import FixtureServer
 
 
+def edit_segment(page: Page, section: str = "Prompt"):
+    """Enter a section through the public segment editor controls."""
+    if not page.get_by_role("dialog", name="Edit Segment", exact=True).count():
+        page.get_by_role("button", name="Edit Segment", exact=True).click()
+    page.get_by_role("tab", name=section, exact=True).click()
+
+
 def inspect_render_recovery(page: Page, director_id: str, server: FixtureServer):
     """Exercise render recovery with the execution links consumed by the Director controls."""
 
@@ -98,6 +105,7 @@ def inspect_render_recovery(page: Page, director_id: str, server: FixtureServer)
         first = page.get_by_role("button", name="01 Launch the paper boat", exact=False)
         second = page.get_by_role("button", name="02 Follow the boat", exact=False)
         first.click()
+        page.keyboard.press("Escape")
         remaining = page.get_by_role("button", name="Render remaining segments", exact=True)
         current = page.get_by_role("button", name="Render current segment", exact=True)
         status = page.locator(".arisu-director .status")
@@ -116,6 +124,7 @@ def inspect_render_recovery(page: Page, director_id: str, server: FixtureServer)
         expect(remaining).to_be_enabled()
         assert len(jobs) == 3
         second.click()
+        page.keyboard.press("Escape")
         page.evaluate(
             """async ([id, save]) => {
               const {app} = await import('/scripts/app.js'), {api} = await import('/scripts/api.js');
@@ -131,9 +140,8 @@ def inspect_render_recovery(page: Page, director_id: str, server: FixtureServer)
         )
         assert len(normal_runs) == 1 and normal_runs[0]["latent_path"] == jobs[2]["previous"]["latent_path"]
         # Use the same predecessor receipt for the revision. The agent may see its actual tail only with valid wiring.
-        revise = page.get_by_role("button", name="Revise Prompt", exact=True)
-        revise.click()
-        revision = page.get_by_role("dialog", name="Revise Prompt", exact=True)
+        edit_segment(page, "Revise Prompt")
+        revision = page.get_by_role("dialog", name="Edit Segment", exact=True)
         unavailable = revision.get_by_text("Using the film plan. Previous tail frames are unavailable.", exact=True)
         expect(unavailable).to_be_visible()
         page.keyboard.press("Escape")
@@ -153,7 +161,7 @@ def inspect_render_recovery(page: Page, director_id: str, server: FixtureServer)
             }""",
             director_id,
         )
-        revise.click()
+        edit_segment(page, "Revise Prompt")
         expect(revision.get_by_text("Tail frames from segment 1 are available for this revision.", exact=True)).to_be_visible()
         instructions = revision.get_by_label("What should change in segment 2?", exact=True)
         instructions.fill("Match the bow position in the preceding take.")
@@ -167,7 +175,7 @@ def inspect_render_recovery(page: Page, director_id: str, server: FixtureServer)
         graph = refinement["prompt"]
         source = graph[refinement["node_id"]]["inputs"]["context_latent"][0]
         assert graph[source]["inputs"]["latent_path"] == jobs[2]["previous"]["latent_path"]
-        revise.click()
+        edit_segment(page, "Revise Prompt")
         expect(instructions).to_have_value("")
         expect(revision.get_by_text("Tail frames from segment 1 are available for this revision.", exact=True)).to_be_visible()
         # The take can change while the editor is open. Submission must recheck it and fall back to the film.
@@ -179,14 +187,16 @@ def inspect_render_recovery(page: Page, director_id: str, server: FixtureServer)
         fallback = server.generation_requests[-1]
         assert not fallback["options"]["motion_enabled"]
         assert set(fallback["prompt"]) == {fallback["node_id"]}
-        revise.click()
+        edit_segment(page, "Revise Prompt")
         expect(unavailable).to_be_visible()
         page.keyboard.press("Escape")
         second.click()
+        page.keyboard.press("Escape")
         current.click()
         expect(status).to_contain_text("missing or has changed")
         assert len(jobs) == 3
         first.click()
+        page.keyboard.press("Escape")
         page.evaluate("window.dropDirectorResponse=true")
         current.click()
         expect(status).to_contain_text("Connection lost after submission")

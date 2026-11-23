@@ -8,7 +8,7 @@ from typing import Any, Dict
 import pytest
 from playwright.sync_api import Locator, Page, expect, sync_playwright
 
-from tests.browser.support.director import inspect_render_recovery
+from tests.browser.support.director import edit_segment, inspect_render_recovery
 from tests.browser.support.harness import DRAFT, STUDIO, WORKBENCH, FixtureServer, add_node, browser_page, screenshot
 
 pytestmark = pytest.mark.browser
@@ -510,11 +510,16 @@ def inspect_director(page: Page, server: FixtureServer, name: str):
     # Manual writing is available before the first plan.
     screenshot(page, name, "director-empty")
     panel.get_by_role("button", name="Add segment").click()
-    panel.get_by_label("Finalized Prompt").fill("A hand folds a paper boat.")
-    panel.get_by_role("button", name="Direction & Bindings").click()
+    page.get_by_label("Finalized Prompt").fill("A hand folds a paper boat.")
+    edit_segment(page, "Direction")
+    page.get_by_label("Opening State", exact=True).fill("Hands at the edge of the pond.")
+    edit_segment(page)
+    expect(page.get_by_label("Finalized Prompt")).to_have_value("A hand folds a paper boat.")
+    edit_segment(page, "Direction")
+    expect(page.get_by_label("Opening State", exact=True)).to_have_value("Hands at the edge of the pond.")
     page.get_by_role("button", name="Remove segment").click()
     requirements = "Follow a paper boat across the pond.\n\n## Must include\n- Launch the boat\n- Keep both segments short."
-    panel.get_by_label("Film Requirements", exact=True).fill(requirements)
+    expect(panel.locator("input, textarea, select")).to_have_count(0)
     # A duration saved by the previous free-text editor can still be edited in minutes.
     page.evaluate(
         """id => {
@@ -530,7 +535,7 @@ def inspect_director(page: Page, server: FixtureServer, name: str):
     contained(page, "dialog.arisu-director-dialog")
     expect(film.locator("textarea")).to_have_count(1)
     brief = film.get_by_label("Film Requirements", exact=True)
-    expect(brief).to_have_value(requirements)
+    expect(brief).to_have_value("")
     requirements += "\n\nMaintain the soft morning light."
     brief.fill(requirements)
     target = film.get_by_role("spinbutton", name="Target Film Runtime (min, optional)")
@@ -559,9 +564,9 @@ def inspect_director(page: Page, server: FixtureServer, name: str):
     expect(film.get_by_role("status")).to_be_hidden()
     page.keyboard.press("Escape")
     panel.get_by_role("button", name="Add segment").click()
-    expect(panel.locator(".segment-head")).to_contain_text("15.08 s generated")
+    expect(page.locator(".dialog-title")).to_contain_text("15.08 s generated")
     assert json.loads(widget_value(page, node_id, "film_json"))["segments"][0]["seconds"] == 15
-    panel.get_by_role("button", name="Direction & Bindings").click()
+    edit_segment(page, "Direction")
     page.get_by_role("button", name="Remove segment").click()
     setup.click()
     minimum.press("Home")
@@ -589,32 +594,34 @@ def inspect_director(page: Page, server: FixtureServer, name: str):
     screenshot(page, name, "director-review")
     review.get_by_role("button", name="Apply to Workbench", exact=True).click()
     review.get_by_role("button", name="Close", exact=True).click()
+    edit_segment(page)
     expect(page.get_by_label("Finalized Prompt", exact=True)).to_have_value(DRAFT)
+    screenshot(page, name, "director-prompt")
+    page.keyboard.press("Escape")
     setup.click()
     expect(film.get_by_role("button", name="Replan the film", exact=True)).to_be_enabled()
     expect(brief).to_have_value(requirements)
     page.keyboard.press("Escape")
-    revise = panel.get_by_role("button", name="Revise Prompt", exact=True)
-    revision_dialog = page.get_by_role("dialog", name="Revise Prompt")
-    revise.click()
+    revision_dialog = page.get_by_role("dialog", name="Edit Segment")
+    edit_segment(page, "Revise Prompt")
     segment_one = revision_dialog.get_by_label("What should change in segment 1?", exact=True)
     segment_one.fill("Keep the launch in close-up.")
     expect(revision_dialog.get_by_text("Using the film plan.", exact=True)).to_be_visible()
     page.keyboard.press("Escape")
     page.get_by_role("button", name="02 Follow the boat", exact=False).click()
     before_revision = json.loads(widget_value(page, node_id, "film_json"))
-    revise.click()
+    edit_segment(page, "Revise Prompt")
     segment_two = revision_dialog.get_by_label("What should change in segment 2?", exact=True)
     expect(segment_two).to_have_value("")
     expect(revision_dialog.locator("textarea")).to_have_count(1)
     expect(revision_dialog.get_by_text("Using the film plan. Previous tail frames are unavailable.", exact=True)).to_be_visible()
     page.keyboard.press("Escape")
     page.get_by_role("button", name="01 Launch the paper boat", exact=False).click()
-    revise.click()
+    edit_segment(page, "Revise Prompt")
     expect(segment_one).to_have_value("Keep the launch in close-up.")
     page.keyboard.press("Escape")
     page.get_by_role("button", name="02 Follow the boat", exact=False).click()
-    revise.click()
+    edit_segment(page, "Revise Prompt")
     segment_two.fill("Settle the camera on the boat.")
     screenshot(page, name, "director-revision")
     server.fail_generation = True
@@ -622,7 +629,7 @@ def inspect_director(page: Page, server: FixtureServer, name: str):
     submit_revision.click()
     expect(panel.locator(".status")).to_contain_text("Simulated provider unavailable")
     server.fail_generation = False
-    revise.click()
+    edit_segment(page, "Revise Prompt")
     expect(segment_two).to_have_value("Settle the camera on the boat.")
     submit_revision.click()
     expect(page.locator(".arisu-director .status")).to_contain_text("Output ready to apply")
@@ -630,7 +637,7 @@ def inspect_director(page: Page, server: FixtureServer, name: str):
     assert revised["director"]["request"] == "Settle the camera on the boat." and not revised["options"]["motion_enabled"]
     snapshot = json.loads(revised["prompt"][revised["node_id"]]["inputs"]["film_json"])
     assert snapshot["selected"] == "follow" and snapshot["film"]["brief"] == requirements
-    revise.click()
+    edit_segment(page, "Revise Prompt")
     expect(segment_two).to_have_value("")
     page.keyboard.press("Escape")
     page.get_by_role("button", name="Review Draft", exact=True).click()
@@ -646,26 +653,40 @@ def inspect_director(page: Page, server: FixtureServer, name: str):
     assert after_revision["segments"][0] == before_revision["segments"][0]
     assert after_revision["segments"][1]["prompt"] == "The camera settles on the paper boat."
     page.evaluate("window.comfyAPI.app.app.extensionManager.workflow.activeWorkflow.changeTracker.undo()")
+    edit_segment(page)
     expect(page.get_by_label("Finalized Prompt", exact=True)).to_have_value("The boat reaches the willow.")
+    edit_segment(page, "Direction")
+    expect(page.get_by_label("Opening State", exact=True)).to_have_value("Sunlit pond")
+    screenshot(page, name, "director-direction")
+    page.keyboard.press("Escape")
     contained(page, ".arisu-director")
-    expect(panel.get_by_text("Sunlit pond", exact=True)).to_be_visible()
-    timeline, editor = panel.locator(".timeline"), panel.locator(".editor")
-    assert timeline.bounding_box()["x"] < editor.bounding_box()["x"]
+    expect(panel.locator("input,textarea,select")).to_have_count(0)
+    timeline = panel.locator(".timeline")
+    cards = timeline.locator(".list > button")
+    assert cards.nth(0).bounding_box()["x"] < cards.nth(1).bounding_box()["x"]
     screenshot(page, name, "director-segments")
     page.evaluate("id => window.comfyAPI.app.app.graph.getNodeById(id).setSize([420, 640])", node_id)
     page.wait_for_function("document.querySelector('.arisu-director').clientWidth < 565")
-    assert timeline.bounding_box()["y"] + timeline.bounding_box()["height"] <= editor.bounding_box()["y"] + 1
+    assert cards.nth(0).bounding_box()["y"] < cards.nth(1).bounding_box()["y"]
     contained(page, ".arisu-director")
     contained(page, ".arisu-director .workspace")
     first = timeline.get_by_role("button", name="01 Launch the paper boat")
     first.focus()
     page.keyboard.press("Enter")
+    expect(page.get_by_label("Finalized Prompt")).to_have_value(DRAFT)
+    # Arrow navigation keeps edits and exposes exactly one panel to keyboard users.
+    prompt_tab = page.get_by_role("tab", name="Prompt", exact=True)
+    prompt_tab.focus()
+    prompt_tab.press("ArrowRight")
+    expect(page.get_by_role("tab", name="Direction", exact=True)).to_be_focused()
+    expect(page.get_by_role("tab", name="Direction", exact=True)).to_have_attribute("aria-selected", "true")
+    page.keyboard.press("Escape")
     expect(first).to_be_focused()
-    expect(panel.get_by_label("Finalized Prompt")).to_have_value(DRAFT)
     screenshot(page, name, "director-narrow")
     page.evaluate("id => window.comfyAPI.app.app.graph.getNodeById(id).setSize([720, 640])", node_id)
     inspect_render_recovery(page, node_id, server)
     page.get_by_role("button", name="02 Follow the boat", exact=False).click()
+    page.keyboard.press("Escape")
     page.get_by_role("button", name="Asset Library", exact=True).click()
     page.get_by_role("button", name="Browse assets", exact=True).click()
     pick(page, "scene.png")
@@ -707,8 +728,8 @@ def inspect_director(page: Page, server: FixtureServer, name: str):
     asset_id = saved["assets"][0]["id"]
     page.keyboard.press("Escape")
     expect(panel.get_by_role("button", name="Asset Library", exact=True)).to_be_focused()
-    direction = panel.get_by_role("button", name="Direction & Bindings", exact=True)
-    direction.click()
+    direction = panel.get_by_role("button", name="02 Follow the boat", exact=False)
+    edit_segment(page, "Assets & Skill")
     page.get_by_label("Bind an asset", exact=True).select_option(asset_id)
     expect(page.get_by_label("Role", exact=True)).to_have_value("image")
     screenshot(page, name, "director-bindings")
@@ -721,27 +742,40 @@ def inspect_director(page: Page, server: FixtureServer, name: str):
     contained(page, "dialog.arisu-director-dialog")
     contained(page, ".arisu-director-dialog .dialog-body")
     page.get_by_label("Lock this writing skill").scroll_into_view_if_needed()
-    expect(page.get_by_role("dialog", name="Direction & Bindings").get_by_role("button", name="Close", exact=True)).to_be_in_viewport()
+    expect(page.get_by_role("dialog", name="Edit Segment").get_by_role("button", name="Close", exact=True)).to_be_in_viewport()
+    screenshot(page, name, "director-mobile-bindings")
+    edit_segment(page, "Direction")
+    long_intent = "沿着池塘追随纸船与水中的倒影 🌿 " * 12
+    page.get_by_label("Intent", exact=True).fill(long_intent)
+    edit_segment(page)
+    contained(page, "dialog.arisu-director-dialog")
+    expect(page.get_by_role("button", name="Done", exact=True)).to_be_in_viewport()
+    expect(page.get_by_role("dialog", name="Edit Segment").get_by_role("button", name="Close", exact=True)).to_be_in_viewport()
+    screenshot(page, name, "director-long-title")
+    edit_segment(page, "Direction")
+    page.get_by_label("Intent", exact=True).fill("Follow the boat")
     page.set_viewport_size(viewport)
     page.keyboard.press("Escape")
     expect(direction).to_be_focused()
+    edit_segment(page)
     page.get_by_label("Finalized Prompt", exact=True).fill("Follow <Picture 1>.")
     assert json.loads(widget_value(page, node_id, "film_json"))["segments"][1]["prompt"] == f"Follow <Picture:{asset_id}>."
     # Read a long prompt with the wheel while the graph stays at the same zoom.
-    prompt = panel.get_by_label("Finalized Prompt", exact=True)
+    prompt = page.get_by_label("Finalized Prompt", exact=True)
     prompt.fill("A long shot across the water.\n" * 40)
     prompt.evaluate("e => e.scrollTop = 0")
     scale = page.evaluate("window.comfyAPI.app.app.canvas.ds.scale")
     prompt.hover()
     page.mouse.wheel(0, 160)
-    page.wait_for_function("document.querySelector('.arisu-director .prompt textarea').scrollTop > 0")
+    page.wait_for_function("document.querySelector('.arisu-director-dialog .prompt textarea').scrollTop > 0")
     assert page.evaluate("window.comfyAPI.app.app.canvas.ds.scale") == scale
     prompt.fill("Follow <Picture 1>.")
+    page.keyboard.press("Escape")
     page.emulate_media(reduced_motion="no-preference")
     for _ in range(2):
         direction.focus()
         page.keyboard.press("Enter")
-        expect(page.get_by_role("dialog", name="Direction & Bindings")).to_be_visible()
+        expect(page.get_by_role("dialog", name="Edit Segment")).to_be_visible()
         page.keyboard.press("Escape")
         expect(direction).to_be_focused()
     page.emulate_media(reduced_motion="reduce")

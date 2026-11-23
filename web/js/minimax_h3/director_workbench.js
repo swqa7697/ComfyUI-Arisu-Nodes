@@ -318,6 +318,7 @@ function addSegment(ui) {
     });
     doc.selected = id;
   });
+  openEditor(ui, SEGMENT);
 }
 
 function directionView(ui, doc, seg) {
@@ -338,83 +339,109 @@ function directionView(ui, doc, seg) {
       opts,
     );
   return [
+    field('Intent', 'intent'),
     columns(
-      el('div', { className: 'stack' }, [
-        group('Shot Direction', [
-          field('Intent', 'intent'),
-          paired(
-            field('Generation Length (s)', 'seconds', { number: true }),
-            ui.select(
-              'Transition',
-              seg.transition,
-              [
-                ['cut', 'Hard cut'],
-                ['continuation', 'Continuation'],
-              ],
-              (v) =>
-                modify((s) => {
-                  s.transition = v;
-                  s.overlap_frames = v === 'cut' ? 0 : 22;
-                }),
-            ),
-          ),
-          ...(seg.transition === 'continuation'
-            ? [
-                ui.select(
-                  'Overlap (frames)',
-                  String(seg.overlap_frames),
-                  [5, 22, 39, 56].map((n) => [String(n), String(n)]),
-                  (v) =>
-                    modify((s) => {
-                      s.overlap_frames = Number(v);
-                    }),
-                ),
-              ]
-            : []),
-          field('Opening State', 'opening'),
-          field('Closing State', 'closing'),
-        ]),
-        group('Sequence Order', [
-          row([
-            ...ui.moves(doc.segments, index, (delta) => ui.change((next) => moveItem(next.segments, index, delta))),
-            ui.button('Remove segment', () => {
-              ui.state.dialog.close();
-              ui.change((next) => {
-                next.segments.splice(index, 1);
-                next.selected = next.segments[Math.min(index, next.segments.length - 1)]?.id ?? '';
-                for (const ids of Object.values(next.coverage))
-                  if (Array.isArray(ids)) {
-                    const i = ids.indexOf(seg.id);
-                    if (i >= 0) ids.splice(i, 1);
-                  }
-              });
-            }),
-          ]),
-        ]),
-      ]),
-      el('section', { className: 'stack' }, [
-        group('Asset Bindings', [bindingView(ui, doc, seg)]),
-        group('Writing Skill', [
-          ui.select('Segment Writing Skill', seg.skill, skillChoices(ui.state, seg.skill), (v) =>
-            modify((s) => {
-              s.skill = v;
-              s.skill_locked = !!v;
-              s.skill_reason = v ? 'Selected manually.' : '';
-            }),
-          ),
-          ui.check(
-            'Lock this writing skill',
-            seg.skill_locked,
+      group('Timing & Transition', [
+        paired(
+          field('Generation Length (s)', 'seconds', { number: true }),
+          ui.select(
+            'Transition',
+            seg.transition,
+            [
+              ['cut', 'Hard cut'],
+              ['continuation', 'Continuation'],
+            ],
             (v) =>
               modify((s) => {
-                s.skill_locked = v;
+                s.transition = v;
+                s.overlap_frames = v === 'cut' ? 0 : 22;
               }),
-            !seg.skill,
           ),
-          ...(seg.skill_reason ? [el('small', { textContent: seg.skill_reason })] : []),
-        ]),
+        ),
+        ...(seg.transition === 'continuation'
+          ? [
+              ui.select(
+                'Overlap (frames)',
+                String(seg.overlap_frames),
+                [5, 22, 39, 56].map((n) => [String(n), String(n)]),
+                (v) =>
+                  modify((s) => {
+                    s.overlap_frames = Number(v);
+                  }),
+              ),
+              meta(
+                index
+                  ? 'The previous take carries into this shot. Its overlap is trimmed from picture and sound.'
+                  : 'The first segment has no preceding take; no overlap is trimmed.',
+              ),
+            ]
+          : [meta('Start a new shot without carrying motion from the previous segment.')]),
+      ]),
+      group('Continuity', [field('Opening State', 'opening', { multiline: true }), field('Closing State', 'closing', { multiline: true })]),
+    ),
+    group('Sequence Order', [
+      row([
+        ...ui.moves(doc.segments, index, (delta) => ui.change((next) => moveItem(next.segments, index, delta))),
+        ui.button('Remove segment', () => {
+          ui.state.dialog.close();
+          ui.change((next) => {
+            next.segments.splice(index, 1);
+            next.selected = next.segments[Math.min(index, next.segments.length - 1)]?.id ?? '';
+            for (const ids of Object.values(next.coverage))
+              if (Array.isArray(ids)) {
+                const i = ids.indexOf(seg.id);
+                if (i >= 0) ids.splice(i, 1);
+              }
+          });
+        }),
+      ]),
+    ]),
+  ];
+}
+
+function bindingsView(ui, doc, seg) {
+  const modify = (fn) => ui.change((next) => fn(next.segments.find((s) => s.id === seg.id)));
+  return [
+    columns(
+      group('Asset Bindings', [meta('Only these assets are sent to Hybrid for this segment.'), bindingView(ui, doc, seg)]),
+      group('Writing Skill', [
+        ui.select('Segment Writing Skill', seg.skill, skillChoices(ui.state, seg.skill), (v) =>
+          modify((s) => {
+            s.skill = v;
+            s.skill_locked = !!v;
+            s.skill_reason = v ? 'Selected manually.' : '';
+          }),
+        ),
+        ui.check(
+          'Lock this writing skill',
+          seg.skill_locked,
+          (v) =>
+            modify((s) => {
+              s.skill_locked = v;
+            }),
+          !seg.skill,
+        ),
+        ...(seg.skill_reason ? [meta(seg.skill_reason)] : []),
       ]),
     ),
+  ];
+}
+
+function promptView(ui, doc, seg) {
+  const prompt = ui.field(
+    'Finalized Prompt',
+    seg.prompt,
+    (v) =>
+      ui.change((next) => {
+        next.segments.find((s) => s.id === seg.id).prompt = stableTags(doc, seg, v);
+      }, false),
+    { multiline: true },
+  );
+  prompt.classList.add('prompt');
+  return [
+    meta('This is the text sent to Hybrid. Edit it directly, or use Revise Prompt to prepare a draft for review.'),
+    prompt,
+    ...footageView(ui.node, seg),
   ];
 }
 
@@ -441,6 +468,10 @@ function revisionView(ui, doc, seg) {
   const requests = ui.state.revisions;
   const draft = requests.get(seg.id) ?? {};
   const update = (key, value) => requests.set(seg.id, { ...requests.get(seg.id), [key]: value });
+  const request = ui.field(`What should change in segment ${index + 1}?`, draft.request, (v) => update('request', v), {
+    multiline: true,
+  });
+  request.classList.add('revision-request');
   const context = meta('Using the film plan.');
   context.setAttribute('role', 'status');
   if (index > 0 && seg.transition === 'continuation') {
@@ -453,7 +484,7 @@ function revisionView(ui, doc, seg) {
   }
   return [
     group('Current Prompt', [text('p', seg.prompt || 'No finalized prompt yet.', 'current-prompt')]),
-    ui.field(`What should change in segment ${index + 1}?`, draft.request, (v) => update('request', v), { multiline: true }),
+    request,
     context,
     ui.check('Reselect writing skill', !seg.skill_locked && draft.reselect, (v) => update('reselect', v), seg.skill_locked),
   ];
@@ -539,7 +570,10 @@ function action(ui, name, fn, disabled = false) {
 
 const FILM = 'Film Setup',
   LIBRARY = 'Asset Library',
-  DIRECTION = 'Direction & Bindings',
+  SEGMENT = 'Edit Segment',
+  PROMPT = 'Prompt',
+  DIRECTION = 'Direction',
+  BINDINGS = 'Assets & Skill',
   REVISION = 'Revise Prompt';
 
 function launcher(ui, title) {
@@ -575,8 +609,11 @@ function retainFocus(root) {
 function openEditor(ui, title) {
   const { state, node } = ui;
   if (state.dialog?.open) return;
+  const segmentEditor = title === SEGMENT;
+  let tab = PROMPT;
   const dialog = el('dialog', { className: 'arisu-director-dialog', ariaLabel: title });
-  dialog.classList.toggle('compact', title === REVISION || title === LIBRARY);
+  dialog.classList.toggle('segment-dialog', segmentEditor);
+  dialog.classList.toggle('compact', title === LIBRARY);
   const close = ui.button('×', () => dialog.close());
   close.title = close.ariaLabel = 'Close';
   close.className = 'dialog-close';
@@ -588,18 +625,57 @@ function openEditor(ui, title) {
   const headActions = row(browse ? [browse, close] : [close]);
   const head = el('header', { className: 'dialog-head bar' }, [el('div', { className: 'dialog-title' }, [heading, context]), headActions]);
   const segmentId = ui.read().selected;
-  dialog.append(head, body, foot);
+  const tabs = el('div', { className: 'editor-tabs', role: 'tablist', ariaLabel: 'Segment sections' });
+  const tabButtons = [PROMPT, DIRECTION, BINDINGS, REVISION].map((name, index) => {
+    const button = ui.button(name, () => {
+      tab = name;
+      body.scrollTop = 0;
+      state.refreshEditor(ui.read());
+    });
+    button.setAttribute('role', 'tab');
+    button.id = `director-tab-${segmentId}-${index}`;
+    button.setAttribute('aria-controls', `director-panel-${segmentId}`);
+    button.onkeydown = (event) => {
+      let next;
+      if (event.key === 'ArrowRight') next = (index + 1) % 4;
+      if (event.key === 'ArrowLeft') next = (index + 3) % 4;
+      if (event.key === 'Home') next = 0;
+      if (event.key === 'End') next = 3;
+      if (next == null) return;
+      event.preventDefault();
+      tabButtons[next].click();
+      tabButtons[next].focus();
+    };
+    return button;
+  });
+  if (segmentEditor) {
+    tabs.append(...tabButtons);
+    body.id = `director-panel-${segmentId}`;
+    body.setAttribute('role', 'tabpanel');
+  }
+  dialog.append(head, ...(segmentEditor ? [tabs] : []), body, foot);
   closeOnBackdropClick(dialog);
   dialog.addEventListener('keydown', (event) => event.stopPropagation());
   state.dialog = dialog;
   state.refreshEditor = (doc) => {
     const seg = selected(doc);
-    if ((title === DIRECTION || title === REVISION) && (!seg || seg.id !== segmentId)) {
+    if (segmentEditor && (!seg || seg.id !== segmentId)) {
       dialog.close();
       return;
     }
     const restore = retainFocus(dialog);
-    if (title === DIRECTION || title === REVISION) context.textContent = 'Segment ' + (doc.segments.indexOf(seg) + 1);
+    if (segmentEditor) {
+      const index = doc.segments.indexOf(seg),
+        time = timeline(doc)[index];
+      heading.textContent = `Segment ${String(index + 1).padStart(2, '0')} · ${seg.intent || 'Untitled Segment'}`;
+      context.textContent = `${secondsLabel(time.start)} – ${secondsLabel(time.end)} · ${secondsLabel(time.frames ?? 0)} generated · ${seg.transition === 'continuation' ? 'Continuation' : 'Hard cut'}`;
+      for (const button of tabButtons) {
+        const active = button.textContent === tab;
+        button.setAttribute('aria-selected', String(active));
+        button.tabIndex = active ? 0 : -1;
+        if (active) body.setAttribute('aria-labelledby', button.id);
+      }
+    }
     if (title === LIBRARY) {
       context.textContent = doc.assets.length + (doc.assets.length === 1 ? ' asset' : ' assets');
       browse.disabled = doc.assets.length >= 256;
@@ -608,10 +684,12 @@ function openEditor(ui, title) {
     const planOpen = body.querySelector('details')?.open;
     if (title === FILM) body.replaceChildren(...filmView(ui, doc));
     if (title === LIBRARY) body.replaceChildren(...libraryView(ui, doc));
-    if (title === DIRECTION) body.replaceChildren(...directionView(ui, doc, seg));
-    if (title === REVISION) body.replaceChildren(...revisionView(ui, doc, seg));
+    if (segmentEditor) {
+      const view = { [PROMPT]: promptView, [DIRECTION]: directionView, [BINDINGS]: bindingsView, [REVISION]: revisionView }[tab];
+      body.replaceChildren(...view(ui, doc, seg));
+    }
     const planning = title === FILM;
-    if (planning || title === REVISION) {
+    if (planning || (segmentEditor && tab === REVISION)) {
       const ready = state.agents?.agents?.[state.agent]?.ready;
       foot.replaceChildren(
         row([
@@ -642,7 +720,13 @@ function openEditor(ui, title) {
           !ready || state.run?.running,
         ),
       );
-    } else foot.remove();
+    } else if (segmentEditor)
+      foot.replaceChildren(
+        meta('Edits are saved as you work.'),
+        ui.button('Done', () => dialog.close()),
+      );
+    else foot.replaceChildren();
+    foot.hidden = !planning && !segmentEditor;
     if (planOpen && body.querySelector('details')) body.querySelector('details').open = true;
     body.scrollTop = top;
     restore();
@@ -654,7 +738,12 @@ function openEditor(ui, title) {
     state.refreshEditor = null;
     if (nodes.get(node) !== state) return;
     render(node);
-    const opener = state.body.querySelector(`[data-editor="${title}"]`) ?? state.body.querySelector('.timeline-head button');
+    const opener =
+      (segmentEditor
+        ? Array.from(state.body.querySelectorAll('[data-focus]')).find((button) => button.dataset.focus === segmentId)
+        : null) ??
+      state.body.querySelector(`[data-editor="${title}"]`) ??
+      state.body.querySelector('.timeline-head button');
     opener?.focus({ preventScroll: true });
   };
   state.refreshEditor(ui.read());
@@ -670,19 +759,26 @@ function sequenceView(ui, doc, times) {
   for (const [i, seg] of doc.segments.entries()) {
     const t = times[i];
     const status = t.outside ? 'Adjust length' : renderStatus(ui.node, seg.id, doc);
-    const button = ui.button('', () =>
+    const button = ui.button('', () => {
       ui.change((next) => {
         next.selected = seg.id;
-      }),
-    );
+      });
+      openEditor(ui, SEGMENT);
+    });
     button.ariaPressed = String(seg.id === doc.selected);
+    button.setAttribute('aria-haspopup', 'dialog');
     button.dataset.focus = seg.id;
     button.title = seg.intent;
     button.append(
       text('span', String(i + 1).padStart(2, '0'), 'index'),
-      text('span', seg.intent, 'intent'),
-      text('small', secondsLabel(t.start) + ' – ' + secondsLabel(t.end)),
-      text('small', status),
+      text('span', seg.intent || 'Untitled Segment', 'intent'),
+      text('small', secondsLabel(t.start) + ' – ' + secondsLabel(t.end), 'card-time'),
+      text(
+        'small',
+        (seg.transition === 'continuation' ? 'Continuation' : 'Hard cut') + ' · ' + seg.bindings.length + ' assets',
+        'card-detail',
+      ),
+      el('span', { className: 'card-bottom' }, [text('small', status), text('span', 'Edit →', 'card-edit')]),
     );
     list.append(button);
   }
@@ -690,104 +786,60 @@ function sequenceView(ui, doc, times) {
   add.ariaLabel = 'Add segment';
   return el('section', { className: 'timeline', ariaLabel: 'Sequence', onwheel: keepScrollWheel }, [
     el('div', { className: 'timeline-head bar' }, [text('h3', 'Sequence'), add]),
-    list,
-    ...(!doc.segments.length ? [meta('No segments yet.')] : []),
+    ...(doc.segments.length
+      ? [list]
+      : [
+          el('div', { className: 'empty-sequence' }, [
+            text('span', '01 —', 'empty-index'),
+            text('h2', 'Start with a story'),
+            meta('Set the film requirements to plan a sequence, or add a segment to write it yourself.'),
+            action(ui, 'Set up the film', () => openEditor(ui, FILM)),
+          ]),
+        ]),
   ]);
 }
 
-function editorView(ui, doc, times) {
-  const { node, state } = ui;
+function renderControls(ui, doc) {
   const seg = selected(doc);
-  const editor = el('section', { className: 'editor', ariaLabel: 'Segment editor', onwheel: keepScrollWheel });
-  if (!seg) {
-    if (doc.segments.length) editor.append(meta('Select a segment to edit its prompt.'));
-    else {
-      const brief = filmRequirements(ui, doc);
-      brief.classList.add('prompt');
-      editor.append(
-        text('h2', 'Plan Your Film'),
-        meta('Describe the film to draft a sequence, or add a segment to write it yourself.'),
-        brief,
-        row([
-          action(
-            ui,
-            'Plan the film',
-            () => {
-              if (hasInstructions(brief.querySelector('textarea'), 'Enter the film requirements.')) return generate(ui, 'plan');
-            },
-            !state.agents?.agents?.[state.agent]?.ready || state.run?.running,
-          ),
-        ]),
-      );
-    }
-    return editor;
-  }
-  const index = doc.segments.indexOf(seg);
-  const prompt = ui.field(
-    'Finalized Prompt',
-    seg.prompt,
-    (v) =>
-      ui.change((next) => {
-        next.segments[index].prompt = stableTags(doc, seg, v);
-      }, false),
-    { multiline: true },
-  );
-  prompt.classList.add('prompt');
-  const duration = times[index];
-  editor.append(
-    el('header', { className: 'segment-head' }, [
-      meta(
-        'Segment ' +
-          String(index + 1).padStart(2, '0') +
-          ' · ' +
-          (seg.transition === 'continuation' ? 'Continuation' : 'Hard cut') +
-          ' · ' +
-          secondsLabel(duration.frames ?? 0) +
-          ' generated',
-      ),
-      text('h2', seg.intent || 'Untitled Segment'),
+  if (!seg) return el('div');
+  return el('section', { className: 'render-group' }, [
+    el('div', { className: 'bar' }, [
+      meta(`Selected · Segment ${String(doc.segments.indexOf(seg) + 1).padStart(2, '0')} · ${seg.intent || 'Untitled Segment'}`),
+      launcher(ui, SEGMENT),
     ]),
-    ...(seg.opening || seg.closing
-      ? [
-          el(
-            'dl',
-            { className: 'continuity' },
-            Object.entries({ Opening: seg.opening, Closing: seg.closing })
-              .filter(([, value]) => value)
-              .map(([name, value]) => el('div', {}, [text('dt', name), el('dd', { textContent: value, title: value })])),
-          ),
-        ]
-      : []),
-    prompt,
-    row([launcher(ui, DIRECTION), launcher(ui, REVISION)]),
-    el('section', { className: 'render-group' }, [
-      text('h3', 'Render'),
-      row([
-        action(ui, 'Render current segment', () => startRender(ui, false), state.rendering),
-        ui.button('Render remaining segments', () => startRender(ui, true), state.rendering),
-        ...(state.rendering ? [ui.button('Stop after current', () => stopRender(node))] : []),
-      ]),
+    row([
+      action(ui, 'Render current segment', () => startRender(ui, false), ui.state.rendering),
+      ui.button('Render remaining segments', () => startRender(ui, true), ui.state.rendering),
+      ...(ui.state.rendering ? [ui.button('Stop after current', () => stopRender(ui.node))] : []),
     ]),
-  );
+  ]);
+}
+
+function footageView(node, seg) {
   const take = renderTake(node, seg.id);
   if (
     take?.video?.type === 'output' &&
     /^arisu_director\/[a-f0-9-]+$/.test(take.video.subfolder) &&
     /^clip_\d+_\.(mp4|mov|webm|mkv)$/.test(take.video.filename)
   )
-    editor.append(
+    return [
       el('details', {}, [
         el('summary', { textContent: 'Rendered Footage' }),
         el('video', {
           controls: true,
           preload: 'none',
           src: api.apiURL(
-            '/view?' + new URLSearchParams({ type: 'output', subfolder: take.video.subfolder, filename: take.video.filename }),
+            '/view?' +
+              new URLSearchParams({
+                type: 'output',
+                subfolder: take.video.subfolder,
+                filename: take.video.filename,
+              }),
           ),
         }),
       ]),
-    );
-  return editor;
+    ];
+  return [];
 }
 
 function render(node) {
@@ -806,14 +858,8 @@ function render(node) {
   const times = timeline(doc),
     run = state.run ?? {};
   const restore = retainFocus(body);
-  const previousList = body.querySelector('.timeline'),
-    previousEditor = body.querySelector('.editor');
-  const timelinePane = sequenceView(ui, doc, times),
-    editor = editorView(ui, doc, times);
-  const listTop = previousList?.scrollTop ?? 0;
-  const editorTop = state.selected === doc.selected ? (previousEditor?.scrollTop ?? 0) : 0;
-  if (state.selected === doc.selected && previousEditor?.querySelector('details[open]') && editor.querySelector('details'))
-    editor.querySelector('details').open = true;
+  const listTop = body.querySelector('.timeline')?.scrollTop ?? 0;
+  const timelinePane = sequenceView(ui, doc, times);
   const status = label(run.status ?? '');
   const elapsed = label(run.elapsedMs != null ? ' · ' + generationTime(run) : '');
   state.statusElement = status;
@@ -842,14 +888,14 @@ function render(node) {
       el('div', {}, [text('h2', 'Film Overview'), meta(summary.join(' · '))]),
       row([launcher(ui, FILM), library]),
     ]),
-    el('div', { className: 'workspace' }, [timelinePane, editor]),
+    el('div', { className: 'workspace' }, [timelinePane]),
+    renderControls(ui, doc),
     el('footer', { className: 'bar' }, [
       feedback,
       row([...(run.running ? [ui.button('Cancel generation', () => sessions.cancelGeneration(run), run.cancelling)] : []), reviewButton]),
     ]),
   );
   timelinePane.scrollTop = listTop;
-  editor.scrollTop = editorTop;
   if (state.selected !== doc.selected) {
     const active = timelinePane.querySelector('[aria-pressed=true]');
     if (active) {
