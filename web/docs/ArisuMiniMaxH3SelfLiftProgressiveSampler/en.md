@@ -43,6 +43,8 @@ An initialized latent can carry a noise mask. A value of 1 generates content and
 
 At the low resolution, SelfLift resizes Arisu Hybrid's fitted first/last images before VAE encoding. For a continuation it resizes the previous clip's decoded tail and encodes the pinned frames together as one video, then places each token at its original frame index. With only `trim_frames` connected, it decodes the pinned guide tokens together to obtain the pixels. Third-party keyframes without source pixels or a declared motion window keep the latent resize. The high-resolution steps use the incoming full-resolution conditioning. Audio timing and guides are preserved throughout.
 
+After a spatial lift, SelfLift uses the known Motion Context overlap to calibrate the lifted video's latent channels before adding noise for the high-resolution steps. This reduces continuation color and contrast changes from low-resolution prediction and upscaling. It adds no VAE encode/decode pass or denoiser evaluation. Calibration is skipped at `lowres_scale=1`, without a motion window, with a noise mask, or when the conditioning does not provide one consistent, varying reference. It changes the video prediction only; subsequent joint sampling can still affect both picture and sound.
+
 If you use Motion Context's optional single-step refine pass, keep SelfLift on the main sampling branch and use the ordinary sampler for refinement.
 
 ## Diagnostics

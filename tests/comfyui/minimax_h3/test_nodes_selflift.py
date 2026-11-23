@@ -21,9 +21,9 @@ from comfy.ldm.minimax.model import PackedLayout
 from comfy.nested_tensor import NestedTensor
 
 from src.arisu_nodes.minimax_h3 import nodes as h3
-from src.arisu_nodes.minimax_h3 import selflift_tiling, selflift_upscaler
+from src.arisu_nodes.minimax_h3 import selflift_sampling, selflift_tiling, selflift_upscaler
 from src.arisu_nodes.minimax_h3.core import video_frame_count
-from src.arisu_nodes.minimax_h3.selflift_guides import prepare_keyframes
+from src.arisu_nodes.minimax_h3.selflift_guides import calibrate_motion_lift, prepare_keyframes
 
 pytestmark = pytest.mark.comfyui
 
@@ -54,7 +54,9 @@ def patcher(offset: float) -> comfy.model_patcher.ModelPatcher:
     return comfy.model_patcher.ModelPatcher(model, VideoVae.device, VideoVae.device)
 
 
-def test_progressive_euler_lifts_video_and_continues_audio(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+def test_progressive_euler_lifts_video_and_continues_audio(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
+):
     video = torch.linspace(-1, 1, 3 * 2 * 4 * 8).reshape(1, 3, 2, 4, 8)
     audio = torch.linspace(0, 1, 10).reshape(1, 1, 2, 5)
     mask = torch.ones(1, 4, 8)
@@ -166,11 +168,12 @@ def test_progressive_euler_lifts_video_and_continues_audio(monkeypatch: pytest.M
     # The outer-sampler double above exercises the transition. Drive the high-resolution
     # diffusion wrapper separately to inspect the conditioning actually seen by each tile.
     check_motion_context_tiles()
-    check_motion_guides()
+    check_motion_guides(caplog)
+    check_motion_calibration_sampling(monkeypatch)
     check_native_learned_lift(tmp_path, monkeypatch)
 
 
-def check_motion_guides():
+def check_motion_guides(caplog: pytest.LogCaptureFixture):
     class MotionVae(VideoVae):
         def __init__(self):
             self.encoded_frames = []
@@ -223,6 +226,130 @@ def check_motion_guides():
     lazy = h3.ArisuMiniMaxH3SelfLiftProgressiveSampler.check_lazy_status
     assert lazy(trim_frames=22) == lazy(trim_frames=0, context_latent=None) == []
     assert lazy(trim_frames=22, context_latent=None) == ["context_latent"]
+
+    # Learn a channel transfer only from the overlap and verify the unseen body.
+    # Cross-channel mixing prevents a channel-mean-only correction from passing.
+    generator = torch.Generator().manual_seed(31)
+    truth = torch.randn((1, 24, 12, 4, 8), generator=generator)
+    original_truth = truth.clone()
+    lifted = 0.7 * truth + 0.12 * truth.roll(1, dims=1) + torch.linspace(-0.3, 0.3, 24).view(1, 24, 1, 1, 1)
+    original = lifted.clone()
+    anchors = [{"resolved_frame_index": offset, "latent": truth[:, :, i : i + 1]} for i, offset in enumerate(offsets)]
+    conditioning = [(None, {"minimax_keyframes": anchors})]
+    corrected = calibrate_motion_lift(lifted, conditioning, 22)
+    for region in (slice(0, 7), slice(7, None)):
+        before = (lifted[:, :, region] - truth[:, :, region]).square().mean()
+        after = (corrected[:, :, region] - truth[:, :, region]).square().mean()
+        assert after < before * 0.01
+    torch.testing.assert_close(lifted, original, rtol=0, atol=0)
+    torch.testing.assert_close(truth, original_truth, rtol=0, atol=0)
+    torch.testing.assert_close(torch.cat([anchor["latent"] for anchor in anchors], dim=2), truth[:, :, :7], rtol=0, atol=0)
+    torch.testing.assert_close(calibrate_motion_lift(lifted, conditioning * 2, 22), corrected)
+    torch.testing.assert_close(calibrate_motion_lift(truth, conditioning, 22), truth, rtol=0, atol=0)
+    assert calibrate_motion_lift(lifted, conditioning, 0) is lifted
+    assert calibrate_motion_lift(lifted, [(None, {})], 22) is lifted
+
+    # Scheduled conditionings with conflicting histories cannot define one color map.
+    conflicting = [(None, {"minimax_keyframes": [{**anchor, "latent": anchor["latent"] + 1} for anchor in anchors]})]
+    caplog.clear()
+    with caplog.at_level("WARNING"):
+        ambiguous = calibrate_motion_lift(lifted, conditioning + conflicting, 22)
+    assert ambiguous is lifted and any(record.levelname == "WARNING" for record in caplog.records)
+    for bad_reference in (False, True):
+        broken = lifted.clone()
+        bad_cond = conditioning
+        if bad_reference:
+            bad_keys = [{**anchor, "latent": anchor["latent"].clone()} for anchor in anchors]
+            bad_keys[0]["latent"][0, 0, 0, 0, 0] = float("nan")
+            bad_cond = [(None, {"minimax_keyframes": bad_keys})]
+        else:
+            broken[0, 0, 0, 0, 0] = float("inf")
+        with pytest.raises(ValueError, match="non-finite"):
+            calibrate_motion_lift(broken, bad_cond, 22)
+    constant = torch.full_like(lifted, 3)
+    torch.testing.assert_close(calibrate_motion_lift(constant, conditioning, 22), constant, rtol=0, atol=0)
+    constant_anchors = [(None, {"minimax_keyframes": [{**anchor, "latent": torch.ones_like(anchor["latent"])} for anchor in anchors]})]
+    torch.testing.assert_close(calibrate_motion_lift(lifted, constant_anchors, 22), lifted, rtol=0, atol=0)
+
+
+def check_motion_calibration_sampling(monkeypatch: pytest.MonkeyPatch):
+    """The real transition calibrates before re-noising and preserves audio Euler."""
+    generator = torch.Generator().manual_seed(63)
+    truth = torch.randn((1, 24, 12, 4, 8), generator=generator)
+    lifted = 0.7 * truth + 0.12 * truth.roll(1, dims=1) + 0.25
+    offsets = [0, 1, 5, 9, 13, 17, 18]
+    conditioning = [
+        (
+            None,
+            {"minimax_keyframes": [{"resolved_frame_index": offset, "latent": truth[:, :, i : i + 1]} for i, offset in enumerate(offsets)]},
+        )
+    ]
+    audio = torch.linspace(-1, 1, 10).reshape(1, 1, 2, 5)
+    video = torch.zeros_like(truth)
+    schedule = torch.tensor([1.0, 0.75, 0.5, 0.25, 0.0])
+    evaluations = []
+
+    def outer_sample(guider, noise, latent_image, sampler, sigmas, denoise_mask, callback, disable_pbar, seed, latent_shapes):
+        model = guider.model_patcher.model
+
+        def predict(state, sigma):
+            prediction = state * 0.5 + model.offset
+            for hook in guider.model_options.get("sampler_post_cfg_function", []):
+                prediction = hook({"denoised": prediction})
+            evaluations.append((comfy.utils.unpack_latents(state, latent_shapes), comfy.utils.unpack_latents(prediction, latent_shapes)))
+            return prediction
+
+        def report(step):
+            callback(step["i"], step["denoised"], step["x"], len(sigmas) - 1)
+
+        state = model.model_sampling.noise_scaling(sigmas[0], noise, latent_image)
+        return sampler.sampler_function(predict, state, sigmas, callback=report, disable=True)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(comfy.samplers.CFGGuider, "outer_sample", outer_sample)
+        patch.setattr(latent_preview, "prepare_callback", lambda *_args: lambda *_values: None)
+        # Guide preparation and learned upscaling have their own scenarios. Here
+        # supply a known drift so this scenario isolates the actual transition.
+        patch.setattr(selflift_sampling, "prepare_keyframes", lambda *args, **kwargs: conditioning)
+        patch.setattr(selflift_sampling, "paired_lifts", lambda *args, **kwargs: (lifted.clone(), None))
+        for scale, masked in ((0.5, False), (1.0, False), (0.5, True)):
+            evaluations.clear()
+            latent = {"samples": NestedTensor([video, audio])}
+            keep = torch.zeros_like(video, dtype=torch.bool)
+            if masked:
+                mask = torch.ones(1, 4, 8)
+                mask[:, :, :2] = 0
+                latent["noise_mask"] = mask
+                keep = (mask == 0).expand_as(video)
+            h3.ArisuMiniMaxH3SelfLiftProgressiveSampler.execute(
+                model=patcher(0.1),
+                model_hires=patcher(0.2),
+                conditioning=conditioning,
+                vae=VideoVae(),
+                latent_image=latent,
+                sampler=comfy.samplers.sampler_object("euler"),
+                sigmas=schedule,
+                seed=17,
+                transition_step=2,
+                lowres_scale=scale,
+                rho=0.5,
+                w_min=0.0,
+                w_max=0.0,
+                upscaler_model="none",
+                trim_frames=22,
+            )
+            assert len(evaluations) == 4
+            (low_state, low_prediction), (high_state, _) = evaluations[1:3]
+            noise = comfy.sample.prepare_noise(video, 18)
+            resumed_lift = (high_state[0] - 0.5 * noise) / 0.5
+            if scale < 1 and not masked:
+                for region in (slice(0, 7), slice(7, None)):
+                    assert (resumed_lift[:, :, region] - truth[:, :, region]).square().mean() < (
+                        lifted[:, :, region] - truth[:, :, region]
+                    ).square().mean() * 0.01
+            else:
+                torch.testing.assert_close(resumed_lift, torch.where(keep, video, lifted), rtol=1e-5, atol=1e-6)
+            torch.testing.assert_close(high_state[1], low_prediction[1] + (low_state[1] - low_prediction[1]) * (0.5 / 0.75))
 
 
 def check_motion_context_tiles():

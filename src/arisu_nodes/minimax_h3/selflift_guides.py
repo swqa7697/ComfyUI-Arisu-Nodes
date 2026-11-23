@@ -1,7 +1,8 @@
-"""Prepare H3 keyframes on the low-resolution sampling grid."""
+"""Prepare H3 keyframes and calibrate spatial lifts from motion overlaps."""
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import torch
@@ -13,6 +14,71 @@ from comfy.sd import VAE
 from .core import video_frame_count, video_latent_t
 
 Conditioning = Sequence[Sequence[Any]]
+_LOGGER = logging.getLogger(__name__)
+
+
+def calibrate_motion_lift(lifted: torch.Tensor, conditioning: Conditioning, trim_frames: int) -> torch.Tensor:
+    """Calibrate a lifted prediction against its known Motion Context overlap.
+
+    Fit a regularized affine channel transform in VAE latent space, then apply
+    the same transform to the new frames. Unlike a channel-mean offset, this
+    also accounts for changes in contrast and relationships between channels.
+    The fit uses only existing latents; it does not decode or encode the body.
+    """
+    if not trim_frames:
+        return lifted
+    steps = 1 if trim_frames == 1 else video_latent_t(trim_frames)
+    reference = None
+    for _, metadata in conditioning:
+        keys = metadata.get("minimax_keyframes") or []
+        rows = _head_rows(keys, trim_frames, steps)
+        if not rows:
+            continue
+        current = torch.cat([keys[i]["latent"] for i in rows], dim=2).detach().to(device="cpu", dtype=torch.float64)
+        if reference is not None and not torch.equal(reference, current):
+            _LOGGER.warning("SelfLift: different Motion Context anchors have no shared channel calibration; leaving the lift unchanged")
+            return lifted
+        reference = current
+    if reference is None:
+        return lifted
+    if (
+        lifted.ndim != 5
+        or lifted.shape[2] < steps
+        or reference.shape[0] != 1
+        or reference.shape[1:] != (lifted.shape[1], steps, *lifted.shape[-2:])
+    ):
+        raise ValueError("SelfLift: the Motion Context overlap does not match the lifted video")
+    target = reference.movedim(1, -1).reshape(-1, lifted.shape[1])
+    if not torch.isfinite(target).all():
+        raise ValueError("SelfLift: Motion Context contains non-finite latent values")
+    target_mean = target.mean(0)
+    target_centered = target - target_mean
+    if target_centered.square().mean() <= 1e-8:
+        return lifted
+    identity = torch.eye(lifted.shape[1], dtype=torch.float64)
+    outputs = []
+    for video in lifted.split(1):
+        source = video[:, :, :steps].detach().to(device="cpu", dtype=torch.float64).movedim(1, -1).reshape_as(target)
+        if not torch.isfinite(source).all():
+            raise ValueError("SelfLift: the lifted overlap contains non-finite latent values")
+        if torch.equal(source, target):
+            outputs.append(video)
+            continue
+        source_mean = source.mean(0)
+        centered = source - source_mean
+        covariance = centered.T @ centered / len(source)
+        if covariance.diag().mean() <= 1e-8:
+            outputs.append(video)
+            continue
+        cross = centered.T @ target_centered / len(source)
+        # Penalize deviation from identity, not from zero. Regularization keeps
+        # rank-deficient overlaps solvable without fitting unconstrained axes.
+        ridge = (0.01 * covariance.diag().mean()).clamp_min(1e-8)
+        matrix = torch.linalg.solve(covariance + ridge * identity, cross + ridge * identity).float()
+        bias = (target_mean - source_mean @ matrix.double()).float()
+        corrected = video.float().movedim(1, -1) @ matrix.to(video.device) + bias.to(video.device)
+        outputs.append(corrected.movedim(-1, 1).to(video.dtype))
+    return torch.cat(outputs, dim=0)
 
 
 def _resize_latent(latent: torch.Tensor, h: int, w: int) -> torch.Tensor:

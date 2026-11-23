@@ -26,7 +26,7 @@ from comfy_extras.nodes_custom_sampler import Guider_Basic
 
 from . import selflift_tiling
 from .selflift_diagnostics import StageTimer, debug_dump, log_memory
-from .selflift_guides import prepare_keyframes
+from .selflift_guides import calibrate_motion_lift, prepare_keyframes
 from .selflift_lift import LatentLifter, artifact_aware_consistency_lift, paired_lifts
 
 _LOGGER = logging.getLogger(__name__)
@@ -347,6 +347,8 @@ def progressive_sample(
     z_lat = latent_format.process_in(z_lat_vae) if z_lat_vae is not None else None
     z_pix = latent_format.process_in(z_pix_vae) if z_pix_vae is not None else None
     z0_high = artifact_aware_consistency_lift(z_lat, z_pix, rho, w_min, w_max, mask=m_full)
+    if video and trim_frames and m_full is None and (h, w) != (H, W):
+        z0_high = latent_format.process_in(calibrate_motion_lift(latent_format.process_out(z0_high), conditioning, trim_frames))
     if m_full is not None:
         # restore the keep-region with the true original instead of any lifted estimate
         m_cast = m_full.to(device=z0_high.device, dtype=z0_high.dtype)
