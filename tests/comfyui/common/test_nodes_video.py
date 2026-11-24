@@ -37,7 +37,7 @@ def clip(frames: int = 36, sound: bool = True, noise: bool = False, **markers: A
 
 
 def save(video: Any, **inputs: Any) -> Dict[str, Any]:
-    values = {"project_prefix": "", "clip_name": "clip", "filename_prefix": "", "codec": "h264", "crf": 18, "take_context": ""}
+    values = {"project_prefix": "", "clip_name": "clip", "codec": "h264", "crf": 18, "take_context": ""}
     return ArisuSaveVideoSegment.execute(video=video, **{**values, **inputs}).ui
 
 
@@ -87,20 +87,22 @@ def test_save_video_segment_publishes_measured_takes_and_leaves_nothing_on_failu
     # Rendering the same segment again keeps the earlier candidate.
     second = record(output, save(video, project_prefix=project, clip_name="shot"))
     assert second["video"]["path"].endswith("shot_00002_.mp4") and second["take"] != first["take"] and film.is_file()
-    # An existing graph keeps its complete prefix; with a project it must stay inside it.
-    legacy = record(output, save(clip(sound=False), project_prefix=project, filename_prefix=f"{project}/videos/h3_clip"))
-    assert legacy["video"]["path"].endswith("videos/h3_clip_00001_.mp4") and legacy["audio"] is None
+    # A named silent clip keeps no audio companion.
+    silent = record(output, save(clip(sound=False), project_prefix=project, clip_name="h3_clip"))
+    assert silent["video"]["path"].endswith("videos/h3_clip_00001_.mp4") and silent["audio"] is None
     assert not (output / project / "videos" / "h3_clip_00001_.arisu" / "audio.wav").exists()
-    assert record(output, save(clip(sound=False), filename_prefix="plain/a"))["project"] is None
     assert record(output, save(clip(sound=False)))["video"]["path"] == "arisu_video/videos/clip_00001_.mp4"
     # A Director take directory names the take; the latent slot beside it does not take a counter.
     staged = output / project / "director" / TAKE
     staged.mkdir(parents=True)
     (staged / "clip_00001.safetensors").write_bytes(b"latent")
-    context = json.dumps({"segment": "s2", "predecessor": None, "transition": "cut"})
-    directed = record(output, save(video, project_prefix=project, filename_prefix=f"{project}/director/{TAKE}/clip", take_context=context))
+    context = json.dumps({"take": TAKE, "segment": "s2", "predecessor": None, "transition": "cut"})
+    directed = record(output, save(video, project_prefix=project, take_context=context))
     assert (directed["take"], directed["origin"], directed["segment"]) == (TAKE, "director", "s2")
     assert directed["video"]["path"].endswith(f"director/{TAKE}/clip_00001_.mp4")
+
+    unscoped = record(output, save(video, take_context=context))
+    assert unscoped["project"] is None and unscoped["video"]["path"] == f"arisu_director/{TAKE}/clip_00001_.mp4"
 
     # Each encoder honours its own CRF scale: a lower value keeps more of a noisy picture.
     sizes = {}
@@ -120,19 +122,21 @@ def test_save_video_segment_publishes_measured_takes_and_leaves_nothing_on_failu
     for inputs in (
         {"project_prefix": "../films"},
         {"project_prefix": "/abs"},
-        {"filename_prefix": "escape/clip"},
-        {"project_prefix": project, "filename_prefix": "elsewhere/clip"},
+        {"project_prefix": "escape"},
+        {"project_prefix": "escape", "take_context": context},
         {"clip_name": "a/b"},
         {"codec": "h264", "crf": 52},
         {"codec": "prores"},
         {"take_context": "{}"},
+        {"take_context": json.dumps({**json.loads(context), "take": "../escape"})},
+        {"filename_prefix": "old/prefix"},
     ):
         with pytest.raises((TypeError, ValueError)):
             save(video, **inputs)
         assert tree(tmp_path) == before, inputs
     assert ArisuSaveVideoSegment.validate_inputs(codec="av1", crf=63) is True
     assert isinstance(ArisuSaveVideoSegment.validate_inputs(codec="h265", crf=63), str)
-    assert isinstance(ArisuSaveVideoSegment.validate_inputs(project_prefix="..", clip_name="a", filename_prefix=""), str)
+    assert isinstance(ArisuSaveVideoSegment.validate_inputs(project_prefix="..", clip_name="a"), str)
 
     # A name already at the next number is a collision, even as a dangling symlink: it is neither followed nor replaced.
     videos = output / project / "videos"

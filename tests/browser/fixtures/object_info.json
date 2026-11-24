@@ -2282,14 +2282,6 @@
             "multiline": false
           }
         ],
-        "filename_prefix": [
-          "STRING",
-          {
-            "tooltip": "Compatibility: a complete directory and file name stem relative to output, as Save Video takes it. When set it replaces clip_name, and it must be inside project_prefix when both are given.",
-            "default": "",
-            "multiline": false
-          }
-        ],
         "codec": [
           "COMBO",
           {
@@ -2336,7 +2328,6 @@
         "video",
         "project_prefix",
         "clip_name",
-        "filename_prefix",
         "codec",
         "crf",
         "take_context"

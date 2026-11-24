@@ -118,25 +118,20 @@ def test_edit_lists_prefixes_and_requests_refuse_hostile_or_ambiguous_input():
 
     now = datetime(2026, 11, 24, 9, 5, 7)
     prefixes = {
-        ("", "", ""): ("arisu_video/videos", "clip", "arisu_video"),
-        ("P/q", "shot", ""): ("P/q/videos", "shot", "P/q"),
-        ("P/", " shot ", ""): ("P/videos", "shot", "P"),
-        ("", "ignored", "old/videos/h3_clip"): ("old/videos", "h3_clip", None),
-        ("P", "ignored", "P/videos/h3_clip"): ("P/videos", "h3_clip", "P"),
-        ("%year%/%width%x%height%", "c", ""): ("2026/64x48/videos", "c", "2026/64x48"),
-        ("", "", "flat"): ("", "flat", None),
+        ("", ""): ("arisu_video/videos", "clip", "arisu_video"),
+        ("P/q", "shot"): ("P/q/videos", "shot", "P/q"),
+        ("P/", " shot "): ("P/videos", "shot", "P"),
+        ("%year%/%width%x%height%", "c"): ("2026/64x48/videos", "c", "2026/64x48"),
     }
     for case, (directory, stem, project) in prefixes.items():
         target = resolve_take_prefix(*case, 64, 48, now)
         assert (target.directory, target.stem, target.project) == (directory, stem, project), f"case={case!r}"
     for case in (
-        ("P", "", "Q/clip"),
-        ("P", "", "Pother/clip"),
-        ("..", "c", ""),
-        ("P", "a/b", ""),
-        ("P", "a\\b", ""),
-        ("", "", "/abs/clip"),
-        ("%date:x%", "c", ""),
+        ("..", "c"),
+        ("P", "a/b"),
+        ("P", "a\\b"),
+        ("/abs", "clip"),
+        ("%date:x%", "c"),
     ):
         with pytest.raises(ValueError):
             resolve_take_prefix(*case, 64, 48, now)
@@ -151,12 +146,17 @@ def test_edit_lists_prefixes_and_requests_refuse_hostile_or_ambiguous_input():
     }
     for case, expected in takes.items():
         assert director_take_id(case) == expected, f"case={case!r}"
-    assert parse_take_context("") == {"segment": None, "predecessor": None, "transition": None}
+    target = resolve_take_prefix("%year%/%width%x%height%", "ignored", 64, 48, now, TAKE)
+    assert (target.directory, target.stem, target.project) == (f"2026/64x48/director/{TAKE}", "clip", "2026/64x48")
+    assert parse_take_context("") == {"take": None, "segment": None, "predecessor": None, "transition": None}
+    context = {"take": TAKE, "segment": "s", "predecessor": None, "transition": "cut"}
+    assert parse_take_context(json.dumps(context)) == context
     for case in (
         "[]",
         '{"segment":"s"}',
-        '{"segment":"s","predecessor":"x","transition":"cut"}',
-        '{"segment":"s","predecessor":null,"transition":"wipe"}',
+        json.dumps({**context, "predecessor": "x"}),
+        json.dumps({**context, "transition": "wipe"}),
+        json.dumps({**context, "take": "../escape"}),
     ):
         with pytest.raises(ValueError):
             parse_take_context(case)

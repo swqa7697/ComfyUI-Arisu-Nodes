@@ -17,9 +17,8 @@ continuous waveform, with no gap or shift at the joins.
 | Parameter         | Type   | Description                                                                                                                                                                                                                     |
 |-------------------|--------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `video`           | VIDEO  | The segment to save: its picture, frame rate and optional sound. Connect it after **Create Video**. The saver treats what arrives as the delivered segment.                                                                    |
-| `project_prefix`  | STRING | The project directory under ComfyUI's output directory, such as `motion_context/fixed`. Can be linked from **Path Builder**. Blank uses `arisu_video` unless `filename_prefix` is set.                                          |
+| `project_prefix`  | STRING | The project directory under ComfyUI's output directory, such as `motion_context/fixed`. Can be linked from **Path Builder**. Blank uses `arisu_video`.                                          |
 | `clip_name`       | STRING | The file's basename inside the project's `videos` directory (default `clip`).                                                                                                                                                   |
-| `filename_prefix` | STRING | For existing graphs: a complete relative directory and filename stem, used as given in place of `project_prefix/videos/clip_name`. When a project is also set, this prefix must lie inside it. `%year%`, `%width%` and the like are expanded. |
 | `codec`           | COMBO  | `h264`, `h265` or `av1`.                                                                                                                                                                                                         |
 | `crf`             | INT    | Quality on the selected encoder's own scale; lower is better and larger. The widget shows the range.                                                                                                                            |
 
@@ -69,16 +68,16 @@ Motion Context Trim ─▶ Create Video ─▶ Save Video Segment
 Path Builder ─▶ (project_prefix)
 ```
 
-In a graph that already feeds **Save Video** a prefix such as `P/videos/h3_clip`, replace the node and keep that
-wire on `filename_prefix`. Set **Create Video**'s `codec` to `none` so the frames reach this node unencoded.
+Set `project_prefix` to `P` and `clip_name` to `h3_clip` to save under `P/videos/h3_clip_00001_.mp4`.
+Set **Create Video**'s `codec` to `none` so the frames reach this node unencoded.
 
 ## Notes
 
 - Files are written only under ComfyUI's output directory. Absolute paths and `..` are refused; Unicode, spaces and
-  nested directories are fine.
+  nested project directories are fine. `%year%`, `%width%` and the other save placeholders are expanded.
 - Trim the Motion Context overlap before **Create Video**, from both picture and sound. The saver does not trim: the
   frames it receives are the frames an assembly uses.
-- Director Workbench sets `filename_prefix` itself for its renders. With a project it saves each take under
-  `P/director/<take id>/`, together with that take's latent.
+- Director Workbench selects the take directory automatically. With a project it saves each take under
+  `P/director/<take id>/`, together with that take's latent. Without a project it uses `arisu_director/<take id>/`.
 - A cancelled or failed save leaves no partial take behind.
 - The MP4 carries the prompt and workflow like **Save Video**, unless ComfyUI runs with `--disable-metadata`.

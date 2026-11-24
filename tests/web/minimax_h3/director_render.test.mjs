@@ -51,7 +51,7 @@ function chain(saver) {
 function arisuSaver(project_prefix) {
   return {
     class_type: 'ArisuSaveVideoSegment',
-    inputs: { video: ['10', 0], project_prefix, clip_name: 'clip', filename_prefix: '', codec: 'h264', crf: 18, take_context: '' },
+    inputs: { video: ['10', 0], project_prefix, clip_name: 'clip', codec: 'h264', crf: 18, take_context: '' },
   };
 }
 
@@ -69,7 +69,7 @@ function serve(server) {
     if (route.startsWith('/history/')) {
       const id = route.slice('/history/'.length);
       const { prompt, partial_execution_targets: targets } = server.prompts.find((body) => body.prompt_id === id);
-      const subfolder = prompt[targets[0]].inputs.filename_prefix.replace(/\/clip$/, '');
+      const subfolder = prompt[targets[1]].inputs.filename_prefix.replace(/\/clip$/, '');
       return jsonResponse(200, {
         [id]: {
           status: { status_str: 'success', completed: true },
@@ -134,11 +134,16 @@ test('Director renders through either saver into the legacy or project layout an
   const first = renderTake(director, 'a');
   const dir = `motion_context/fixed/director/${first.id}`;
   assert.notEqual(first.id, legacy.id);
-  assert.equal(last().prompt[11].inputs.filename_prefix, `${dir}/clip`);
+  assert.equal('filename_prefix' in last().prompt[11].inputs, false);
   assert.deepEqual(last().prompt[11].inputs.project_prefix, ['12', 0], 'the project wire stays; the server resolves it again');
   assert.deepEqual([last().prompt[6].inputs.filename_prefix, last().prompt[6].inputs.clip_index], [`${dir}/clip`, 1]);
   assert.equal(last().prompt[3].inputs.latent_path, 'motion_context/fixed/director');
-  assert.deepEqual(JSON.parse(last().prompt[11].inputs.take_context), { segment: 'a', predecessor: null, transition: 'cut' });
+  assert.deepEqual(JSON.parse(last().prompt[11].inputs.take_context), {
+    take: first.id,
+    segment: 'a',
+    predecessor: null,
+    transition: 'cut',
+  });
   assert.equal(output[11].inputs.take_context, '', 'only the submitted copy carries a context');
   assert.deepEqual([first.saver, first.project], ['ArisuSaveVideoSegment', 'motion_context/fixed']);
   assert.deepEqual(takeLocation(first), { project: 'motion_context/fixed', dir });
@@ -148,7 +153,12 @@ test('Director renders through either saver into the legacy or project layout an
   await render('b');
   const second = renderTake(director, 'b');
   assert.deepEqual([last().prompt[3].inputs.latent_path, last().prompt[3].inputs.clip_index], [`${dir}/${LATENT}`, 1]);
-  assert.deepEqual(JSON.parse(last().prompt[11].inputs.take_context), { segment: 'b', predecessor: first.id, transition: 'continuation' });
+  assert.deepEqual(JSON.parse(last().prompt[11].inputs.take_context), {
+    take: second.id,
+    segment: 'b',
+    predecessor: first.id,
+    transition: 'continuation',
+  });
   assert.equal(second.predecessor, first.id);
   await refresh();
   assert.deepEqual([renderStatus(director, 'a', FILM), renderStatus(director, 'b', FILM)], ['Rendered', 'Rendered']);
@@ -185,8 +195,14 @@ test('Director renders through either saver into the legacy or project layout an
   output = chain(arisuSaver(''));
   await render('a');
   const blank = renderTake(director, 'a');
-  assert.equal(last().prompt[11].inputs.filename_prefix, `arisu_director/${blank.id}/clip`);
-  assert.equal(JSON.parse(last().prompt[11].inputs.take_context).segment, 'a');
+  assert.equal('filename_prefix' in last().prompt[11].inputs, false);
+  assert.deepEqual(JSON.parse(last().prompt[11].inputs.take_context), {
+    take: blank.id,
+    segment: 'a',
+    predecessor: null,
+    transition: 'cut',
+  });
+  assert.equal(last().prompt[6].inputs.filename_prefix, `arisu_director/${blank.id}/clip`);
   assert.deepEqual([blank.saver, blank.project], ['ArisuSaveVideoSegment', '']);
 
   // two savers behind Create Video: Director refuses until one is chosen, then renders through that one only
@@ -205,7 +221,7 @@ test('Director renders through either saver into the legacy or project layout an
   const chosen = renderTake(director, 'a');
   assert.deepEqual(last().partial_execution_targets, ['16', '6']);
   assert.equal(last().prompt[16].inputs.filename_prefix, `arisu_director/${chosen.id}/clip`);
-  assert.equal(last().prompt[11].inputs.filename_prefix, '', 'the saver that was not chosen keeps its own prefix');
+  assert.deepEqual(last().prompt[11].inputs, output[11].inputs, 'the saver that was not chosen keeps its own inputs');
   assert.deepEqual([chosen.saver, chosen.project], ['SaveVideo', '']);
 
   // a chain with no saver behind Create Video is not a Director workflow

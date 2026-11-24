@@ -127,19 +127,22 @@ def validate_encoding(codec: Any, crf: Any) -> CodecSpec:
     return spec
 
 
-def resolve_take_prefix(project_prefix: str, clip_name: str, filename_prefix: str, width: int, height: int, now: datetime) -> TakeTarget:
-    """Choose the take location from the project inputs or the compatibility prefix.
+def resolve_take_prefix(
+    project_prefix: str, clip_name: str, width: int, height: int, now: datetime, take: Optional[str] = None
+) -> TakeTarget:
+    """Choose the take location from the project inputs and optional Director take ID.
 
-    A project and a clip name write ``P/videos/<clip>``. A full ``filename_prefix`` is used as given and
-    must stay inside the project when both are supplied. With neither, the project is ``arisu_video``.
+    Ordinary saves write ``P/videos/<clip>`` with ``arisu_video`` as the default project.
+    Director saves write ``P/director/<take>/clip`` or ``arisu_director/<take>/clip`` without a project.
     """
-    if not all(isinstance(value, str) for value in (project_prefix, clip_name, filename_prefix)):
+    if not all(isinstance(value, str) for value in (project_prefix, clip_name)):
         raise TypeError("video prefixes must be strings")
     project = expand_save_prefix(project_prefix, width, height, now) if project_prefix.strip() else None
-    if filename_prefix.strip():
-        full = expand_save_prefix(filename_prefix, width, height, now)
-        if project is not None and not full.startswith(project + "/"):
-            raise ValueError("filename_prefix must resolve inside project_prefix")
+    if take is not None:
+        if not isinstance(take, str) or not _UUID.fullmatch(take):
+            raise ValueError("invalid Director take ID")
+        directory = f"{project}/director/{take}" if project else f"arisu_director/{take}"
+        return TakeTarget(directory, DEFAULT_CLIP, project)
     else:
         clip = clip_name.strip() or DEFAULT_CLIP
         if "/" in clip or "\\" in clip:
@@ -158,7 +161,7 @@ def director_take_id(directory: str) -> Optional[str]:
 
 def parse_take_context(text: Any) -> Dict[str, Optional[str]]:
     """Read the optional provenance a Director render attaches to its saver."""
-    empty: Dict[str, Optional[str]] = {"segment": None, "predecessor": None, "transition": None}
+    empty: Dict[str, Optional[str]] = {"take": None, "segment": None, "predecessor": None, "transition": None}
     if not isinstance(text, str) or len(text) > 4096:
         raise ValueError("invalid take context")
     if not text.strip():
@@ -169,12 +172,15 @@ def parse_take_context(text: Any) -> Dict[str, Optional[str]]:
         raise ValueError("invalid take context") from error
     if not isinstance(value, dict) or set(value) != set(empty):
         raise ValueError("invalid take context")
+    take = value["take"]
+    if not isinstance(take, str) or not _UUID.fullmatch(take):
+        raise ValueError("invalid take context")
     segment, predecessor, transition = value["segment"], value["predecessor"], value["transition"]
     if not isinstance(segment, str) or not 0 < len(segment) <= 128 or transition not in _TRANSITIONS:
         raise ValueError("invalid take context")
     if predecessor is not None and (not isinstance(predecessor, str) or not _UUID.fullmatch(predecessor)):
         raise ValueError("invalid take context")
-    return {"segment": segment, "predecessor": predecessor, "transition": transition}
+    return {"take": take, "segment": segment, "predecessor": predecessor, "transition": transition}
 
 
 def exact_rate(rate: Any) -> Fraction:

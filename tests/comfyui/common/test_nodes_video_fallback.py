@@ -30,7 +30,7 @@ def save(output: Path, frames: int, codec: str = "h264", crf: int = 18) -> Dict[
     audio = {"waveform": torch.from_numpy(waveform)[None], "sample_rate": 32000}
     video = InputImpl.VideoFromComponents(Types.VideoComponents(images=torch.from_numpy(images), audio=audio, frame_rate=Fraction(24)))
     saved = ArisuSaveVideoSegment.execute(
-        video=video, project_prefix="films/fallback", clip_name=codec, filename_prefix="", codec=codec, crf=crf, take_context=""
+        video=video, project_prefix="films/fallback", clip_name=codec, codec=codec, crf=crf, take_context=""
     ).ui["images"][0]
     stem = saved["filename"][: -len(".mp4")]
     return json.loads((output / saved["subfolder"] / f"{stem}.arisu" / "take.json").read_text())

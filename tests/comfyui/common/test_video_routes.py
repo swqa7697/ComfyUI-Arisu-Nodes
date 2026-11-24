@@ -34,7 +34,7 @@ def take(output: Path, frames: int = 36, value: float = 0.25, **inputs: Any) -> 
     images, waveform = marker_clip(frames, 32000, value=value)
     audio = {"waveform": torch.from_numpy(waveform)[None], "sample_rate": 32000}
     video = InputImpl.VideoFromComponents(Types.VideoComponents(images=torch.from_numpy(images), audio=audio, frame_rate=Fraction(24)))
-    values = {"project_prefix": PROJECT, "clip_name": "shot", "filename_prefix": "", "codec": "h264", "crf": 18, "take_context": ""}
+    values = {"project_prefix": PROJECT, "clip_name": "shot", "codec": "h264", "crf": 18, "take_context": ""}
     saved = ArisuSaveVideoSegment.execute(video=video, **{**values, **inputs}).ui["images"][0]
     stem = saved["filename"][: -len(".mp4")]
     return json.loads((output / saved["subfolder"] / f"{stem}.arisu" / "take.json").read_text())
@@ -75,7 +75,7 @@ def test_video_routes_describe_plan_and_delete_only_verified_takes(tmp_path: Pat
     app = serve(tmp_path, monkeypatch)
     output, external = tmp_path / "output", tmp_path / "external"
     first, second = take(output), take(output, 30)
-    directed = take(output, filename_prefix=f"{PROJECT}/director/{TAKE}/clip")
+    directed = take(output, take_context=json.dumps({"take": TAKE, "segment": "s1", "predecessor": None, "transition": "cut"}))
     (output / PROJECT / "director" / TAKE / "clip_00001.safetensors").write_bytes(b"latent")
     # Footage from before this node: a Director render and a stock save, neither with a record.
     legacy = output / "arisu_director" / TAKE

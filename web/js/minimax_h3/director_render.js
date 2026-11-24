@@ -368,13 +368,14 @@ export async function renderSegments(node, document, remaining, onProgress = () 
       const graph = structuredClone(prompt.output);
       graph[director].inputs.film_json = JSON.stringify({ ...doc, selected: segment.id });
       configureMotion(graph, ids, segment, previous, project ? `${project}/director` : LEGACY);
-      graph[ids.saveVideo].inputs.filename_prefix = prefix;
       if (ids.saver === ARISU_SAVER)
         graph[ids.saveVideo].inputs.take_context = JSON.stringify({
+          take: id,
           segment: segment.id,
           predecessor,
           transition: segment.transition === 'continuation' ? 'continuation' : 'cut',
         });
+      else graph[ids.saveVideo].inputs.filename_prefix = prefix;
       Object.assign(graph[ids.saveLatent].inputs, { filename_prefix: prefix, clip_index: 1 });
       if (owner.stopped) break;
       records.pending = {

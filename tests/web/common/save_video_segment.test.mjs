@@ -7,7 +7,7 @@ import { app, extensionNamed, resetApp } from '../support/app.mjs';
 import { makeGraph, makeNode } from '../support/litegraph.mjs';
 import '../../../web/js/common/save_video_segment.js';
 
-const WIDGETS = { project_prefix: '', clip_name: 'clip', filename_prefix: '', codec: 'h264', crf: 18, take_context: '' };
+const WIDGETS = { project_prefix: '', clip_name: 'clip', codec: 'h264', crf: 18, take_context: '' };
 
 const Saver = { prototype: {} };
 extensionNamed('Arisu.Common.SaveVideoSegment').beforeRegisterNodeDef(Saver, { name: 'ArisuSaveVideoSegment' });
@@ -51,7 +51,7 @@ test('the saver follows the codec with its CRF range and keeps the take context 
   assert.equal(crf.options.max, 51);
   assert.match(crf.label, /51/);
   assert.equal(context.hidden && context.options.hidden, true);
-  assert.deepEqual(sockets(node), ['video', 'project_prefix', 'clip_name', 'filename_prefix', 'codec', 'crf']);
+  assert.deepEqual(sockets(node), ['video', 'project_prefix', 'clip_name', 'codec', 'crf']);
 
   // an untouched preset follows the codec to that codec's own preset
   choose(node, 'codec', 'av1');
@@ -86,7 +86,7 @@ test('the saver follows the codec with its CRF range and keeps the take context 
 
   // a value written after the load still serializes empty: only a submitted prompt carries a context
   context.value = '{"segment":"typed"}';
-  assert.equal(context.serializeValue(node, 5), '');
+  assert.equal(context.serializeValue(node, 4), '');
 
   // the next codec change starts from the loaded codec: 60 is not AV1's preset, so it is only lowered
   choose(node, 'codec', 'h264');

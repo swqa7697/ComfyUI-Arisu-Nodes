@@ -239,7 +239,6 @@ def inspect_project_render(page: Page, server: FixtureServer, director_id: str):
             video=["video", 0],
             project_prefix=["paths", 0],
             clip_name="clip",
-            filename_prefix="",
             codec="h264",
             crf=18,
             take_context="",
@@ -257,8 +256,9 @@ def inspect_project_render(page: Page, server: FixtureServer, director_id: str):
         body = route.request.post_data_json
         graph, key = body["prompt"], body["prompt_id"]
         subfolder = f"{project}/director/{key}"
-        # One prefix reaches both savers; the project is read from Path Builder before the run.
-        assert graph[save]["inputs"]["filename_prefix"] == graph[latent]["inputs"]["filename_prefix"] == subfolder + "/clip"
+        # The take context locates the video; the latent uses the same project directory.
+        assert "filename_prefix" not in graph[save]["inputs"]
+        assert graph[latent]["inputs"]["filename_prefix"] == subfolder + "/clip"
         assert graph[latent]["inputs"]["clip_index"] == 1 and set(body["partial_execution_targets"]) == {save, latent}
         jobs.append({"id": key, "previous": graph[loader]["inputs"], "context": json.loads(graph[save]["inputs"]["take_context"])})
         history[key] = {
@@ -304,8 +304,8 @@ def inspect_project_render(page: Page, server: FixtureServer, director_id: str):
         expect(second).to_contain_text("Rendered")
         assert len(jobs) == 2
         launch, follow = jobs
-        assert launch["context"] == {"segment": "launch", "predecessor": None, "transition": "cut"}
-        assert follow["context"] == {"segment": "follow", "predecessor": launch["id"], "transition": "continuation"}
+        assert launch["context"] == {"take": launch["id"], "segment": "launch", "predecessor": None, "transition": "cut"}
+        assert follow["context"] == {"take": follow["id"], "segment": "follow", "predecessor": launch["id"], "transition": "continuation"}
         assert launch["previous"]["latent_path"] == f"{project}/director" and launch["previous"]["clip_index"] == 0
         assert follow["previous"]["latent_path"] == f"{project}/director/{launch['id']}/clip_00001.safetensors"
         # The file check names the project, and the take context was written only into the submitted copies.
@@ -315,7 +315,7 @@ def inspect_project_render(page: Page, server: FixtureServer, director_id: str):
         legacy = [query for query in asked if query["take"][0] not in files]
         assert legacy and all("project" not in query and query["video"] == ["clip_00001_.mp4"] for query in legacy)
         assert page.evaluate("id => window.directorProjectGraph[id].inputs", save)["take_context"] == ""
-        assert page.evaluate("id => window.directorProjectGraph[id].inputs.filename_prefix", save) == ""
+        assert "filename_prefix" not in page.evaluate("id => window.directorProjectGraph[id].inputs", save)
         receipts = page.evaluate("id => window.comfyAPI.app.app.graph.getNodeById(id).properties.directorRenders.takes", director_id)
         assert [(take["project"], take["saver"], take["video"]["subfolder"]) for take in receipts] == [
             (project, "ArisuSaveVideoSegment", f"{project}/director/{launch['id']}"),

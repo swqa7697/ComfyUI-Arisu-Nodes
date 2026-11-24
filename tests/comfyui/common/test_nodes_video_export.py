@@ -35,9 +35,9 @@ def take(output: Path, frames: int, rate: int = 32000, sound: bool = True, codec
     audio = {"waveform": torch.from_numpy(waveform)[None], "sample_rate": rate} if sound else None
     video = InputImpl.VideoFromComponents(Types.VideoComponents(images=torch.from_numpy(images), audio=audio, frame_rate=Fraction(24)))
     crf = {"h264": 18, "h265": 20, "av1": 24}[codec]
-    saved = ArisuSaveVideoSegment.execute(
-        video=video, project_prefix=PROJECT, clip_name=name, filename_prefix="", codec=codec, crf=crf, take_context=""
-    ).ui["images"][0]
+    saved = ArisuSaveVideoSegment.execute(video=video, project_prefix=PROJECT, clip_name=name, codec=codec, crf=crf, take_context="").ui[
+        "images"
+    ][0]
     stem = saved["filename"][: -len(".mp4")]
     return json.loads((output / saved["subfolder"] / f"{stem}.arisu" / "take.json").read_text())
 

@@ -817,14 +817,6 @@ class ArisuSaveVideoSegment(io.ComfyNode):
                 io.Video.Input("video", tooltip="The delivered segment: its frames and sound are saved as they are."),
                 io.String.Input("project_prefix", default="", tooltip=_PROJECT_TOOLTIP),
                 io.String.Input("clip_name", default="clip", tooltip="The file name stem inside <project>/videos/."),
-                io.String.Input(
-                    "filename_prefix",
-                    default="",
-                    tooltip=(
-                        "Compatibility: a complete directory and file name stem relative to output, as Save Video takes it. "
-                        "When set it replaces clip_name, and it must be inside project_prefix when both are given."
-                    ),
-                ),
                 io.Combo.Input("codec", options=list(CODECS), default="h264", tooltip=_CODEC_TOOLTIP),
                 io.Int.Input("crf", default=18, min=0, max=63, tooltip=_CRF_TOOLTIP),
                 io.String.Input("take_context", default="", socketless=True, tooltip="Set by Director renders; leave blank."),
@@ -839,7 +831,6 @@ class ArisuSaveVideoSegment(io.ComfyNode):
         cls,
         project_prefix: Optional[str] = None,
         clip_name: Optional[str] = None,
-        filename_prefix: Optional[str] = None,
         codec: Optional[str] = None,
         crf: Optional[int] = None,
         take_context: Optional[str] = None,
@@ -849,7 +840,6 @@ class ArisuSaveVideoSegment(io.ComfyNode):
         Args:
             project_prefix: The widget value; ``None`` when fed by a link, which is checked at execution instead.
             clip_name: Likewise.
-            filename_prefix: Likewise.
             codec: Likewise.
             crf: Likewise.
             take_context: Likewise.
@@ -860,25 +850,21 @@ class ArisuSaveVideoSegment(io.ComfyNode):
         try:
             if codec is not None and crf is not None:
                 validate_encoding(codec, crf)
-            if None not in (project_prefix, clip_name, filename_prefix):
-                resolve_take_prefix(project_prefix, clip_name, filename_prefix, 2, 2, datetime.now())
-            if take_context is not None:
-                parse_take_context(take_context)
+            context = parse_take_context(take_context if take_context is not None else "")
+            if None not in (project_prefix, clip_name):
+                resolve_take_prefix(project_prefix, clip_name, 2, 2, datetime.now(), context["take"])
         except (TypeError, ValueError) as error:
             return str(error)
         return True
 
     @classmethod
-    def execute(
-        cls, video: Input.Video, project_prefix: str, clip_name: str, filename_prefix: str, codec: str, crf: int, take_context: str
-    ) -> io.NodeOutput:
+    def execute(cls, video: Input.Video, project_prefix: str, clip_name: str, codec: str, crf: int, take_context: str) -> io.NodeOutput:
         """Encode, measure and publish one take.
 
         Args:
             video: The segment to save.
             project_prefix: The project directory relative to output.
             clip_name: The stem inside ``<project>/videos/``.
-            filename_prefix: An optional complete compatibility prefix.
             codec: ``h264``, ``h265`` or ``av1``.
             crf: The quality on the selected encoder's scale.
             take_context: Optional Director provenance as JSON.
@@ -911,7 +897,7 @@ class ArisuSaveVideoSegment(io.ComfyNode):
         color = COLOR_SPACES.get(video.get_color_space() or "sRGB", COLOR_SPACES["sRGB"])
         tools = detect_tools()
         encoder = select_encoder(tools, codec)
-        target = resolve_take_prefix(project_prefix, clip_name, filename_prefix, width, height, datetime.now())
+        target = resolve_take_prefix(project_prefix, clip_name, width, height, datetime.now(), context["take"])
         reservation = reserve_take(folder_paths.get_output_directory(), target.directory, target.stem)
         try:
             audio_part = reservation.part("audio.wav.part")
