@@ -8,8 +8,9 @@ from typing import Any, Dict
 import pytest
 from playwright.sync_api import Locator, Page, expect, sync_playwright
 
-from tests.browser.support.director import edit_segment, inspect_render_recovery
-from tests.browser.support.harness import DRAFT, STUDIO, WORKBENCH, FixtureServer, add_node, browser_page, screenshot
+from tests.browser.support.assembly import inspect_assembly
+from tests.browser.support.director import edit_segment, inspect_project_render, inspect_render_recovery
+from tests.browser.support.harness import ASSEMBLY, DRAFT, STUDIO, WORKBENCH, FixtureServer, add_node, browser_page, contained, screenshot
 
 pytestmark = pytest.mark.browser
 
@@ -22,17 +23,6 @@ def widget_value(page: Page, node_id: str, name: str) -> Any:
 
 def studio_state(page: Page, node_id: str) -> Dict[str, Any]:
     return json.loads(widget_value(page, node_id, "resources_json"))
-
-
-def contained(page: Page, selector: str):
-    """Assert the rendered panel/dialog fits the viewport without horizontal clipping."""
-    box = page.locator(selector).bounding_box()
-    assert box and box["width"] > 0 and box["height"] > 0
-    viewport = page.viewport_size
-    assert box["x"] >= 0 and box["y"] >= 0, box
-    assert box["x"] + box["width"] <= viewport["width"] + 1, box
-    assert box["y"] + box["height"] <= viewport["height"] + 1, box
-    assert page.locator(selector).evaluate("e => e.scrollWidth <= e.clientWidth + 1")
 
 
 def pick(page: Page, name: str):
@@ -54,7 +44,7 @@ def inspect_native_nodes(page: Page, name: str):
     """Exercise the native widgets and settings dialogs alongside the custom panels."""
     definitions = page.evaluate("async () => (await fetch('/object_info')).json()")
     for node_type in definitions:
-        if node_type in (STUDIO, WORKBENCH, "ArisuMiniMaxH3DirectorWorkbench"):
+        if node_type in (STUDIO, WORKBENCH, ASSEMBLY, "ArisuMiniMaxH3DirectorWorkbench"):
             continue
         if node_type == "ArisuMiniMaxH3ModelLoader" and page.viewport_size["width"] == 1024:
             # Frontend 1.52.7 locks the accessor and shrinks inside the setter,
@@ -98,6 +88,8 @@ def inspect_native_nodes(page: Page, name: str):
             node_id,
         )
         screenshot(page, name, node_type)
+        if node_type == "ArisuSaveVideoSegment":
+            inspect_saver(page, node_id)
         if node_type == "ArisuMiniMaxH3ModelLoader":
             inspect_loader(page, node_id, name)
         if node_type == "ArisuMiniMaxH3SelfLiftProgressiveSampler":
@@ -148,6 +140,31 @@ def inspect_native_nodes(page: Page, name: str):
             screenshot(page, name, node_type + "-settings")
             page.keyboard.press("Escape")
             expect(page.locator(".arisu-settings[open]")).to_have_count(0)
+
+
+def inspect_saver(page: Page, node_id: str):
+    """The saver shows its own CRF scale per codec, keeps a custom quality, and hides Director's provenance field."""
+    page.evaluate(
+        """id => {
+        const app = window.comfyAPI.app.app, node = app.graph.getNodeById(id);
+        const widget = name => node.widgets.find(w => w.name === name);
+        const check = (actual, expected, message) => { if (JSON.stringify(actual) !== JSON.stringify(expected)) throw Error(message + ': ' + JSON.stringify(actual)); };
+        const choose = codec => { widget('codec').value = codec; widget('codec').callback?.(codec); };
+        check([widget('crf').label, widget('crf').value, widget('crf').options.max], ['crf (0–51)', 18, 51], 'H.264 range');
+        choose('av1');
+        check([widget('crf').label, widget('crf').value, widget('crf').options.max], ['crf (0–63)', 24, 63], 'AV1 preset follows an untouched value');
+        widget('crf').value = 55; choose('h265');
+        check([widget('crf').label, widget('crf').value], ['crf (0–51)', 51], 'A custom quality is kept inside the new range');
+        const context = widget('take_context');
+        check([context.value, context.serializeValue(), Boolean(context.hidden)], ['', '', true], 'Provenance field is hidden and blank');
+        check(node.inputs.some(input => (input.widget?.name ?? input.name) === 'take_context'), false, 'Provenance field has no socket');
+        const saved = node.serialize();
+        saved.widgets_values[node.widgets.indexOf(context)] = '{"segment":"typed"}';
+        node.configure(saved);
+        check(widget('take_context').serializeValue(), '', 'An imported provenance value never reaches a prompt');
+    }""",
+        node_id,
+    )
 
 
 def inspect_selflift(page: Page, node_id: str):
@@ -502,8 +519,8 @@ def test_resource_studio():
             browser.close()
 
 
-def inspect_director(page: Page, server: FixtureServer, name: str):
-    """Plan once, review the film, and undo a local revision in the real editor."""
+def inspect_director(page: Page, server: FixtureServer, name: str) -> str:
+    """Plan once, review the film, and undo a local revision in the real editor; return the Director node ID."""
     node_id = add_node(page, "ArisuMiniMaxH3DirectorWorkbench")
     panel = page.locator(".arisu-director")
     setup = panel.get_by_role("button", name="Film Setup", exact=True)
@@ -791,6 +808,7 @@ def inspect_director(page: Page, server: FixtureServer, name: str):
     )
     assert not restored["assets"]
     assert restored["segments"][1]["bindings"] == [{"asset_id": asset_id, "role": "image"}]
+    return node_id
 
 
 def test_prompt_workbench():
@@ -801,7 +819,9 @@ def test_prompt_workbench():
                 name = f"workbench-{width}"
                 with FixtureServer() as server, browser_page(browser, server, name, width, height) as page:
                     expect(page.get_by_role("button", name="Manage Agents", exact=True)).to_have_count(0)
-                    inspect_director(page, server, name)
+                    director_id = inspect_director(page, server, name)
+                    inspect_project_render(page, server, director_id)
+                    inspect_assembly(page, server, name)
                     inspect_set_get(page)
                     node_id = add_node(page, WORKBENCH)
                     expect(page.get_by_role("button", name="Generate Prompt", exact=True)).to_be_enabled()

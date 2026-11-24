@@ -17,10 +17,10 @@ import torch
 from comfy_api.latest import _io, io
 from PIL import Image
 
+from src.arisu_nodes.common.media import StaleResource
 from src.arisu_nodes.minimax_h3 import nodes as h3
 from src.arisu_nodes.minimax_h3.core import EMPTY_RESOURCES, VideoSettings, video_latent_t
 from src.arisu_nodes.minimax_h3.director import EMPTY_FILM
-from src.arisu_nodes.minimax_h3.media import StaleResource
 from src.arisu_nodes.minimax_h3.nodes import ArisuMiniMaxH3HybridToVideo, ArisuMiniMaxH3HybridToVideoAdvanced
 from tests.support.comfy import StubAudioVae, StubClip, StubVae, audio_input, image
 

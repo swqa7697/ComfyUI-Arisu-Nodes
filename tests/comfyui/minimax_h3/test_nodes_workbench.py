@@ -14,10 +14,10 @@ import pytest
 import torch
 from PIL import Image
 
+from src.arisu_nodes.common.media import revision_for
 from src.arisu_nodes.minimax_h3 import media, nodes, workbench
 from src.arisu_nodes.minimax_h3.core import Resource, ResourceBundle, VideoSettings, workbench_options
 from src.arisu_nodes.minimax_h3.director_task import DirectorTask
-from src.arisu_nodes.minimax_h3.media import revision_for
 from src.arisu_nodes.minimax_h3.workbench import Generation, Workbench, job_context, skill_catalog
 from src.arisu_nodes.minimax_h3.workbench_media import stage
 from tests.support.media import make_audio, make_av, make_video

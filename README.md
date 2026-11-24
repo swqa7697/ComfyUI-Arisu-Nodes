@@ -96,6 +96,14 @@ Open **Film Setup** to write the **Film Requirements** in plain text or Markdown
 
 Render the current segment to inspect its footage, or render the remaining segments in order. A continuation loads the previous take and trims its overlap from both picture and sound. Save the workflow to retain the plan and render records. Keep each take’s video and latent together under ComfyUI’s output directory for recovery.
 
+### Save segments and assemble a film
+
+Replace the final **Save Video** of a graph with **Save Video Segment** and give it a project, typed or linked from **Path Builder**. Each run saves a new take under `<project>/videos/`: a playable MP4 in H.264, H.265 or AV1, a take record, and the sound as float PCM. An earlier take is never replaced, so you can render a segment several times and compare. An existing `filename_prefix` wire keeps working. Director Workbench accepts either saver and, with a project, keeps its renders under `<project>/director/`.
+
+Add **Assemble Video** to the same workflow or to a workflow of its own. Add the project's takes, import a Director film in its order, or add any existing video. Replace takes, reorder, exclude, and loop each join with sound. **Check Export** shows the frame count, the duration and what happens to each track before anything is written: compatible video is copied without loss, and sound is rebuilt on one continuous sample timeline and encoded once, so picture and sound stay aligned across every join. **Export** writes a new version under `<project>/exports/` with the film and a record of the sources and decisions that made it. Removing a row never deletes a file; deleting takes from disk is a separate, confirmed action. See the [Assemble Video guide](web/docs/ArisuAssembleVideo/en.md).
+
+Both nodes use the system `ffmpeg` and `ffprobe` when ComfyUI can find them, which is recommended. Without an `ffmpeg` executable they fall back to the PyAV libraries, log a warning for each job, and always encode.
+
 ## Nodes
 
 Click a node name for its full reference, also available through the node's right-click **Help** menu.
@@ -110,6 +118,8 @@ Click a node name for its full reference, also available through the node's righ
 | [Preview & Save Image (Upscale)](web/docs/ArisuPreviewSaveImageUpscale/en.md) | Upscale previewed images when saving.                       |
 | [Load Image (Browse)](web/docs/ArisuLoadImage/en.md)                          | Browse and crop images from configured directories.         |
 | [Resize Image](web/docs/ArisuResizeImage/en.md)                               | Resize and preview images by cropping, padding, fitting, or stretching; runs with unconnected outputs. |
+| [Save Video Segment](web/docs/ArisuSaveVideoSegment/en.md)                    | Save a video as a new take with a record and lossless sound for assembly. |
+| [Assemble Video](web/docs/ArisuAssembleVideo/en.md)                           | Select takes, check each join, and export a film on an exact frame and sample timeline. |
 
 ### MiniMax H3
 

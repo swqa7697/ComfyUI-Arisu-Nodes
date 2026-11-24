@@ -9,8 +9,9 @@ from typing import Any, BinaryIO, Dict
 
 import av
 
+from ..common.media import open_media, origin_for, source_file, streams
 from .core import Resource
-from .media import open_media, origin_for, source_file, streams, upright
+from .media import upright
 
 
 class LimitedOutput:

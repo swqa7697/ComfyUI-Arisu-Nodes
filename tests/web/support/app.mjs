@@ -1,8 +1,9 @@
 // Fake of the frontend's `app` (scripts/app.js re-exports window.comfyAPI.app.app):
 // the surface the pack's scripts touch, a toast sink, a settings store holding whatever
-// a script sets (a test seeds `settings` directly), and a per-test reset.
+// a script sets (a test seeds `settings` directly), the commands a script ran, and a per-test reset.
 export const toasts = [];
 export const settings = {};
+export const commands = [];
 
 export const app = {
   extensions: [],
@@ -24,6 +25,11 @@ export const app = {
       },
       async set(id, value) {
         settings[id] = value;
+      },
+    },
+    command: {
+      async execute(id) {
+        commands.push(id);
       },
     },
   },
@@ -49,6 +55,7 @@ export function resetApp(graph) {
   app.extensionManager.workflow.activeWorkflow = null;
   app.extensionManager.workflow.openWorkflows = [];
   toasts.length = 0;
+  commands.length = 0;
   for (const id of Object.keys(settings)) delete settings[id];
 }
 

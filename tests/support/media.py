@@ -59,3 +59,45 @@ def make_av(path: Path):
         for stream in (video, audio):
             for packet in stream.encode(None):
                 output.mux(packet)
+
+
+def marker_clip(
+    frames: int, rate: int, fps: int = 24, flashes: Optional[List[int]] = None, clicks: Optional[List[int]] = None, value: float = 0.25
+):
+    """Build flat grey frames ``[N, 64, 64, 3]`` (the smallest size every AV1 encoder accepts) with white flash frames, and stereo sound ``[2, T]`` with unit clicks.
+
+    A flash and a click placed at the same time prove where picture and sound meet after encoding.
+    """
+    images = np.full((frames, 64, 64, 3), value, dtype=np.float32)
+    for index in flashes or []:
+        images[index] = 1.0
+    sound = np.zeros((2, round(frames * rate / fps)), dtype=np.float32)
+    for index in clicks or []:
+        sound[:, index : index + 32] = 0.9
+    return images, sound
+
+
+def read_markers(path: Path):
+    """Decode a saved video: frame count, flash frame indexes and times, valid sample count, and click start samples."""
+    with av.open(str(path)) as container:
+        video = container.streams.video[0]
+        flashes, times, count = [], [], 0
+        for frame in container.decode(video):
+            if frame.to_ndarray(format="gray").mean() > 180:
+                flashes.append(count)
+                times.append(float(frame.pts * frame.time_base))
+            count += 1
+    samples, clicks = 0, []
+    with av.open(str(path)) as container:
+        if container.streams.audio:
+            audio = container.streams.audio[0]
+            resampler = av.AudioResampler(format="fltp", layout=audio.layout, rate=audio.rate)
+            pieces = [converted.to_ndarray() for frame in container.decode(audio) for converted in resampler.resample(frame)]
+            wave_form = np.concatenate(pieces, axis=1) if pieces else np.zeros((1, 0), dtype=np.float32)
+            # PyAV applies the container's leading trim but not its trailing one; the stream duration marks the valid end.
+            if audio.duration:
+                wave_form = wave_form[:, : round(audio.duration * audio.time_base * audio.rate)]
+            samples = wave_form.shape[1]
+            loud = np.flatnonzero(np.abs(wave_form[0]) > 0.4)
+            clicks = [int(index) for position, index in enumerate(loud) if position == 0 or index - loud[position - 1] > 64]
+    return {"frames": count, "flashes": flashes, "times": times, "samples": samples, "clicks": clicks}

@@ -7,12 +7,14 @@ import importlib.metadata
 import importlib.resources
 import io
 import json
+import re
 import signal
 import threading
+import uuid
 import wave
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Optional
+from typing import Any, Dict, Iterator, List, Optional, Set, Tuple
 
 from aiohttp import web
 from PIL import Image, ImageDraw
@@ -26,6 +28,16 @@ ARTIFACTS = ROOT / ".misc/browser/results"
 STUDIO = "ArisuMiniMaxH3ResourceStudio"
 WORKBENCH = "ArisuMiniMaxH3PromptWorkbench"
 DRAFT = "A paper boat drifts across a sunlit pond. The camera follows slowly."
+ASSEMBLY = "ArisuAssembleVideo"
+PROJECT = "films/night shoot"
+# Published takes of the fixture project, by file name.
+TAKES = {
+    "shot_00001_.mp4": "11111111-1111-4111-8111-111111111111",
+    "shot_00002_.mp4": "22222222-2222-4222-8222-222222222222",
+    "shot_00003_.mp4": "33333333-3333-4333-8333-333333333333",
+}
+OUTPUT_SPEC = {"width": 1280, "height": 720, "fps": [24, 1], "sample_rate": 32000, "channels": 2}
+_DIRECTED = re.compile(r"(?:.+/director|arisu_director)/([0-9a-f-]{36})/clip_\d{5,}_\.mp4")
 
 
 class FixtureServer:
@@ -49,6 +61,13 @@ class FixtureServer:
             "Comfy.Workflow.WorkflowTabsPosition": "Topbar",
         }
         self.userdata: Dict[str, bytes] = {}
+        # Assemble Video: request bodies in order, deleted takes, Director renders seen, and join preview jobs.
+        self.video_requests: List[Tuple[str, Any]] = []
+        self.video_deleted: Set[str] = set()
+        self.video_directed: Set[str] = set()
+        self.previews: Dict[str, Dict[str, Any]] = {}
+        # File revisions of Director takes that stay on a node after its render fixture ends.
+        self.director_takes: Dict[str, Dict[str, str]] = {}
         self.loop = asyncio.new_event_loop()
         self.thread = threading.Thread(target=self.loop.run_forever, daemon=True)
         self.runner: Optional[web.AppRunner] = None
@@ -148,6 +167,162 @@ class FixtureServer:
                 "continuity": "Soft morning light.",
                 "coverage": {"Launch the boat": ["launch"]},
                 "segments": segments,
+            }
+        )
+
+    def video_description(self, root: str, path: str) -> Dict[str, Any]:
+        """Describe one synthetic video in the route contract; only root IDs and relative paths appear."""
+        name = path.rsplit("/", 1)[-1]
+        directed = _DIRECTED.fullmatch(path) if root == "output" else None
+        ordinary = root == "output" and path == f"{PROJECT}/videos/{name}" and name in TAKES
+        found = root == "output" and name == "found.webm"
+        if path in self.video_deleted or not (directed or ordinary or found):
+            return {"root": root, "path": path, "state": "missing"}
+        take = None
+        if directed:
+            self.video_directed.add(path)
+            take = {"take": directed.group(1), "origin": "director", "segment": None, "predecessor": None, "transition": None}
+        elif ordinary:
+            take = {"take": TAKES[name], "origin": "ordinary", "segment": None, "predecessor": None, "transition": None}
+        return {
+            "root": root,
+            "path": path,
+            "state": "ok",
+            "revision": "video-revision" if directed else "revision-" + name,
+            "frames": 48,
+            "fps": [24, 1],
+            "duration": 2.0,
+            # A plain file with another frame size makes the export check ask for a common output.
+            "width": 800 if found else 1280,
+            "height": 600 if found else 720,
+            "codec": "vp9" if found else "h264",
+            "vfr": False,
+            "audio": {"rate": 32000, "channels": 2, "samples": 64000, "source": "pcm" if ordinary else "embedded"},
+            "take": take,
+            "deletable": ordinary,
+        }
+
+    async def handle_video(self, request: web.Request, path: str) -> Optional[web.StreamResponse]:
+        """Synthetic Assemble Video routes; an unlisted route falls through and fails the scenario."""
+        method, route = request.method, path.removeprefix("/arisu/video")
+        if route == "/takes" and method == "GET":
+            project = request.query.get("project", "")
+            listed = [f"{project}/videos/{name}" for name in TAKES] if project == PROJECT else []
+            if request.query.get("legacy") == "1" or project == PROJECT:
+                listed += sorted(self.video_directed)
+            self.video_requests.append(("takes", dict(request.query)))
+            takes = [self.video_description("output", item) for item in listed]
+            return web.json_response({"project": project, "takes": [take for take in takes if take["state"] == "ok"]})
+        preview = re.fullmatch(r"/join-preview/([0-9a-f-]{36})(/view)?", route)
+        if preview and preview.group(1) in self.previews:
+            job = self.previews[preview.group(1)]
+            if method == "DELETE" and not preview.group(2):
+                del self.previews[preview.group(1)]
+                return web.json_response({"released": True})
+            if method == "GET" and preview.group(2):
+                if request.query.get("variant", "a") not in job["variants"]:
+                    return web.json_response({"error": "preview is not ready"}, status=409)
+                return web.FileResponse(FIXTURES / "clip.webm", headers={"Content-Type": "video/webm"})
+            if method == "GET":
+                return web.json_response(job)
+        if method != "POST" or route not in ("/describe", "/preflight", "/delete", "/join-preview"):
+            return None
+        body = await request.json()
+        self.video_requests.append((route[1:], body))
+        if route == "/describe":
+            return web.json_response({"entries": [self.video_description(entry["root"], entry["path"]) for entry in body["entries"]]})
+        if route == "/delete":
+            results = []
+            for entry in body["entries"]:
+                found = self.video_description(entry["root"], entry["path"])
+                allowed = found.get("deletable") and found["revision"] == entry["revision"]
+                stem = entry["path"][: -len(".mp4")]
+                files = (
+                    [(f"{stem}.arisu/take.json", 1200), (f"{stem}.arisu/audio.wav", 512044), (entry["path"], 2400000)] if allowed else []
+                )
+                if allowed and body["confirm"]:
+                    self.video_deleted.add(entry["path"])
+                results.append(
+                    {
+                        "root": entry["root"],
+                        "path": entry["path"],
+                        "state": ("deleted" if body["confirm"] else "deletable") if allowed else "refused",
+                        "files": [{"path": name, "bytes": size} for name, size in files],
+                        "bytes": sum(size for _, size in files),
+                    }
+                )
+            return web.json_response({"entries": results, "bytes": sum(item["bytes"] for item in results)})
+        if route == "/join-preview":
+            join = body["join"]
+            handle = str(uuid.uuid4())
+            self.previews[handle] = {
+                "state": "ready",
+                "progress": 100,
+                "error": None,
+                "variants": ["a", "b"] if join["correction"] or join["fade"] else ["a"],
+                "cut": 0.5,
+                "signalling": {"match": True, "outgoing": {}, "incoming": {}},
+                "suggestion": {
+                    "stable": True,
+                    "correction": {"luma_gain": 1.0, "luma_offset": -0.02, "cb_offset": 0.0, "cr_offset": 0.004, "taper": 24},
+                },
+            }
+            return web.json_response({"id": handle}, status=202)
+        document = body["document"]
+        rows, position, states = [], 0, []
+        for entry in (item for item in document["entries"] if item["included"]):
+            found = self.video_description(entry["root"], entry["path"]) if entry["path"] else {"state": "missing"}
+            states.append(found)
+            usable = found["state"] == "ok"
+            first, last = entry["range"] or (0, 48)
+            count = last - first if usable else 0
+            rows.append(
+                {
+                    "id": entry["id"],
+                    "state": found["state"],
+                    "frames": [position, position + count] if usable else None,
+                    "samples": [position * 4000 // 3, (position + count) * 4000 // 3] if usable else None,
+                    "audio": found["audio"]["source"] if usable and entry["audio"] != "none" else "none",
+                    "message": None,
+                }
+            )
+            position += count
+        mixed = len({(found.get("width"), found.get("codec")) for found in states if found["state"] == "ok"}) > 1
+        usable = bool(rows) and all(row["state"] == "ok" for row in rows)
+        corrected = any(entry["join"]["correction"] for entry in document["entries"])
+        encode = mixed or corrected or body["encoding"] == "encode"
+        needs = []
+        if usable and mixed and document["output"] is None:
+            needs.append({"kind": "confirm_output", "entries": [row["id"] for row in rows], "suggested": OUTPUT_SPEC})
+        if encode:
+            reason = "a colour correction is applied" if corrected else "sources are conformed to one frame size and rate"
+            video = {"operation": "encode", "reason": reason, "codec": body["codec"], "encoder": "libx264", "crf": body["crf"]}
+        else:
+            video = {
+                "operation": "copy",
+                "reason": "whole compatible segments are copied as packets",
+                "codec": "h264",
+                "encoder": None,
+                "crf": None,
+            }
+        return web.json_response(
+            {
+                "entries": rows,
+                "frames": position,
+                "duration": position / 24,
+                "samples": position * 4000 // 3,
+                "fps": [24, 1],
+                "width": 1280,
+                "height": 720,
+                "sample_rate": 32000,
+                "channels": 2,
+                "video": video,
+                "audio": {"operation": "encode", "reason": "sound is rebuilt on one continuous sample timeline and encoded once"},
+                "destination": f"{body['project']}/exports/{body['export_name']}_00001/{body['export_name']}_00001.mp4",
+                "backend": "ffmpeg",
+                "needs": needs,
+                "warnings": [],
+                "ready": usable and not needs,
             }
         )
 
@@ -363,6 +538,26 @@ class FixtureServer:
             return web.json_response(completed)
         if path in ("/arisu/workbench/release", "/arisu/workbench/cancel", "/arisu/workbench/action") and method == "POST":
             return web.json_response({"accepted": True})
+        if path == "/arisu/resources/director-take" and request.query.get("take") in self.director_takes:
+            return web.json_response(self.director_takes[request.query["take"]])
+        if path.startswith("/arisu/video/"):
+            answer = await self.handle_video(request, path)
+            if answer is not None:
+                return answer
+        if path == "/arisu/resources/browse" and request.query.get("root") == "output":
+            # The output root holds one video beside an image, so a video-only Browse has something to hide.
+            return web.json_response(
+                {
+                    "root": "output",
+                    "path": "",
+                    "parent": None,
+                    "dirs": [],
+                    "files": ["found.webm", "scene.png"],
+                    "ancestors": [],
+                    "roots": responses["/arisu/roots"]["roots"],
+                    "kinds": {"found.webm": "video", "scene.png": "image"},
+                }
+            )
         if path in ("/arisu/resources/browse", "/arisu/browse"):
             return web.json_response(
                 {
@@ -378,8 +573,11 @@ class FixtureServer:
                     "kinds": {"scene.png": "image", "sound.wav": "audio", **{f"scene-{i}.png": "image" for i in range(2, 10)}},
                 }
             )
+        if path == "/arisu/resources/view" and request.query.get("path", "").endswith((".webm", ".mp4")):
+            return web.FileResponse(FIXTURES / "clip.webm", headers={"Content-Type": "video/webm"})
         if path == "/arisu/resources/metadata":
-            kind = "audio" if request.query.get("path", "").endswith(".wav") else "image"
+            name = request.query.get("path", "")
+            kind = "audio" if name.endswith(".wav") else "video" if name.endswith((".webm", ".mp4")) else "image"
             return web.json_response(
                 {
                     "kind": kind,
@@ -503,12 +701,34 @@ def browser_page(browser: Browser, server: FixtureServer, name: str, width: int 
             context.close()
 
 
-def add_node(page: Page, node_type: str) -> str:
-    """Create through the real graph API; return the node ID for state assertions."""
+def contained(page: Page, selector: str):
+    """Assert the rendered panel/dialog fits the viewport without horizontal clipping.
+
+    A new DOM widget gets its width one frame after the node appears, so the overflow check waits for the
+    layout to settle; content that really overflows still fails when the wait runs out.
+    """
+    page.wait_for_function(
+        "selector => { const e = document.querySelector(selector); return !!e && e.clientWidth > 0 && e.scrollWidth <= e.clientWidth + 1; }",
+        arg=selector,
+    )
+    box = page.locator(selector).bounding_box()
+    assert box and box["width"] > 0 and box["height"] > 0
+    viewport = page.viewport_size
+    assert box["x"] >= 0 and box["y"] >= 0, box
+    assert box["x"] + box["width"] <= viewport["width"] + 1, box
+    assert box["y"] + box["height"] <= viewport["height"] + 1, box
+
+
+def add_node(page: Page, node_type: str, clear: bool = True) -> str:
+    """Create through the real graph API; return the node ID for state assertions.
+
+    With ``clear=False`` the graph keeps its nodes: they move far off the canvas view and stay in the workflow.
+    """
     return page.evaluate(
-        """type => {
+        """([type, clear]) => {
         const app = window.comfyAPI.app.app;
-        app.graph.clear();
+        if (clear) app.graph.clear();
+        else for (const other of app.graph.nodes) other.pos = [other.pos[0] - 4000, other.pos[1] - 4000];
         const node = LiteGraph.createNode(type);
         if (!node) throw new Error('Frontend could not create ' + type);
         app.graph.add(node); node.pos = [100, 140];
@@ -516,7 +736,7 @@ def add_node(page: Page, node_type: str) -> str:
         app.canvas.setDirty(true, true);
         return String(node.id);
     }""",
-        node_type,
+        [node_type, clear],
     )
 
 

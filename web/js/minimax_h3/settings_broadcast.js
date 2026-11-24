@@ -2,6 +2,7 @@
 import { api } from '../../../../scripts/api.js';
 import { app } from '../../../../scripts/app.js';
 import { installSelectionGuards, registerSelectionOwner } from '../common/selection_context.js';
+import { allNodes } from '../common/shared.js';
 
 const STUDIO = 'ArisuMiniMaxH3ResourceStudio';
 const SETTINGS_KEYS = {
@@ -24,11 +25,6 @@ let refreshing = false;
 let epoch = 0;
 function rootGraph() {
   return app.rootGraph ?? app.graph;
-}
-function allNodes(graph = rootGraph(), visited = new Set()) {
-  if (!graph || visited.has(graph)) return [];
-  visited.add(graph);
-  return [...(graph.nodes ?? graph._nodes ?? []), ...[...(graph.subgraphs?.values() ?? [])].flatMap((child) => allNodes(child, visited))];
 }
 function toast(severity, detail) {
   app.extensionManager?.toast?.add?.({ severity, summary: 'MiniMax H3', detail, life: 8000 });

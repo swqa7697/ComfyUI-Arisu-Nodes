@@ -1,7 +1,8 @@
 # Path Builder
 
 Join separate text fields into one path with `/`, for `filename_prefix` inputs such as
-**Save Video**, **Save Image**, or a latent save node. Blank fields are skipped and surrounding
+**Save Video**, **Save Image**, or a latent save node, and for the `project_prefix` of
+**Save Video Segment** and **Assemble Video**. Blank fields are skipped and surrounding
 slashes and spaces are trimmed, so `minimax_h3` + `test` gives `minimax_h3/test`.
 
 ## Why
@@ -31,6 +32,8 @@ field that holds text or a link is shown even if it lies past the saved count.
 ```
 Path Builder ─▶ (filename_prefix) Save Video
              └▶ (filename_prefix) Save Latent
+
+Path Builder ─▶ (project_prefix) Save Video Segment
 ```
 
 ## Notes
@@ -40,6 +43,9 @@ Path Builder ─▶ (filename_prefix) Save Video
 - Every field is trimmed of surrounding whitespace and slashes before joining, so `videos/` and
   `/h3_clip` give `videos/h3_clip`. A leading `/` on the first field is dropped too; ComfyUI does not
   accept absolute prefixes.
+- Director Workbench reads a project wired from this node before a render starts, from the text in the
+  fields. A field fed by a string primitive or **Concatenate Text** is followed; a field fed by any other
+  node cannot be read in advance, and Director asks for a project it can read.
 - The `+` / `-` button row and the hidden fields are handled by the pack's frontend script, which
   draws the row itself so both buttons share one line. A hidden field has no input socket, so a
   removed field cannot be wired by accident and nothing but the visible fields reaches the join. If

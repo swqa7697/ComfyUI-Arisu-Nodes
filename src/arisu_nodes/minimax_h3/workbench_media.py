@@ -13,8 +13,9 @@ import av
 from PIL import Image, ImageOps
 
 from ..common.core import open_raster_image
+from ..common.media import open_media, origin_for, source_file, streams
 from .core import Resource
-from .media import open_media, origin_for, source_file, streams, upright, validate_workbench_source
+from .media import upright, validate_workbench_source
 from .workbench_images import encode_image
 
 

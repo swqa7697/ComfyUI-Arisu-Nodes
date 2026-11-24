@@ -2,10 +2,25 @@
 // `fetchApi` records each call and answers from `responses`, in order; an entry may
 // be a Response double, an Error (the request itself fails), or a function of
 // (route, init) returning either, for a test that needs to look at state in flight.
+// `emit` delivers a server event to the listeners a script added.
 export const api = {
+  clientId: 'test-client',
   calls: [],
   responses: [],
   queued: [],
+  listeners: new Map(),
+  addEventListener(name, listener) {
+    this.listeners.set(name, [...(this.listeners.get(name) ?? []), listener]);
+  },
+  removeEventListener(name, listener) {
+    this.listeners.set(
+      name,
+      (this.listeners.get(name) ?? []).filter((item) => item !== listener),
+    );
+  },
+  emit(name, detail) {
+    for (const listener of this.listeners.get(name) ?? []) listener({ detail });
+  },
   apiURL(route) {
     return `/api${route}`;
   },
@@ -32,4 +47,5 @@ export function resetApi() {
   api.calls.length = 0;
   api.responses.length = 0;
   api.queued.length = 0;
+  api.listeners.clear();
 }

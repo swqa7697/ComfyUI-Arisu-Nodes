@@ -6,12 +6,15 @@ const NODE_COLORS = {
   ArisuMiniMaxH3ResourceStudio: 'red',
   ArisuPreviewSaveImage: 'yellow',
   ArisuPreviewSaveImageUpscale: 'yellow',
+  ArisuSaveVideoSegment: 'yellow',
+  ArisuAssembleVideo: 'yellow',
   ArisuMiniMaxH3DirectorWorkbench: 'pale_blue',
   ArisuMiniMaxH3PromptWorkbench: 'pale_blue',
 };
 const PANELS =
-  ':is(.arisu-studio,.arisu-director,.arisu-director-dialog,.arisu-workbench,.arisu-browser,.arisu-cropper,.arisu-clip,.arisu-settings,.arisu-agents,.arisu-activity-modal,.arisu-settings-entry)';
-const DIALOGS = ':is(.arisu-director-dialog,.arisu-browser,.arisu-cropper,.arisu-clip,.arisu-settings,.arisu-agents,.arisu-activity-modal)';
+  ':is(.arisu-studio,.arisu-assembly,.arisu-assembly-dialog,.arisu-director,.arisu-director-dialog,.arisu-workbench,.arisu-browser,.arisu-cropper,.arisu-clip,.arisu-settings,.arisu-agents,.arisu-activity-modal,.arisu-settings-entry)';
+const DIALOGS =
+  ':is(.arisu-assembly-dialog,.arisu-director-dialog,.arisu-browser,.arisu-cropper,.arisu-clip,.arisu-settings,.arisu-agents,.arisu-activity-modal)';
 const ACTIONS = 'button:is(.arisu-action,.primary,.danger)';
 const CONFIRM = 'button:is(.review,.apply,.arisu-cropper-apply,.arisu-clip-apply,.arisu-settings-apply)';
 const STYLE = `
@@ -29,6 +32,7 @@ ${PANELS}{
 }
 :is(.arisu-director,.arisu-director-dialog,.arisu-workbench,.arisu-agents,.arisu-activity-modal,.arisu-settings-entry){--arisu-accent:var(--arisu-blue);}
 :is(.arisu-director,.arisu-director-dialog,.arisu-workbench,.arisu-agents,.arisu-activity-modal,.arisu-settings-entry){--arisu-action:var(--arisu-video);}
+:is(.arisu-assembly,.arisu-assembly-dialog){--arisu-accent:var(--arisu-video);}
 .arisu-settings{--arisu-accent:var(--p-primary-color,var(--fg-color,#ddd));}
 dialog${DIALOGS}[open]{border-radius:8px;box-shadow:0 12px 40px #0006;animation:none;}
 dialog${DIALOGS}[open]::backdrop{background:#0008;backdrop-filter:none;animation:none;}
@@ -60,7 +64,8 @@ ${PANELS} button.danger{--arisu-action:var(--arisu-red);}
 .arisu-studio .reference.muted{opacity:.65;}
 .arisu-studio .picture:enabled:hover{border-color:var(--arisu-accent);}
 .arisu-studio .edit:enabled:hover{background:transparent;}
-.arisu-studio :focus-visible{outline-offset:-2px;}
+.arisu-assembly .box,.arisu-assembly .entry,.arisu-assembly .thumb{border-radius:4px;}
+:is(.arisu-studio,.arisu-assembly) :focus-visible{outline-offset:-2px;}
 .arisu-browser .arisu-browser-file:hover{transform:none;box-shadow:none;}
 .arisu-browser .arisu-browser-file[data-kind=image] .arisu-browser-tile{outline:1px solid var(--arisu-image);outline-offset:-1px;}
 .arisu-browser .arisu-browser-file[data-kind=video] .arisu-browser-tile{outline:1px solid var(--arisu-video);outline-offset:-1px;}

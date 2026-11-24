@@ -2256,5 +2256,267 @@
     "search_aliases": null,
     "essentials_category": null,
     "has_intermediate_output": false
+  },
+  "ArisuSaveVideoSegment": {
+    "input": {
+      "required": {
+        "video": [
+          "VIDEO",
+          {
+            "tooltip": "The delivered segment: its frames and sound are saved as they are."
+          }
+        ],
+        "project_prefix": [
+          "STRING",
+          {
+            "tooltip": "The project directory under ComfyUI's output directory, for example the output of Arisu Path Builder. Takes go to <project>/videos/. Blank uses 'arisu_video'. Absolute paths and '..' are refused.",
+            "default": "",
+            "multiline": false
+          }
+        ],
+        "clip_name": [
+          "STRING",
+          {
+            "tooltip": "The file name stem inside <project>/videos/.",
+            "default": "clip",
+            "multiline": false
+          }
+        ],
+        "filename_prefix": [
+          "STRING",
+          {
+            "tooltip": "Compatibility: a complete directory and file name stem relative to output, as Save Video takes it. When set it replaces clip_name, and it must be inside project_prefix when both are given.",
+            "default": "",
+            "multiline": false
+          }
+        ],
+        "codec": [
+          "COMBO",
+          {
+            "tooltip": "The video codec of the saved MP4. Each encoder has its own CRF scale.",
+            "default": "h264",
+            "multiselect": false,
+            "options": [
+              "h264",
+              "h265",
+              "av1"
+            ]
+          }
+        ],
+        "crf": [
+          "INT",
+          {
+            "tooltip": "Constant quality: lower is better and larger. H.264 and H.265 accept 0-51, AV1 accepts 0-63. Suggested: 18, 20, 24.",
+            "default": 18,
+            "min": 0,
+            "max": 63
+          }
+        ],
+        "take_context": [
+          "STRING",
+          {
+            "tooltip": "Set by Director renders; leave blank.",
+            "default": "",
+            "socketless": true,
+            "multiline": false
+          }
+        ]
+      },
+      "hidden": {
+        "prompt": [
+          "PROMPT"
+        ],
+        "extra_pnginfo": [
+          "EXTRA_PNGINFO"
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "video",
+        "project_prefix",
+        "clip_name",
+        "filename_prefix",
+        "codec",
+        "crf",
+        "take_context"
+      ],
+      "hidden": [
+        "prompt",
+        "extra_pnginfo"
+      ]
+    },
+    "is_input_list": false,
+    "output": [
+      "VIDEO"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "output_name": [
+      "video"
+    ],
+    "output_tooltips": [
+      "The input video, unchanged."
+    ],
+    "output_matchtypes": null,
+    "name": "ArisuSaveVideoSegment",
+    "display_name": "Save Video Segment",
+    "description": "Save a video as a new take under a project: an MP4, a take record and, with sound, the waveform as float PCM for assembly. Connect it after Create Video.",
+    "python_module": "custom_nodes.arisu",
+    "category": "Arisu Nodes/Common",
+    "output_node": true,
+    "deprecated": false,
+    "experimental": false,
+    "dev_only": false,
+    "api_node": false,
+    "price_badge": null,
+    "search_aliases": [
+      "save video",
+      "save take",
+      "video segment",
+      "save clip"
+    ],
+    "essentials_category": null,
+    "has_intermediate_output": false
+  },
+  "ArisuAssembleVideo": {
+    "input": {
+      "required": {
+        "project_prefix": [
+          "STRING",
+          {
+            "tooltip": "The project directory under ComfyUI's output directory, for example the output of Arisu Path Builder. Takes go to <project>/videos/. Blank uses 'arisu_video'. Absolute paths and '..' are refused.",
+            "default": "",
+            "multiline": false
+          }
+        ],
+        "export_name": [
+          "STRING",
+          {
+            "tooltip": "Each export creates <project>/exports/<name>_<counter>/.",
+            "default": "main",
+            "multiline": false
+          }
+        ],
+        "encoding": [
+          "COMBO",
+          {
+            "tooltip": "inherit copies compatible video without loss; encode writes the selected codec and CRF.",
+            "default": "inherit",
+            "multiselect": false,
+            "options": [
+              "inherit",
+              "encode"
+            ]
+          }
+        ],
+        "codec": [
+          "COMBO",
+          {
+            "tooltip": "The video codec of the saved MP4. Each encoder has its own CRF scale.",
+            "default": "h264",
+            "multiselect": false,
+            "options": [
+              "h264",
+              "h265",
+              "av1"
+            ]
+          }
+        ],
+        "crf": [
+          "INT",
+          {
+            "tooltip": "Constant quality: lower is better and larger. H.264 and H.265 accept 0-51, AV1 accepts 0-63. Suggested: 18, 20, 24.",
+            "default": 18,
+            "min": 0,
+            "max": 63
+          }
+        ],
+        "edit_json": [
+          "STRING",
+          {
+            "tooltip": "The edit list, managed by the panel.",
+            "default": "{\"version\":1,\"output\":null,\"entries\":[]}",
+            "socketless": true,
+            "multiline": false
+          }
+        ],
+        "export_request": [
+          "STRING",
+          {
+            "tooltip": "Set by the Export button; leave blank.",
+            "default": "",
+            "socketless": true,
+            "multiline": false
+          }
+        ]
+      },
+      "hidden": {
+        "prompt": [
+          "PROMPT"
+        ],
+        "extra_pnginfo": [
+          "EXTRA_PNGINFO"
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "project_prefix",
+        "export_name",
+        "encoding",
+        "codec",
+        "crf",
+        "edit_json",
+        "export_request"
+      ],
+      "hidden": [
+        "prompt",
+        "extra_pnginfo"
+      ]
+    },
+    "is_input_list": false,
+    "output": [
+      "VIDEO",
+      "STRING",
+      "STRING"
+    ],
+    "output_is_list": [
+      false,
+      false,
+      false
+    ],
+    "output_name": [
+      "video",
+      "path",
+      "record"
+    ],
+    "output_tooltips": [
+      "The exported film. Blocked on a run without an export request.",
+      "The film's path relative to ComfyUI's output directory.",
+      "The export record (sequence.json) as text."
+    ],
+    "output_matchtypes": null,
+    "name": "ArisuAssembleVideo",
+    "display_name": "Assemble Video",
+    "description": "Select saved takes, order them and export one film on an exact frame and sample timeline. A run exports nothing; use the panel's Export button.",
+    "python_module": "custom_nodes.arisu",
+    "category": "Arisu Nodes/Common",
+    "output_node": true,
+    "deprecated": false,
+    "experimental": false,
+    "dev_only": false,
+    "api_node": false,
+    "price_badge": null,
+    "search_aliases": [
+      "assemble video",
+      "edit list",
+      "join clips",
+      "export film",
+      "concatenate video"
+    ],
+    "essentials_category": null,
+    "has_intermediate_output": false
   }
 }

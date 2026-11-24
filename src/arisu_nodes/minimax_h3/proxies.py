@@ -14,14 +14,15 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Mapping, Optional, Set
 
+from ..common.http import Busy
+from ..common.media import source_file
 from ..worker import worker_command, worker_environment
 from .core import Resource
-from .media import source_file
 
 logger = logging.getLogger(__name__)
 
 
-class ProxyBusy(ValueError):
+class ProxyBusy(Busy):
     """The single conversion worker is busy."""
 
 

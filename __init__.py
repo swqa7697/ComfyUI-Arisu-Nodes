@@ -13,6 +13,7 @@ from server import PromptServer
 from .src.arisu_nodes.common.nodes import NODES as COMMON_NODES
 from .src.arisu_nodes.common.paths import initialize_roots
 from .src.arisu_nodes.common.routes import register_routes
+from .src.arisu_nodes.common.video_routes import register_routes as register_video_routes
 from .src.arisu_nodes.minimax_h3.nodes import NODES as MINIMAX_H3_NODES
 from .src.arisu_nodes.minimax_h3.routes import register_routes as register_resource_routes
 from .src.arisu_nodes.minimax_h3.workbench import initialize as initialize_workbench
@@ -38,6 +39,7 @@ class ArisuNodesExtension(ComfyExtension):
         server = getattr(PromptServer, "instance", None)
         if server is not None:
             register_routes(server.routes)
+            register_video_routes(server.routes, getattr(server, "app", None))
             register_resource_routes(server.routes, getattr(server, "app", None))
             workbench = initialize_workbench(
                 Path(folder_paths.get_system_user_directory("arisu_nodes")), Path(folder_paths.get_temp_directory()) / "arisu_workbench"

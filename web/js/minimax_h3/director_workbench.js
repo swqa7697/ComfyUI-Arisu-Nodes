@@ -3,22 +3,25 @@ import { app } from '../../../../scripts/app.js';
 import { forwardToCanvas, keepScrollWheel } from '../common/canvas_gestures.js';
 import { closeOnBackdropClick, el } from '../common/dom.js';
 import { installSelectionGuards, preservingSelections, registerSelectionOwner } from '../common/selection_context.js';
+import { moveItem, resourceId } from '../common/shared.js';
+import { registerTakeSource } from '../common/take_sources.js';
 import { hideWidget, setWidget } from '../common/widgets.js';
 import { agentStatus, openAgentSettings } from './agent_settings.js';
 import { ASPECTS, clearLocations, readDocument, secondsLabel, stableTags, timeline } from './director_document.js';
-import { assetButton, bindingView, browseAssets, libraryView, moveItem } from './director_media.js';
+import { assetButton, bindingView, browseAssets, libraryView } from './director_media.js';
 import {
   installDirectorQueue,
   refreshRenderTakes,
   renderSegments,
   renderStatus,
   renderTake,
+  saverCandidates,
   stopRender,
+  takeLocation,
   verifiedPredecessor,
 } from './director_render.js';
 import { applyDraft, openDirectorReview } from './director_review.js';
 import { DIRECTOR_STYLE } from './director_style.js';
-import { resourceId } from './media_selection.js';
 import { captureWorkbenchPrompt, executionTarget } from './settings_broadcast.js';
 import { generationTime, workbenchSessions } from './workbench_sessions.js';
 
@@ -802,11 +805,27 @@ function sequenceView(ui, doc, times) {
 function renderControls(ui, doc) {
   const seg = selected(doc);
   if (!seg) return el('div');
+  const savers = saverCandidates(ui.node);
   return el('section', { className: 'render-group' }, [
     el('div', { className: 'bar' }, [
       meta(`Selected · Segment ${String(doc.segments.indexOf(seg) + 1).padStart(2, '0')} · ${seg.intent || 'Untitled Segment'}`),
       launcher(ui, SEGMENT),
     ]),
+    // Shown only after a render found several savers behind Create Video.
+    ...(savers.length
+      ? [
+          ui.select(
+            'Video saver for renders',
+            ui.node.properties?.directorSaver ?? '',
+            [['', 'Choose a saver'], ...savers.map(({ id, type }) => [id, `${type} #${id}`])],
+            (id) => {
+              ui.node.properties ??= {};
+              ui.node.properties.directorSaver = id;
+              ui.node.graph?.change?.();
+            },
+          ),
+        ]
+      : []),
     row([
       action(ui, 'Render current segment', () => startRender(ui, false), ui.state.rendering),
       ui.button('Render remaining segments', () => startRender(ui, true), ui.state.rendering),
@@ -817,11 +836,7 @@ function renderControls(ui, doc) {
 
 function footageView(node, seg) {
   const take = renderTake(node, seg.id);
-  if (
-    take?.video?.type === 'output' &&
-    /^arisu_director\/[a-f0-9-]+$/.test(take.video.subfolder) &&
-    /^clip_\d+_\.(mp4|mov|webm|mkv)$/.test(take.video.filename)
-  )
+  if (takeLocation(take))
     return [
       el('details', {}, [
         el('summary', { textContent: 'Rendered Footage' }),
@@ -927,6 +942,31 @@ function invalidate(node) {
   stopRender(node, true);
 }
 registerSelectionOwner(TYPE, { fields: [['film_json', 0, clearLocations]], properties: ['directorRenders'], invalidate });
+// Film-order takes for other panels: locations come from saved receipts, statuses from the same checks the cards show.
+registerTakeSource(TYPE, (node) => {
+  const doc = read(node);
+  return {
+    label: `Director #${node.id}`,
+    segments: doc.segments.map((segment, index) => {
+      const take = renderTake(node, segment.id);
+      return {
+        segment: segment.id,
+        label: `${String(index + 1).padStart(2, '0')} · ${segment.intent || 'Untitled Segment'}`,
+        transition: segment.transition === 'continuation' ? 'continuation' : 'cut',
+        status: renderStatus(node, segment.id, doc),
+        take: takeLocation(take)
+          ? {
+              take: take.id,
+              root: 'output',
+              path: `${take.video.subfolder}/${take.video.filename}`,
+              revision: take.files?.video ?? '',
+              predecessor: take.predecessor ?? null,
+            }
+          : null,
+      };
+    }),
+  };
+});
 app.registerExtension({
   name: 'Arisu.MiniMaxH3.DirectorWorkbench',
   init: installSelectionGuards,

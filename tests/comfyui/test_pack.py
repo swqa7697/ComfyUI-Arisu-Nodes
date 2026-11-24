@@ -45,6 +45,8 @@ EXPECTED_NODE_IDS = [
     "ArisuPreviewSaveImageUpscale",
     "ArisuLoadImage",
     "ArisuResizeImage",
+    "ArisuSaveVideoSegment",
+    "ArisuAssembleVideo",
 ]
 
 

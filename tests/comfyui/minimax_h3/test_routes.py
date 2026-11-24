@@ -60,6 +60,17 @@ def test_resource_routes_browse_probe_ranges_and_reject_untrusted_inputs(tmp_pat
             assert set(revisions) == {"video", "latent"}
             video.write_bytes(b"another take")
             assert (await (await client.get(endpoint, params=params)).json())["video"] != revisions["video"]
+            # A project keeps its takes under <project>/director/<take>, with whatever counter the saver claimed.
+            project = {"take": take, "video": "clip_00002_.mp4", "project": "films/night shoot"}
+            staged = tmp_path / "output" / "films" / "night shoot" / "director" / take
+            staged.mkdir(parents=True)
+            (staged / "clip_00002_.mp4").write_bytes(b"render")
+            (staged / "clip_00001.safetensors").write_bytes(b"latent")
+            assert set(await (await client.get(endpoint, params=project)).json()) == {"video", "latent"}
+            # The video stays available for assembly after its latent is removed; continuation needs both.
+            (staged / "clip_00001.safetensors").unlink()
+            assert set(await (await client.get(endpoint, params=project)).json()) == {"video"}
+            assert (await client.get(endpoint, params={**project, "project": "../films"})).status == 400
             latent.unlink()
             latent.symlink_to(outside)
             assert (await client.get(endpoint, params=params)).status == 400

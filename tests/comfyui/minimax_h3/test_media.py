@@ -10,8 +10,9 @@ import numpy as np
 import pytest
 from PIL import Image
 
+from src.arisu_nodes.common.media import StaleResource, UnsupportedMedia
 from src.arisu_nodes.minimax_h3.core import Resource
-from src.arisu_nodes.minimax_h3.media import StaleResource, UnsupportedMedia, metadata, poster, read_audio, read_video, validate_source
+from src.arisu_nodes.minimax_h3.media import metadata, poster, read_audio, read_video, validate_source
 from tests.support.media import make_audio, make_av, make_video
 
 pytestmark = pytest.mark.comfyui

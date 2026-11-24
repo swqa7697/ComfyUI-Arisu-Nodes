@@ -3,16 +3,15 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import uuid
-from typing import Any, Dict
-from urllib.parse import urlsplit
+from typing import Any
 
 import execution
 import folder_paths
 from aiohttp import web
 
+from ..common.http import body
 from ..common.paths import image_roots
 from . import workbench_execution
 from .agent_docker import AgentBusy
@@ -21,27 +20,6 @@ from .director_task import DIRECTOR_SKILL, DirectorTask, writing_catalog
 from .workbench import Workbench, skill_catalog
 
 logger = logging.getLogger(__name__)
-MAX_BODY = 1024 * 1024
-
-
-async def body(request: web.Request) -> Dict[str, Any]:
-    """Require same-origin JSON and count streamed request bytes."""
-    origin = request.headers.get("Origin")
-    if origin and urlsplit(origin).netloc != request.host:
-        raise web.HTTPForbidden(text="Cross-origin Workbench requests are refused")
-    if request.headers.get("Sec-Fetch-Site") not in (None, "same-origin", "none"):
-        raise web.HTTPForbidden(text="Cross-origin Workbench requests are refused")
-    if request.content_type != "application/json":
-        raise web.HTTPUnsupportedMediaType(text="JSON required")
-    content = bytearray()
-    async for chunk in request.content.iter_chunked(65536):
-        content.extend(chunk)
-        if len(content) > MAX_BODY:
-            raise web.HTTPRequestEntityTooLarge(max_size=MAX_BODY, actual_size=len(content))
-    value = json.loads(content)
-    if not isinstance(value, dict):
-        raise TypeError("expected a JSON object")
-    return value
 
 
 def register_routes(server: Any, owner: Workbench):

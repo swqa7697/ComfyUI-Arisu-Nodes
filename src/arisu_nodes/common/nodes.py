@@ -6,15 +6,23 @@ Importing this module requires ComfyUI's source tree and virtual environment
 
 from __future__ import annotations
 
+import json
+import logging
 import os
-from typing import List, Optional, Tuple, Type, Union
+import posixpath
+from dataclasses import replace
+from datetime import datetime, timezone
+from typing import Any, Dict, Iterator, List, Optional, Tuple, Type, Union
 
+import comfy.model_management
 import comfy.utils
 import folder_paths
 import node_helpers
 import numpy as np
 import torch
-from comfy_api.latest import io, ui
+from comfy.cli_args import args
+from comfy_api.latest import Input, InputImpl, io, ui
+from comfy_execution.graph_utils import ExecutionBlocker
 from PIL import ImageColor, ImageOps
 
 from .core import (
@@ -39,7 +47,36 @@ from .core import (
     resolve_image_path,
     tail_start,
 )
+from .media import revision_for
 from .paths import image_roots, select_root
+from .video import (
+    AAC_RATES,
+    CODECS,
+    COLOR_SPACES,
+    EMPTY_EDIT,
+    LAYOUTS,
+    TAKE_AUDIO,
+    director_take_id,
+    embedded_samples,
+    exact_rate,
+    ffmetadata,
+    new_take_id,
+    parse_edit,
+    parse_export_request,
+    parse_job,
+    parse_take_context,
+    resolve_take_prefix,
+    take_record,
+    take_summary,
+    validate_encoding,
+    wav_header,
+)
+from .video_ffmpeg import encode_take_argv
+from .video_jobs import count_samples, detect_tools, export_film, feed, log_fallback, probe_path, select_encoder
+from .video_store import Reservation, discard_take, publish_take, reserve_take
+from .video_worker import write_take
+
+logger = logging.getLogger(__name__)
 
 UPSCALE_MODELS_FOLDER = "upscale_models"
 _PATH_TOOLTIP = (
@@ -711,6 +748,440 @@ class ArisuResizeImage(io.ComfyNode):
         return True if error is None else error
 
 
+_FRAME_CHUNK = 16
+_SAMPLE_CHUNK = 1 << 20
+_PROJECT_TOOLTIP = (
+    "The project directory under ComfyUI's output directory, for example the output of Arisu Path Builder. "
+    "Takes go to <project>/videos/. Blank uses 'arisu_video'. Absolute paths and '..' are refused."
+)
+_CODEC_TOOLTIP = "The video codec of the saved MP4. Each encoder has its own CRF scale."
+_CRF_TOOLTIP = "Constant quality: lower is better and larger. H.264 and H.265 accept 0-51, AV1 accepts 0-63. Suggested: 18, 20, 24."
+
+
+def _frame_arrays(images: torch.Tensor, deep: bool) -> Iterator[np.ndarray]:
+    """Yield packed RGB frames ``[n, H, W, 3]`` a few at a time, so a long take is never converted in one allocation."""
+    for start in range(0, images.shape[0], _FRAME_CHUNK):
+        chunk = images[start : start + _FRAME_CHUNK, ..., :3].float()
+        if deep:
+            yield (chunk * 65535.0).round().clamp(0, 65535).cpu().numpy().astype("<u2")
+        else:
+            yield (chunk * 255.0).round().clamp(0, 255).to(torch.uint8).cpu().numpy()
+
+
+def _write_pcm(path: str, waveform: torch.Tensor, rate: int):
+    """Write the delivered waveform ``[C, T]`` as interleaved 32-bit float PCM at its native rate and layout."""
+    channels, samples = waveform.shape
+    with open(path, "xb") as handle:
+        handle.write(wav_header(channels, rate, samples))
+        handle.writelines(
+            waveform[:, start : start + _SAMPLE_CHUNK].T.float().contiguous().cpu().numpy().astype("<f4").tobytes()
+            for start in range(0, samples, _SAMPLE_CHUNK)
+        )
+
+
+def _container_tags(cls: Type[io.ComfyNode]) -> Dict[str, str]:
+    """The workflow tags stock Save Video embeds, in the same JSON encoding."""
+    if args.disable_metadata:
+        return {}
+    values: Dict[str, Any] = dict(getattr(cls.hidden, "extra_pnginfo", None) or {})
+    prompt = getattr(cls.hidden, "prompt", None)
+    if prompt is not None:
+        values["prompt"] = prompt
+    return {key: json.dumps(value) for key, value in values.items()}
+
+
+class ArisuSaveVideoSegment(io.ComfyNode):
+    """Save one rendered segment as a take: a playable MP4, its record and, with sound, float PCM.
+
+    Every run claims a new counter, so an earlier candidate is never replaced. ``take.json`` is published
+    last and makes the take visible to **Arisu Assemble Video**; a failed or interrupted run leaves nothing.
+    """
+
+    @classmethod
+    def define_schema(cls) -> io.Schema:
+        """Declare the node's id, category, inputs and outputs.
+
+        Returns:
+            The output-node schema with the video, the take location and the encoding choice.
+        """
+        return io.Schema(
+            node_id="ArisuSaveVideoSegment",
+            display_name="Save Video Segment",
+            category="Arisu Nodes/Common",
+            search_aliases=["save video", "save take", "video segment", "save clip"],
+            description=(
+                "Save a video as a new take under a project: an MP4, a take record and, with sound, the waveform as "
+                "float PCM for assembly. Connect it after Create Video."
+            ),
+            inputs=[
+                io.Video.Input("video", tooltip="The delivered segment: its frames and sound are saved as they are."),
+                io.String.Input("project_prefix", default="", tooltip=_PROJECT_TOOLTIP),
+                io.String.Input("clip_name", default="clip", tooltip="The file name stem inside <project>/videos/."),
+                io.String.Input(
+                    "filename_prefix",
+                    default="",
+                    tooltip=(
+                        "Compatibility: a complete directory and file name stem relative to output, as Save Video takes it. "
+                        "When set it replaces clip_name, and it must be inside project_prefix when both are given."
+                    ),
+                ),
+                io.Combo.Input("codec", options=list(CODECS), default="h264", tooltip=_CODEC_TOOLTIP),
+                io.Int.Input("crf", default=18, min=0, max=63, tooltip=_CRF_TOOLTIP),
+                io.String.Input("take_context", default="", socketless=True, tooltip="Set by Director renders; leave blank."),
+            ],
+            outputs=[io.Video.Output("video", tooltip="The input video, unchanged.")],
+            hidden=[io.Hidden.prompt, io.Hidden.extra_pnginfo],
+            is_output_node=True,
+        )
+
+    @classmethod
+    def validate_inputs(
+        cls,
+        project_prefix: Optional[str] = None,
+        clip_name: Optional[str] = None,
+        filename_prefix: Optional[str] = None,
+        codec: Optional[str] = None,
+        crf: Optional[int] = None,
+        take_context: Optional[str] = None,
+    ) -> Union[bool, str]:
+        """Refuse a bad destination or quality before anything upstream runs.
+
+        Args:
+            project_prefix: The widget value; ``None`` when fed by a link, which is checked at execution instead.
+            clip_name: Likewise.
+            filename_prefix: Likewise.
+            codec: Likewise.
+            crf: Likewise.
+            take_context: Likewise.
+
+        Returns:
+            ``True`` when the run can go ahead, otherwise the error to show.
+        """
+        try:
+            if codec is not None and crf is not None:
+                validate_encoding(codec, crf)
+            if None not in (project_prefix, clip_name, filename_prefix):
+                resolve_take_prefix(project_prefix, clip_name, filename_prefix, 2, 2, datetime.now())
+            if take_context is not None:
+                parse_take_context(take_context)
+        except (TypeError, ValueError) as error:
+            return str(error)
+        return True
+
+    @classmethod
+    def execute(
+        cls, video: Input.Video, project_prefix: str, clip_name: str, filename_prefix: str, codec: str, crf: int, take_context: str
+    ) -> io.NodeOutput:
+        """Encode, measure and publish one take.
+
+        Args:
+            video: The segment to save.
+            project_prefix: The project directory relative to output.
+            clip_name: The stem inside ``<project>/videos/``.
+            filename_prefix: An optional complete compatibility prefix.
+            codec: ``h264``, ``h265`` or ``av1``.
+            crf: The quality on the selected encoder's scale.
+            take_context: Optional Director provenance as JSON.
+
+        Returns:
+            The unchanged video, with the stock video preview and the take summary as ui.
+        """
+        spec = validate_encoding(codec, crf)
+        context = parse_take_context(take_context)
+        components = video.get_components()
+        images = components.images
+        frames, height, width = (int(size) for size in images.shape[:3])
+        if frames < 1 or width % 2 or height % 2:
+            raise ValueError("a take needs at least one frame and an even width and height")
+        fps = exact_rate(components.frame_rate)
+        waveform = components.audio["waveform"][0] if components.audio else None
+        rate = int(components.audio["sample_rate"]) if components.audio else 0
+        if waveform is not None and waveform.shape[-1] == 0:
+            waveform = None
+        if waveform is not None and (waveform.shape[0] not in LAYOUTS or rate not in AAC_RATES):
+            raise ValueError("audio must be mono, stereo or 5.1 at a standard sample rate")
+        deep = video.get_bit_depth() > 8
+        chroma = video.get_chroma_subsampling() or "420"
+        if chroma not in spec.chroma:
+            logger.warning("%s does not support %s chroma subsampling; saving as 4:2:0", codec, chroma)
+            chroma = "420"
+        if images.shape[-1] == 4 or components.alpha is not None:
+            logger.warning("MP4 takes have no alpha channel; it is discarded")
+        pix_fmt = f"yuv{chroma}p" + ("10le" if deep else "")
+        color = COLOR_SPACES.get(video.get_color_space() or "sRGB", COLOR_SPACES["sRGB"])
+        tools = detect_tools()
+        encoder = select_encoder(tools, codec)
+        target = resolve_take_prefix(project_prefix, clip_name, filename_prefix, width, height, datetime.now())
+        reservation = reserve_take(folder_paths.get_output_directory(), target.directory, target.stem)
+        try:
+            audio_part = reservation.part("audio.wav.part")
+            if waveform is not None:
+                _write_pcm(audio_part, waveform, rate)
+            tags = _container_tags(cls)
+            progress = comfy.utils.ProgressBar(frames)
+
+            def chunks() -> Iterator[np.ndarray]:
+                for chunk in _frame_arrays(images, deep):
+                    yield chunk
+                    progress.update(_FRAME_CHUNK)
+
+            limit = embedded_samples(frames, fps, rate, int(waveform.shape[-1])) if waveform is not None else 0
+            interrupted = comfy.model_management.throw_exception_if_processing_interrupted
+            if tools.ffmpeg is None:
+                log_fallback("save", codec)
+                write_take(
+                    reservation.part("video.part"),
+                    chunks(),
+                    width=width,
+                    height=height,
+                    fps=fps,
+                    deep=deep,
+                    pix_fmt=pix_fmt,
+                    color=color,
+                    encoder=encoder,
+                    crf=crf,
+                    waveform=None if waveform is None else waveform.float().cpu().numpy(),
+                    rate=rate,
+                    limit=limit,
+                    tags=tags,
+                    check=interrupted,
+                )
+            else:
+                if tags:
+                    with open(reservation.part("metadata.part"), "x", encoding="utf-8") as handle:
+                        handle.write(ffmetadata(tags))
+                feed(
+                    encode_take_argv(
+                        tools.ffmpeg,
+                        width=width,
+                        height=height,
+                        fps=fps,
+                        deep=deep,
+                        pix_fmt=pix_fmt,
+                        color=color,
+                        encoder=encoder,
+                        crf=crf,
+                        audio=None if waveform is None else (audio_part, limit, int(waveform.shape[0])),
+                        metadata=reservation.part("metadata.part") if tags else None,
+                        output=reservation.part("video.part"),
+                    ),
+                    (chunk.tobytes() for chunk in chunks()),
+                    interrupted,
+                )
+            measured = probe_path(reservation.part("video.part"), tools)
+            if measured.video is None or measured.video.frames != frames or measured.video.start != 0 or not measured.video.constant:
+                raise RuntimeError("the encoded take does not match the delivered frames")
+            embedded = count_samples(reservation.part("video.part"), int(waveform.shape[0]), tools) if waveform is not None else 0
+            saved = replace(measured.video, codec=spec.probe_name, fps=fps, pix_fmt=pix_fmt, color=("tv", color[2], color[0], color[1]))
+            record = publish_take(
+                reservation,
+                waveform is not None,
+                lambda video_path, audio_path: cls._record(
+                    reservation,
+                    target.directory,
+                    target.project,
+                    context,
+                    saved,
+                    encoder,
+                    crf,
+                    tools.backend,
+                    waveform,
+                    rate,
+                    embedded,
+                    audio_path,
+                ),
+            )
+        except BaseException:
+            discard_take(reservation)
+            raise
+        preview = ui.PreviewVideo([ui.SavedResult(reservation.name + ".mp4", target.directory, io.FolderType.output)]).as_dict()
+        preview["arisu_take"] = [take_summary(record)]
+        return io.NodeOutput(video, ui=preview)
+
+    @classmethod
+    def _record(
+        cls,
+        reservation: Reservation,
+        directory: str,
+        project: Optional[str],
+        context: Dict[str, Optional[str]],
+        video: Any,
+        encoder: str,
+        crf: int,
+        backend: str,
+        waveform: Optional[torch.Tensor],
+        rate: int,
+        embedded: int,
+        audio_path: Optional[str],
+    ) -> Dict[str, Any]:
+        """Describe the published files; revisions are read from the final names."""
+        info = os.stat(reservation.video)
+        audio = None
+        if waveform is not None and audio_path is not None:
+            pcm = os.stat(audio_path)
+            audio = {
+                "rate": rate,
+                "channels": int(waveform.shape[0]),
+                "layout": LAYOUTS[int(waveform.shape[0])],
+                "samples": int(waveform.shape[-1]),
+                "embedded": {"codec": "aac", "samples": embedded, "start": 0},
+                "pcm": {
+                    "root": "output",
+                    "path": posixpath.join(directory, reservation.name + ".arisu", TAKE_AUDIO),
+                    "revision": revision_for(pcm),
+                    "size": pcm.st_size,
+                    "format": "f32le",
+                },
+            }
+        return take_record(
+            take=director_take_id(directory) or new_take_id(),
+            created=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            project=project,
+            context=context,
+            path=posixpath.join(directory, reservation.name + ".mp4"),
+            revision=revision_for(info),
+            size=info.st_size,
+            video=video,
+            encoder=encoder,
+            crf=crf,
+            audio=audio,
+            backend=backend,
+        )
+
+
+class ArisuAssembleVideo(io.ComfyNode):
+    """Export the workflow's edit list of saved takes as one film, only when the panel asks for it.
+
+    An ordinary run carries no export request and writes nothing. The panel's Export button queues this
+    node alone with a one-shot request ID; that run measures the selected files, plans the picture and
+    sample timeline, and publishes ``<project>/exports/<name>_<counter>/`` with the film and its record.
+    """
+
+    @classmethod
+    def define_schema(cls) -> io.Schema:
+        """Declare the node's id, category, inputs and outputs.
+
+        Returns:
+            The output-node schema with the project, the export name, the encoding choice and the hidden edit state.
+        """
+        return io.Schema(
+            node_id="ArisuAssembleVideo",
+            display_name="Assemble Video",
+            category="Arisu Nodes/Common",
+            search_aliases=["assemble video", "edit list", "join clips", "export film", "concatenate video"],
+            description=(
+                "Select saved takes, order them and export one film on an exact frame and sample timeline. "
+                "A run exports nothing; use the panel's Export button."
+            ),
+            inputs=[
+                io.String.Input("project_prefix", default="", tooltip=_PROJECT_TOOLTIP),
+                io.String.Input("export_name", default="main", tooltip="Each export creates <project>/exports/<name>_<counter>/."),
+                io.Combo.Input(
+                    "encoding",
+                    options=["inherit", "encode"],
+                    default="inherit",
+                    tooltip="inherit copies compatible video without loss; encode writes the selected codec and CRF.",
+                ),
+                io.Combo.Input("codec", options=list(CODECS), default="h264", tooltip=_CODEC_TOOLTIP),
+                io.Int.Input("crf", default=18, min=0, max=63, tooltip=_CRF_TOOLTIP),
+                io.String.Input("edit_json", default=EMPTY_EDIT, socketless=True, tooltip="The edit list, managed by the panel."),
+                io.String.Input("export_request", default="", socketless=True, tooltip="Set by the Export button; leave blank."),
+            ],
+            outputs=[
+                io.Video.Output("video", tooltip="The exported film. Blocked on a run without an export request."),
+                io.String.Output("path", tooltip="The film's path relative to ComfyUI's output directory."),
+                io.String.Output("record", tooltip="The export record (sequence.json) as text."),
+            ],
+            is_output_node=True,
+        )
+
+    @classmethod
+    def validate_inputs(
+        cls,
+        project_prefix: Optional[str] = None,
+        export_name: Optional[str] = None,
+        encoding: Optional[str] = None,
+        codec: Optional[str] = None,
+        crf: Optional[int] = None,
+        edit_json: Optional[str] = None,
+        export_request: Optional[str] = None,
+    ) -> Union[bool, str]:
+        """Refuse malformed edit state or settings before anything upstream runs.
+
+        Args:
+            project_prefix: The widget value; ``None`` when fed by a link, which is checked at execution instead.
+            export_name: Likewise.
+            encoding: Likewise.
+            codec: Likewise.
+            crf: Likewise.
+            edit_json: Likewise.
+            export_request: Likewise.
+
+        Returns:
+            ``True`` when the run can go ahead, otherwise the error to show.
+        """
+        try:
+            if None not in (project_prefix, export_name, encoding, codec, crf):
+                parse_export_request(project_prefix, export_name, encoding, codec, crf)
+            if edit_json is not None:
+                parse_edit(edit_json)
+            if export_request is not None:
+                parse_job(export_request)
+        except (TypeError, ValueError) as error:
+            return str(error)
+        return True
+
+    @classmethod
+    def execute(
+        cls, project_prefix: str, export_name: str, encoding: str, codec: str, crf: int, edit_json: str, export_request: str
+    ) -> io.NodeOutput:
+        """Report the resolved project, and export a film when the run carries an export request.
+
+        Args:
+            project_prefix: The project directory relative to output.
+            export_name: The export's name inside ``<project>/exports/``.
+            encoding: ``inherit`` or ``encode``.
+            codec: The target codec when a video encode is needed.
+            crf: The quality on that codec's scale.
+            edit_json: The edit list document.
+            export_request: Blank on an ordinary run, otherwise this export's one-shot ID.
+
+        Returns:
+            Blocked outputs and the project on an ordinary run; otherwise the film, its path and its record.
+        """
+        request = parse_export_request(project_prefix, export_name, encoding, codec, crf)
+        document = parse_edit(edit_json)
+        job = parse_job(export_request)
+        if not job:
+            blocked = ExecutionBlocker(None)
+            return io.NodeOutput(blocked, blocked, blocked, ui={"arisu_project": [request.project]})
+        bar: Dict[str, Any] = {}
+
+        def progress(frame: int, total: int):
+            bar.setdefault("bar", comfy.utils.ProgressBar(total)).update_absolute(min(frame, total), total)
+
+        roots = image_roots(folder_paths.get_input_directory(), folder_paths.get_output_directory())
+        record = export_film(
+            roots, request, document, job, detect_tools(), comfy.model_management.throw_exception_if_processing_interrupted, progress
+        )
+        film = record["film"]["path"]
+        result = ui.PreviewVideo([ui.SavedResult(posixpath.basename(film), posixpath.dirname(film), io.FolderType.output)]).as_dict()
+        result["arisu_project"] = [request.project]
+        result["arisu_export"] = [
+            {
+                "request": job,
+                "path": film,
+                "name": record["name"],
+                "counter": record["counter"],
+                "frames": record["video"]["frames"],
+                "samples": record["audio"]["samples"] if record["audio"] else None,
+                "duration": record["video"]["frames"] * record["video"]["fps"][1] / record["video"]["fps"][0],
+            }
+        ]
+        absolute = os.path.join(roots["output"], *film.split("/"))
+        return io.NodeOutput(InputImpl.VideoFromFile(absolute), film, json.dumps(record, ensure_ascii=False), ui=result)
+
+
 NODES: List[Type[io.ComfyNode]] = [
     ArisuPathBuilder,
     ArisuExtractLastImages,
@@ -718,4 +1189,6 @@ NODES: List[Type[io.ComfyNode]] = [
     ArisuPreviewSaveImageUpscale,
     ArisuLoadImage,
     ArisuResizeImage,
+    ArisuSaveVideoSegment,
+    ArisuAssembleVideo,
 ]

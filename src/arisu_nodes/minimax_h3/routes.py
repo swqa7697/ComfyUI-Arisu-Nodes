@@ -18,9 +18,10 @@ import folder_paths
 from aiohttp import web
 
 from ..common.core import PREVIEW_CONTENT_TYPE, browse_directory, contained_path, image_content_type, is_animated_image, relative_path
+from ..common.media import StaleResource, UnsupportedMedia, revision_for, source_path
 from ..common.paths import image_roots, select_root
 from .core import Resource, media_kind
-from .media import StaleResource, UnsupportedMedia, metadata, poster, revision_for, source_path
+from .media import metadata, poster
 from .proxies import ProxyBusy, ProxyJob, ProxyManager
 
 logger = logging.getLogger(__name__)
@@ -122,19 +123,24 @@ def listing(root: str, path: str, tree: bool) -> Dict[str, Any]:
     }
 
 
-def director_take(output_root: str, take: str, video: str) -> Dict[str, str]:
-    """Identify both finished artifacts of one Director render inside the output root."""
+def director_take(output_root: str, take: str, video: str, project: str = "") -> Dict[str, str]:
+    """Identify the finished artifacts of one Director render inside the output root.
+
+    A project selects ``<project>/director/<take>``; without one the original ``arisu_director/<take>`` is read.
+    The video alone keeps a take available for assembly, so a removed latent still reports the video.
+    """
     if str(uuid.UUID(take)) != take or not re.fullmatch(r"clip_[0-9]{5,}_\.(?:mp4|webm|mov|mkv)", video):
         raise ValueError("invalid Director take")
-    revisions = {}
-    for kind, filename in (("latent", "clip_00001.safetensors"), ("video", video)):
-        path = contained_path(output_root, f"arisu_director/{take}/{filename}")
+    directory = f"{relative_path(project)}/director/{take}" if project else f"arisu_director/{take}"
+    revisions: Dict[str, str] = {}
+    for kind, filename in (("video", video), ("latent", "clip_00001.safetensors")):
+        path = contained_path(output_root, f"{directory}/{filename}")
         try:
             info = os.stat(path)
         except FileNotFoundError:
-            return {}
+            break
         if not stat.S_ISREG(info.st_mode) or not info.st_size:
-            return {}
+            break
         revisions[kind] = revision_for(info)
     return revisions
 
@@ -204,8 +210,9 @@ def register_routes(routes: web.RouteTableDef, app: Optional[web.Application] = 
 
     @route("GET", "/director-take")
     async def inspect_director_take(request: web.Request) -> web.Response:
+        query = request.query
         result = await bounded(
-            director_take, folder_paths.get_output_directory(), request.query.get("take", ""), request.query.get("video", "")
+            director_take, folder_paths.get_output_directory(), query.get("take", ""), query.get("video", ""), query.get("project", "")
         )
         return web.json_response(result, headers={**HEADERS, "Cache-Control": "no-store"})
 

@@ -6,9 +6,10 @@ import hashlib
 import os
 from typing import Any, Dict, Mapping, Optional, Tuple
 
+from ..common.media import revision_for, source_file
 from .core import Resource, ResourceBundle, VideoSettings
 from .director import asset_resource, parse_document, prompt_tags, segment_bindings, segment_snapshot
-from .media import apply_selection, metadata, revision_for, source_file, validate_source, validate_workbench_source
+from .media import apply_selection, metadata, validate_source, validate_workbench_source
 
 
 def _resolve(

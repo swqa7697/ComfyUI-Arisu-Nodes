@@ -1,13 +1,19 @@
 // Each successful take has its own output directory. The next segment consumes that exact latent.
 import { api } from '../../../../scripts/api.js';
 import { app } from '../../../../scripts/app.js';
+import { joinPath, resolveString } from '../common/prompt_paths.js';
+import { resourceId } from '../common/shared.js';
 import { readDocument, timing } from './director_document.js';
-import { resourceId } from './media_selection.js';
 import { executionTarget } from './settings_broadcast.js';
 
 const DIRECTOR = 'ArisuMiniMaxH3DirectorWorkbench';
+const ARISU_SAVER = 'ArisuSaveVideoSegment';
+const SAVERS = ['SaveVideo', ARISU_SAVER];
+const LEGACY = 'arisu_director';
 const active = new WeakMap();
+// Per node: take id -> the first artifact found missing ('video' or 'latent').
 const missingTakes = new WeakMap();
+const saverChoices = new WeakMap();
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const delay = () => new Promise((resolve) => setTimeout(resolve, 1200));
 
@@ -69,7 +75,8 @@ export function renderStatus(node, segmentId, doc) {
   if (node.properties?.directorRenders?.pending?.segment === segmentId) return 'Awaiting render result';
   const take = renderTake(node, segmentId);
   if (!take) return 'Pending';
-  if (missingTakes.get(node)?.has(take.id)) return 'Output unavailable';
+  const missing = missingTakes.get(node)?.get(take.id);
+  if (missing === 'video') return 'Output unavailable';
   if (
     doc &&
     !currentTake(
@@ -79,7 +86,13 @@ export function renderStatus(node, segmentId, doc) {
     )
   )
     return 'Needs rerender';
-  return 'Rendered';
+  // The footage still plays and assembles; only the next continuation needs this latent.
+  return missing === 'latent' ? 'Latent removed' : 'Rendered';
+}
+
+/** Savers wired to Create Video when Director needs a choice; empty when the saver is unambiguous. */
+export function saverCandidates(node) {
+  return saverChoices.get(node) ?? [];
 }
 
 async function request(path, init) {
@@ -96,26 +109,56 @@ async function request(path, init) {
   return response.json();
 }
 
+/**
+ * Where a receipt's files live: `arisu_director/<take>` or `<project>/director/<take>`.
+ *
+ * The directory comes from the saved outputs, never from a predicted prefix, so an
+ * expanded placeholder or a later video counter still resolves. Returns null for a
+ * receipt whose files do not belong to its take.
+ */
+export function takeLocation(take) {
+  const video = take?.video;
+  if (!uuid.test(take?.id ?? '') || video?.type !== 'output' || !/^clip_\d{5,}_\.(mp4|mov|webm|mkv)$/.test(video.filename ?? ''))
+    return null;
+  const dir = String(video.subfolder ?? '');
+  const suffix = `/director/${take.id}`;
+  let project;
+  if (dir === `${LEGACY}/${take.id}`) project = '';
+  else if (dir.endsWith(suffix) && dir.length > suffix.length) project = dir.slice(0, -suffix.length);
+  else return null;
+  if (take.latent && (take.latent.subfolder !== dir || take.latent.filename !== 'clip_00001.safetensors')) return null;
+  return { project, dir };
+}
+
 async function inspect(take) {
-  if (!uuid.test(take.id) || !/^clip_\d{5,}_\.(mp4|mov|webm|mkv)$/.test(take.video?.filename)) throw new Error('Invalid saved take.');
-  const dir = `arisu_director/${take.id}`;
-  if (take.video.subfolder !== dir || take.latent?.subfolder !== dir || take.latent?.filename !== 'clip_00001.safetensors')
-    throw new Error('Saved outputs do not belong to this take.');
-  return request(`/arisu/resources/director-take?take=${take.id}&video=${take.video.filename}`);
+  const location = takeLocation(take);
+  if (!location) throw new Error('Saved outputs do not belong to this take.');
+  const query = new URLSearchParams({ take: take.id, video: take.video.filename });
+  if (location.project) query.set('project', location.project);
+  return request(`/arisu/resources/director-take?${query}`);
+}
+
+/** The video alone makes a take usable for assembly; a continuation also needs its latent. */
+async function availability(take) {
+  const result = await inspect(take);
+  const video = Boolean(result.video && result.video === take.files?.video);
+  return { video, latent: video && Boolean(take.latent && result.latent && result.latent === take.files?.latent) };
 }
 
 async function available(take) {
-  const result = await inspect(take);
-  return Boolean(result.latent && result.video && result.latent === take.files?.latent && result.video === take.files?.video);
+  return (await availability(take)).latent;
 }
 
 /** Probe saved receipts when a trusted workflow reopens; never infer completion from a filename. */
 export async function refreshRenderTakes(node, doc, onChange = () => {}) {
-  const missing = new Set();
+  const missing = new Map();
   missingTakes.set(node, missing);
   for (const segment of doc.segments) {
     const take = renderTake(node, segment.id);
-    if (take && !(await available(take))) missing.add(take.id);
+    if (take) {
+      const found = await availability(take);
+      if (!found.latent) missing.set(take.id, found.video ? 'latent' : 'video');
+    }
     if (missingTakes.get(node) !== missing) return;
   }
   onChange();
@@ -132,7 +175,7 @@ export async function verifiedPredecessor(node, doc, segmentId) {
   return `${previous.latent.subfolder}/${previous.latent.filename}`;
 }
 
-function chain(graph, director) {
+function chain(graph, director, node) {
   const unique = (type) => {
     const matches = Object.entries(graph).filter(([, item]) => item.class_type === type);
     if (matches.length !== 1) throw new Error(`Use the Director workflow with one ${type}.`);
@@ -143,7 +186,6 @@ function chain(graph, director) {
   const loader = unique('MiniMaxH3MotionContextLoadLatent');
   const saveLatent = unique('MiniMaxH3MotionContextSaveLatent');
   const trim = unique('MiniMaxH3MotionContextTrim');
-  const saveVideo = unique('SaveVideo');
   function wire(target, input, source, slot) {
     const link = graph[target]?.inputs?.[input];
     if (!Array.isArray(link) || String(link[0]) !== source || link[1] !== slot)
@@ -155,7 +197,14 @@ function chain(graph, director) {
   wire(motion, 'latent', hybrid, 1);
   wire(trim, 'trim_frames', motion, 1);
   const video = unique('CreateVideo');
-  wire(saveVideo, 'video', video, 0);
+  const savers = Object.keys(graph).filter((id) => {
+    const link = graph[id].inputs?.video;
+    return SAVERS.includes(graph[id].class_type) && Array.isArray(link) && String(link[0]) === video && link[1] === 0;
+  });
+  saverChoices.set(node, savers.length > 1 ? savers.map((id) => ({ id, type: graph[id].class_type })) : []);
+  if (!savers.length) throw new Error('Connect Create Video to Save Video or Save Video Segment.');
+  const saveVideo = savers.length > 1 ? String(node.properties?.directorSaver ?? '') : savers[0];
+  if (!savers.includes(saveVideo)) throw new Error('Several video savers follow Create Video. Choose the saver for Director renders.');
   wire(video, 'images', trim, 0);
   wire(video, 'audio', trim, 1);
   const samples = graph[saveLatent].inputs.latent;
@@ -171,12 +220,21 @@ function chain(graph, director) {
     wire(trim, name, decode, 0);
     wire(decode, 'samples', sampler, samples[1]);
   }
-  return { motion, loader, saveLatent, saveVideo };
+  return { motion, loader, saveLatent, saveVideo, saver: graph[saveVideo].class_type };
 }
 
-function configureMotion(graph, ids, segment, previous) {
+/** The project of an Arisu saver, read before the run; the stock saver and a blank project keep the legacy layout. */
+function projectOf(graph, ids) {
+  if (ids.saver !== ARISU_SAVER) return '';
+  const project = resolveString(graph, graph[ids.saveVideo].inputs.project_prefix);
+  if (project.unresolved)
+    throw new Error('Director cannot read the project of Save Video Segment before the run. Type it there or connect Path Builder.');
+  return joinPath([project.value]);
+}
+
+function configureMotion(graph, ids, segment, previous, base = LEGACY) {
   Object.assign(graph[ids.loader].inputs, {
-    latent_path: previous ?? 'arisu_director',
+    latent_path: previous ?? base,
     clip_index: previous ? 1 : 0,
     folder: 'output',
     stock_format: false,
@@ -203,7 +261,7 @@ export function installDirectorQueue(views) {
       const doc = readDocument(input.inputs.film_json);
       const segment = doc.segments.find((item) => item.id === doc.selected);
       if (!segment) continue;
-      const ids = chain(prompt.output, String(id));
+      const ids = chain(prompt.output, String(id), node);
       const previous = segment.transition === 'continuation' ? await verifiedPredecessor(node, doc, segment.id) : null;
       configureMotion(prompt.output, ids, segment, previous);
     }
@@ -294,7 +352,8 @@ export async function renderSegments(node, document, remaining, onProgress = () 
     const director = executionTarget(node)?.id;
     const prompt = await app.graphToPrompt();
     if (prompt.output[director]?.class_type !== DIRECTOR) throw new Error('The selected Director node is absent from this workflow.');
-    const ids = chain(prompt.output, String(director));
+    const ids = chain(prompt.output, String(director), node);
+    const project = projectOf(prompt.output, ids);
     for (const [index, segment] of doc.segments.entries()) {
       if (index < start || (!remaining && index !== start)) continue;
       if (owner.stopped) break;
@@ -302,22 +361,31 @@ export async function renderSegments(node, document, remaining, onProgress = () 
       const prior = currentTake(node, doc, index);
       if (prior && (remaining || prior.id === recovered?.id) && (await available(prior))) continue;
       const id = resourceId();
-      const prefix = `arisu_director/${id}/clip`;
+      const prefix = joinPath([project ? `${project}/director` : LEGACY, id, 'clip']);
+      const predecessor = previous ? renderTake(node, doc.segments[index - 1].id).id : null;
       const snapshotRevision = revision(doc, segment);
       if (snapshotRevision === null) throw new Error(`Segment ${segment.id} needs a generation length within the film limits.`);
       const graph = structuredClone(prompt.output);
       graph[director].inputs.film_json = JSON.stringify({ ...doc, selected: segment.id });
-      configureMotion(graph, ids, segment, previous);
+      configureMotion(graph, ids, segment, previous, project ? `${project}/director` : LEGACY);
       graph[ids.saveVideo].inputs.filename_prefix = prefix;
+      if (ids.saver === ARISU_SAVER)
+        graph[ids.saveVideo].inputs.take_context = JSON.stringify({
+          segment: segment.id,
+          predecessor,
+          transition: segment.transition === 'continuation' ? 'continuation' : 'cut',
+        });
       Object.assign(graph[ids.saveLatent].inputs, { filename_prefix: prefix, clip_index: 1 });
       if (owner.stopped) break;
       records.pending = {
         id,
         segment: segment.id,
         revision: snapshotRevision,
-        predecessor: previous ? renderTake(node, doc.segments[index - 1].id).id : null,
+        predecessor,
         saveVideo: ids.saveVideo,
         saveLatent: ids.saveLatent,
+        saver: ids.saver,
+        project,
       };
       changed(node);
       onProgress(`Rendering ${segment.id}`);

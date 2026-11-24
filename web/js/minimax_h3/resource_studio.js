@@ -5,8 +5,9 @@ import { savedCropRatio } from '../common/cropper.js';
 import { el } from '../common/dom.js';
 import { AUDIO_ICON, browseResources, closeBrowser, posterUrl, VIDEO_ICON, viewUrl } from '../common/resource_browser.js';
 import { installSelectionGuards, preservingSelections, registerSelectionOwner } from '../common/selection_context.js';
+import { resourceId } from '../common/shared.js';
 import { hideWidget } from '../common/widgets.js';
-import { cropFor, editMediaSelection, probe, resourceId } from './media_selection.js';
+import { cropFor, editMediaSelection, probe } from './media_selection.js';
 
 const TYPE = 'ArisuMiniMaxH3ResourceStudio';
 const EMPTY = '{"version":1,"keyframes":{"first":null,"last":null},"references":[]}';

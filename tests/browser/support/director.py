@@ -209,3 +209,132 @@ def inspect_render_recovery(page: Page, director_id: str, server: FixtureServer)
         page.unroute("**/api/prompt", submit)
         page.unroute("**/api/history/*", check_history)
         page.unroute("**/api/arisu/resources/director-take?*", check_file)
+
+
+def inspect_project_render(page: Page, server: FixtureServer, director_id: str):
+    """Render the film through Save Video Segment into a project, then lose one latent.
+
+    The saver's project comes from a wired Path Builder, so takes go to ``<project>/director/<take>``.
+    The receipts stay on the node afterwards for the assembly import.
+    """
+
+    def node(kind: str, **inputs: Any) -> Dict[str, Any]:
+        return {"class_type": kind, "inputs": inputs}
+
+    loader, save, latent, project = "previous", "save_segment", "save_latent", "films/night shoot"
+    output = {
+        director_id: node("ArisuMiniMaxH3DirectorWorkbench"),
+        "hybrid": node("ArisuMiniMaxH3HybridToVideo", prompt=[director_id, 0], video_settings=[director_id, 1], resources=[director_id, 2]),
+        loader: node("MiniMaxH3MotionContextLoadLatent"),
+        "motion": node("MiniMaxH3MotionContext", context_latent=[loader, 0], conditioning=["hybrid", 0], latent=["hybrid", 1]),
+        "sampler": node("KSampler", positive=["motion", 0], latent_image=["hybrid", 1]),
+        latent: node("MiniMaxH3MotionContextSaveLatent", latent=["sampler", 0]),
+        "picture": node("VAEDecode", samples=["sampler", 0]),
+        "sound": node("VAEDecodeAudio", samples=["sampler", 0]),
+        "trim": node("MiniMaxH3MotionContextTrim", images=["picture", 0], audio=["sound", 0], trim_frames=["motion", 1]),
+        "video": node("CreateVideo", images=["trim", 0], audio=["trim", 1]),
+        "paths": node("ArisuPathBuilder", segment_1="films", segment_2=" night shoot/"),
+        save: node(
+            "ArisuSaveVideoSegment",
+            video=["video", 0],
+            project_prefix=["paths", 0],
+            clip_name="clip",
+            filename_prefix="",
+            codec="h264",
+            crf=18,
+            take_context="",
+        ),
+    }
+    jobs: List[Dict[str, Any]] = []
+    history: Dict[str, Any] = {}
+    files: Dict[str, Any] = {}
+    asked: List[Dict[str, List[str]]] = []
+
+    def submit(route: Route):
+        if route.request.method != "POST":
+            route.fallback()
+            return
+        body = route.request.post_data_json
+        graph, key = body["prompt"], body["prompt_id"]
+        subfolder = f"{project}/director/{key}"
+        # One prefix reaches both savers; the project is read from Path Builder before the run.
+        assert graph[save]["inputs"]["filename_prefix"] == graph[latent]["inputs"]["filename_prefix"] == subfolder + "/clip"
+        assert graph[latent]["inputs"]["clip_index"] == 1 and set(body["partial_execution_targets"]) == {save, latent}
+        jobs.append({"id": key, "previous": graph[loader]["inputs"], "context": json.loads(graph[save]["inputs"]["take_context"])})
+        history[key] = {
+            "status": {"status_str": "success", "completed": True},
+            "outputs": {
+                # The saver claims its own counter, so the video is not assumed to be number one.
+                save: {"images": [{"type": "output", "subfolder": subfolder, "filename": "clip_00002_.mp4"}]},
+                latent: {"latents": [{"type": "output", "subfolder": subfolder, "filename": "clip_00001.safetensors"}]},
+            },
+        }
+        files[key] = {"video": "video-revision", "latent": "latent-revision"}
+        route.fulfill(json={"prompt_id": key})
+
+    def check_history(route: Route):
+        key = route.request.url.rsplit("/", 1)[1]
+        route.fulfill(json={key: history[key]} if key in history else {})
+
+    def check_file(route: Route):
+        query = parse_qs(urlsplit(route.request.url).query)
+        asked.append(query)
+        route.fulfill(json=files.get(query["take"][0], {}))
+
+    page.route("**/api/prompt", submit)
+    page.route("**/api/history/*", check_history)
+    page.route("**/api/arisu/resources/director-take?*", check_file)
+    page.evaluate(
+        """async graph => {
+        const {app}=await import('/scripts/app.js');
+        const toPrompt=app.graphToPrompt;
+        window.directorProjectGraph=graph;
+        window.restoreDirectorFixture=()=>{app.graphToPrompt=toPrompt;};
+        app.graphToPrompt=async()=>({output:graph});
+    }""",
+        output,
+    )
+    try:
+        first = page.get_by_role("button", name="01 Launch the paper boat", exact=False)
+        second = page.get_by_role("button", name="02 Follow the boat", exact=False)
+        first.click()
+        page.keyboard.press("Escape")
+        page.get_by_role("button", name="Render remaining segments", exact=True).click()
+        expect(first).to_contain_text("Rendered")
+        expect(second).to_contain_text("Rendered")
+        assert len(jobs) == 2
+        launch, follow = jobs
+        assert launch["context"] == {"segment": "launch", "predecessor": None, "transition": "cut"}
+        assert follow["context"] == {"segment": "follow", "predecessor": launch["id"], "transition": "continuation"}
+        assert launch["previous"]["latent_path"] == f"{project}/director" and launch["previous"]["clip_index"] == 0
+        assert follow["previous"]["latent_path"] == f"{project}/director/{launch['id']}/clip_00001.safetensors"
+        # The file check names the project, and the take context was written only into the submitted copies.
+        mine = [query for query in asked if query["take"][0] in files]
+        assert mine and all(query["project"] == [project] and query["video"] == ["clip_00002_.mp4"] for query in mine)
+        # Receipts of the earlier stock-saver renders are still checked at their original location.
+        legacy = [query for query in asked if query["take"][0] not in files]
+        assert legacy and all("project" not in query and query["video"] == ["clip_00001_.mp4"] for query in legacy)
+        assert page.evaluate("id => window.directorProjectGraph[id].inputs", save)["take_context"] == ""
+        assert page.evaluate("id => window.directorProjectGraph[id].inputs.filename_prefix", save) == ""
+        receipts = page.evaluate("id => window.comfyAPI.app.app.graph.getNodeById(id).properties.directorRenders.takes", director_id)
+        assert [(take["project"], take["saver"], take["video"]["subfolder"]) for take in receipts] == [
+            (project, "ArisuSaveVideoSegment", f"{project}/director/{launch['id']}"),
+            (project, "ArisuSaveVideoSegment", f"{project}/director/{follow['id']}"),
+        ]
+        # A removed latent ends the take's use as a predecessor, not its footage: a trusted reopen reports it.
+        files[launch["id"]] = {"video": "video-revision"}
+        page.evaluate(
+            """async () => {
+            const app = window.comfyAPI.app.app;
+            await app.loadGraphData(app.graph.serialize(), true, true, app.extensionManager.workflow.activeWorkflow);
+        }"""
+        )
+        expect(first).to_contain_text("Latent removed")
+        expect(second).to_contain_text("Rendered")
+    finally:
+        # The receipts outlive this fixture: later trusted reloads of the workflow check the same files on the host.
+        server.director_takes.update(files)
+        page.evaluate("window.restoreDirectorFixture(); delete window.directorProjectGraph;")
+        page.unroute("**/api/prompt", submit)
+        page.unroute("**/api/history/*", check_history)
+        page.unroute("**/api/arisu/resources/director-take?*", check_file)

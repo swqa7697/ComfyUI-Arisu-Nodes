@@ -1,13 +1,9 @@
 import { el } from '../common/dom.js';
 import { AUDIO_ICON, browseResources, posterUrl, viewUrl } from '../common/resource_browser.js';
-import { cropFor, editMediaSelection, probe, resourceId } from './media_selection.js';
+import { moveItem, resourceId } from '../common/shared.js';
+import { cropFor, editMediaSelection, probe } from './media_selection.js';
 
 const roles = { first: 'First frame', last: 'Last frame', image: 'Image reference', video: 'Video reference', audio: 'Audio reference' };
-
-export function moveItem(list, index, offset) {
-  const target = index + offset;
-  if (index >= 0 && target >= 0 && target < list.length) list.splice(target, 0, ...list.splice(index, 1));
-}
 
 const filename = (asset) => asset.path.split(/[\\/]/).at(-1);
 function preview(asset) {

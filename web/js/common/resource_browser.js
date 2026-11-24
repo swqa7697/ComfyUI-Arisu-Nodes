@@ -232,8 +232,8 @@ export function posterUrl(root, path, at, max) {
 
 /**
  * Open the Browse dialog for `node` and hand the picked `(path, root)` to `options.onPick`. `options.mixed` lists
- * video and audio beside images; `options.selected(root, path)` marks the cards already chosen, by default the one
- * the node's `root` and `path` widgets name.
+ * video and audio beside images, and `options.kinds` then keeps only the named kinds; `options.selected(root, path)`
+ * marks the cards already chosen, by default the one the node's `root` and `path` widgets name.
  */
 export async function browseResources(node, options = {}) {
   browserDialogs.get(node)?.close();
@@ -243,6 +243,8 @@ export async function browseResources(node, options = {}) {
   let navigation = 0;
   let editor = null;
   let saving = false;
+  // One kind alone names itself in the filter and the empty state; a mixed listing stays "resources".
+  const noun = options.kinds?.length === 1 ? `${options.kinds[0][0].toUpperCase()}${options.kinds[0].slice(1)}s` : 'Resources';
   const roots = new Map();
   const tree = new Map();
   // Read-only: the tree, up, the roots, saved locations and thumbnails are the only ways to move.
@@ -250,7 +252,7 @@ export async function browseResources(node, options = {}) {
   const upButton = el('button', { textContent: '↑ Up', onclick: () => navigate(listing.root, listing.parent) });
   const filterField = el('input', {
     type: 'search',
-    placeholder: options.mixed ? 'Filter Resources' : 'Filter Images',
+    placeholder: options.mixed ? `Filter ${noun}` : 'Filter Images',
     oninput: () => renderGrid(false),
   });
   const saveButton = el('button', { textContent: '+ Save', onclick: () => editPath({ root: listing.root, path: listing.path }, false) });
@@ -491,7 +493,8 @@ export async function browseResources(node, options = {}) {
   }
 
   function renderGrid(fresh) {
-    const files = listing.files.filter((name) => name.toLowerCase().includes(filterField.value.trim().toLowerCase()));
+    const wanted = (name) => !options.kinds || options.kinds.includes(listing.kinds?.[name] ?? 'image');
+    const files = listing.files.filter((name) => wanted(name) && name.toLowerCase().includes(filterField.value.trim().toLowerCase()));
     const cards = files.map((name, index) => {
       const path = joinPath(listing.path, name);
       const root = listing.root;
@@ -520,7 +523,7 @@ export async function browseResources(node, options = {}) {
     grid.replaceChildren(
       ...(cards.length
         ? cards
-        : [el('div', { className: 'arisu-browser-empty', textContent: options.mixed ? 'No Resources Here' : 'No Images Here' })]),
+        : [el('div', { className: 'arisu-browser-empty', textContent: options.mixed ? `No ${noun} Here` : 'No Images Here' })]),
     );
   }
 
