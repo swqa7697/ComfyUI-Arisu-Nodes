@@ -379,6 +379,108 @@ def test_agent_update_preserves_working_image_and_settings_reject_unavailable_mo
         DockerAgents.stream(agents, [], time.monotonic() + 5, agents.stopping, receive=received.append)
     assert len(received) == 3 and len(agents.read_logs()["lines"]) == 1
     assert "Visible thought" in agents.read_logs()["lines"][0] and "private-audit" not in str(agents.read_logs())
+
+    # A long thought contains little new text even when Grok or Codex repeatedly
+    # emits its entire prefix. Exercise the real pipe, not only the log store.
+    for provider in ("grok", "codex"):
+        script = (
+            "import sys, json\n"
+            f"sys.path.insert(0, {str(assets)!r})\n"
+            "from events import ActivityStream, activity\n"
+            "import events\n"
+            "display = ActivityStream()\n"
+            "events.time.monotonic = lambda: tick / 4\n"
+            "def partial(kind, **fields):\n"
+            "    return display.render({'type': 'stream_event', 'event': {'type': kind, **fields}}, 'grok')\n"
+            "partial('message_start', message={'id': 'long'})\n"
+            "partial('content_block_start', index=0, content_block={'type': 'thinking', 'thinking': ''})\n"
+            "for tick in range(1900):\n"
+            + (
+                "    line = partial('content_block_delta', index=0, delta={'type': 'thinking_delta', 'thinking': 'abcdefghij'})\n"
+                if provider == "grok"
+                else "    line = activity({'type': 'item.updated', 'item': {'type': 'reasoning', 'id': 'long', 'text': 'abcdefghij' * (tick + 1)}}, 'codex')\n"
+            )
+            + "    if line: print(line)\n"
+            + "print('ARISU_RESULT ' + json.dumps({'final': 'complete'}))\n"
+        )
+        agents.begin_logs(provider, "generate", "long")
+        sizes, final = [], []
+
+        def receive(line: str, sizes: List[int] = sizes, final: List[str] = final):
+            sizes.append(len(line.encode("utf-8")))
+            if line.startswith("ARISU_RESULT "):
+                final.append(json.loads(line.removeprefix("ARISU_RESULT "))["final"])
+
+        with monkeypatch.context() as local:
+            local.setattr(subprocess, "Popen", lambda *args, script=script, **kwargs: popen([sys.executable, "-c", script], **kwargs))
+            DockerAgents.stream(agents, [], time.monotonic() + 30, agents.stopping, receive=receive)
+        assert sum(sizes) > 16 * 1024 * 1024 and final == ["complete"]
+        assert agents.log_bytes < 1024 * 1024
+        replay = {}
+        page = agents.read_logs(job="long")
+        while True:
+            for line in page["lines"]:
+                for entry in json.loads(line.removeprefix("ARISU_ACTIVITY "))["entries"]:
+                    key = entry["kind"], entry["id"]
+                    replay[key] = (replay[key] if entry.get("append") else "") + entry["text"]
+            if not page["more"]:
+                break
+            page = agents.read_logs(page["session"], page["cursor"], "long")
+        assert list(replay.values()) == ["abcdefghij" * 1900]
+        # A newly opened viewer receives the same first page, not only the tail.
+        assert agents.read_logs()["lines"][0] == agents.logs[0]
+
+    # Compact only complete redacted snapshots; preserve revisions, anonymous
+    # records, and tool arguments/results even when IDs recur in one envelope.
+    agents.begin_logs("codex", "generate", "updates")
+
+    def framed(*entries: Dict[str, Any]) -> str:
+        return "ARISU_ACTIVITY " + json.dumps({"version": 1, "entries": entries}, ensure_ascii=False)
+
+    entry = {"id": "thought", "kind": "analysis", "text": "雪🌅 Bearer ", "details": ""}
+    agents.log(framed(entry))
+    changed = {**entry, "text": entry["text"] + "private-token"}
+    agents.log(framed(changed))
+    changed["text"] += "\nContinue 雪"
+    agents.log(framed(changed))
+    assert "private-token" not in str(agents.logs) and "private-token" not in str(agents.log_items)
+    update = json.loads(agents.logs[-1].removeprefix("ARISU_ACTIVITY "))["entries"][0]
+    assert update["append"] and update["text"] == "\nContinue 雪"
+    assert agents.log(framed(changed)) == 0
+    replacement = {**entry, "text": "Revised thought"}
+    agents.log(framed(replacement))
+    assert "append" not in json.loads(agents.logs[-1].removeprefix("ARISU_ACTIVITY "))["entries"][0]
+    tool = {**entry, "kind": "tool", "text": "workbench.read_skill", "details": "arguments"}
+    agents.log(framed(tool, {**tool, "details": "arguments\nresult 雪"}, {**entry, "id": ""}, {**entry, "id": ""}))
+    entries = json.loads(agents.logs[-1].removeprefix("ARISU_ACTIVITY "))["entries"]
+    assert len(entries) == 4 and entries[1]["append"] and entries[1]["details"] == "\nresult 雪"
+    assert "append" not in entries[0] and "append" not in entries[2] and entries[2] == entries[3]
+    # An image cannot forge the host's append protocol; invalid frames remain charged.
+    for invalid in (
+        framed({**tool, "append": True, "details": "x" * 4096}),
+        'ARISU_ACTIVITY {"version":true,"entries":[]}',
+        'ARISU_ACTIVITY {"version":1,"entries":[],"extra":"' + "x" * 4096 + '"}',
+    ):
+        assert agents.log(invalid) >= len(invalid.encode("utf-8"))
+        assert agents.logs[-1] == "[details] Invalid activity record"
+    retained = list(agents.logs)
+    agents.log_bytes = 16 * 1024 * 1024
+    with pytest.raises(ValueError, match="without truncating"):
+        agents.log(framed({**replacement, "text": "Revised thought continued"}))
+    assert agents.logs == retained and agents.log_items[("analysis", "thought")] == replacement
+    agents.begin_logs("codex", "generate", "fresh")
+    agents.log(framed(replacement))
+    assert "append" not in json.loads(agents.logs[0].removeprefix("ARISU_ACTIVITY "))["entries"][0]
+
+    # Native diagnostics, hidden audit/result records, and large physical lines
+    # still stop and reap the process instead of silently truncating output.
+    for prefix, character, length, repeats in (("plain ", "x", 65536, 257), ("ARISU_AUDIT ", "x", 65536, 257), ("", "雪", 350000, 1)):
+        agents.begin_logs("codex", "generate", "bounded")
+        script = f"for _ in range({repeats}): print({prefix!r} + {character!r} * {length})"
+        with monkeypatch.context() as local:
+            local.setattr(subprocess, "Popen", lambda *args, script=script, **kwargs: popen([sys.executable, "-c", script], **kwargs))
+            with pytest.raises(ValueError, match="without truncating"):
+                DockerAgents.stream(agents, [], time.monotonic() + 30, agents.stopping)
     agents.guard.acquire()
     try:
         with pytest.raises(ValueError, match="busy"):

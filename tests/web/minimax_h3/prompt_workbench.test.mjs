@@ -370,6 +370,14 @@ test('Workbench keeps finalized text independent of setup, source notes and revi
     assert.equal(captured.node_id, '20:1');
     assert.equal(captured.prompt['3'].inputs.length, 49);
 
+    // Status polling runs independently while activity pages are being read.
+    api.fetchApi = async function (route, init) {
+      if (route === '/arisu/workbench/status') {
+        api.calls.push({ route, init });
+        return jsonResponse(200, { docker: true, agents: { codex: { ready: true } } });
+      }
+      return originalFetch.call(this, route, init);
+    };
     const framed = (...entries) => `ARISU_ACTIVITY ${JSON.stringify({ version: 1, entries })}`;
     const loaded = '# Skill\n[analysis] File content stays inside the tool\n{"metadata":true}';
     const toolRecord = { id: 'codex:tool1', kind: 'tool', text: 'workbench.read_skill', details: loaded };
@@ -420,11 +428,33 @@ test('Workbench keeps finalized text independent of setup, source notes and revi
     assert(!find(activity, '[analysis] File content stays inside the tool'));
     assert(!find(activity, 'ARISU_AUDIT secret audit data'));
     skillDetails.open = true;
-    // A repeated provider item updates in place without closing the expanded details.
+    skillDetails.children[1].scrollTop = 17;
+    const skillPosition = activity.children.indexOf(skillDetails);
+    // Compact updates can arrive on a later page. Both text fields retain Unicode and row state.
     api.responses.push(
       jsonResponse(200, {
         session: 'job3',
         cursor: 2,
+        lines: [
+          framed(
+            { id: 'codex:thought1', kind: 'analysis', text: ' 雪🌅', details: '', append: true },
+            { ...toolRecord, text: '', details: '\nCompleted 雪', append: true },
+            { ...responseRecord, text: '\n雪🌅', append: true },
+          ),
+        ],
+      }),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 800));
+    assert(find(activity, '[analysis] Original thought 雪🌅'));
+    assert(skillDetails.open && find(skillDetails, `${loaded}\nCompleted 雪`));
+    assert.equal(skillDetails.children[1].scrollTop, 17);
+    assert.equal(activity.children.indexOf(skillDetails), skillPosition);
+    assert(responses[1].open && find(responses[1], `${responseRecord.text}\n雪🌅`));
+    // A repeated provider item updates in place without closing the expanded details.
+    api.responses.push(
+      jsonResponse(200, {
+        session: 'job3',
+        cursor: 3,
         lines: [
           framed(
             { id: 'codex:thought1', kind: 'analysis', text: 'Updated thought', details: '' },
@@ -436,6 +466,7 @@ test('Workbench keeps finalized text independent of setup, source notes and revi
     );
     await new Promise((resolve) => setTimeout(resolve, 800));
     assert(!find(activity, '[analysis] Original thought'));
+    assert(!find(activity, '[analysis] Original thought 雪🌅'));
     assert(find(activity, '[analysis] Updated thought'));
     assert(skillDetails.open && find(skillDetails, `${loaded}\nCompleted`));
     assert(responses[1].open && find(responses[1], '```markdown\nA quiet sunrise over a lake\n```'));
@@ -444,6 +475,35 @@ test('Workbench keeps finalized text independent of setup, source notes and revi
       descendants(activity).filter((item) => item.tagName === 'SUMMARY' && item.textContent === 'workbench.read_skill').length,
       1,
     );
+
+    // Invalid appends cannot create or corrupt a row, and a new session cannot reuse old text.
+    api.responses.push(
+      jsonResponse(200, {
+        session: 'job3',
+        cursor: 4,
+        lines: [
+          framed({ ...responseRecord, text: 'Malformed append', append: 'true' }),
+          framed({ ...responseRecord, id: 'missing', text: 'Orphan append', append: true }),
+          framed({ ...responseRecord, id: '', text: 'Anonymous append', append: true }),
+        ],
+      }),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 800));
+    assert(!find(activity, 'Malformed append') && !find(activity, 'Orphan append') && !find(activity, 'Anonymous append'));
+    assert(find(responses[1], '```markdown\nA quiet sunrise over a lake\n```'));
+    api.responses.push(
+      jsonResponse(200, {
+        session: 'replacement-session',
+        cursor: 1,
+        lines: [
+          framed({ ...responseRecord, text: 'Stale append', append: true }),
+          framed({ ...responseRecord, text: 'New session' }, { ...responseRecord, text: ' 雪', append: true }),
+        ],
+      }),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 800));
+    assert(!find(activity, 'Stale append') && !find(activity, '[analysis] Updated thought'));
+    assert(find(activity, 'New session 雪'));
 
     widget(node, 'finalized_prompt').value = 'restored';
     widget(node, 'prepare_job').value = 'imported';
@@ -464,13 +524,6 @@ test('Workbench keeps finalized text independent of setup, source notes and revi
     finalAgain.oninput();
     assert(!find(panel(node), 'Apply Output').disabled);
 
-    api.fetchApi = async function (route, init) {
-      if (route === '/arisu/workbench/status') {
-        api.calls.push({ route, init });
-        return jsonResponse(200, { docker: true, agents: { codex: { ready: true } } });
-      }
-      return originalFetch.call(this, route, init);
-    };
     // The actual frontend reloads nodes during Undo/Redo and when switching tabs.
     const saved = () => ({
       widgets: node.widgets.filter((item) => !item.element).map(({ name, value }) => ({ name, value })),

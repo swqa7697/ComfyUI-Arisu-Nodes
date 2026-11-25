@@ -140,17 +140,20 @@ export function createActivity(label = 'Agent Logs') {
     const noisy = ['agent', 'tool', 'details'].includes(record.kind);
     const key = record.id && `${record.kind}:${record.id}`;
     let view = key ? records.get(key) : null;
+    if (record.append && !view) throw new Error('Activity append has no previous record');
     if (!view) {
       const content = el('div', { className: noisy ? 'log-content' : '' });
       const summary = noisy ? el('summary') : null;
       const element = noisy ? el('details', { className: 'log-details' }, [summary, content]) : content;
-      view = { content, summary };
+      view = { content, summary, text: '', details: '' };
       if (key) records.set(key, view);
       output.append(element);
     }
-    if (view.summary) view.summary.textContent = record.kind === 'agent' ? 'Agent response' : record.text.slice(0, 120) || 'Details';
+    view.text = record.append ? view.text + record.text : record.text;
+    view.details = record.append ? view.details + record.details : record.details;
+    if (view.summary) view.summary.textContent = record.kind === 'agent' ? 'Agent response' : view.text.slice(0, 120) || 'Details';
     const top = view.content.scrollTop;
-    view.content.replaceChildren(logLine(noisy ? record.details || record.text : `[${record.kind}] ${record.text}`));
+    view.content.replaceChildren(logLine(noisy ? view.details || view.text : `[${record.kind}] ${view.text}`));
     view.content.scrollTop = top;
   }
   function appendLine(line) {
@@ -167,7 +170,9 @@ export function createActivity(label = 'Agent Logs') {
             !['analysis', 'agent', 'tool', 'details', 'progress', 'error'].includes(record.kind) ||
             typeof record.id !== 'string' ||
             typeof record.text !== 'string' ||
-            typeof record.details !== 'string'
+            typeof record.details !== 'string' ||
+            (record.append !== undefined && typeof record.append !== 'boolean') ||
+            (record.append && !record.id)
           )
             throw new Error('Invalid activity');
         }

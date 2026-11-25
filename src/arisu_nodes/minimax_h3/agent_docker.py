@@ -12,7 +12,7 @@ import threading
 import time
 import uuid
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from ..common.paths import read_configuration, save_workbench_preferences
 from .core import AGENT_IDS, BASIC_EFFORTS
@@ -42,6 +42,7 @@ class DockerAgents:
         self.logs: List[str] = []
         self.log_lock = threading.Lock()
         self.log_bytes = 0
+        self.log_items: Dict[Tuple[str, str], Dict[str, str]] = {}
         self.log_session: Dict[str, Any] = {}
         self.operation: Optional[Dict[str, Any]] = None
         self.preferences: Dict[str, Any] = {}
@@ -102,6 +103,7 @@ class DockerAgents:
             self.operation = {"agent": agent, "action": action, "state": "running"}
             self.logs.clear()
             self.log_bytes = 0
+            self.log_items.clear()
             self.log_session = {"session": uuid.uuid4().hex, "agent": agent, "action": action, "job": job, "state": "running"}
 
     def finish_logs(self, state: str):
@@ -123,8 +125,8 @@ class DockerAgents:
                 end += 1
             return {**self.log_session, "lines": self.logs[start:end], "cursor": end, "more": end < len(self.logs)}
 
-    def log(self, text: str):
-        """Keep complete readable output; redact credentials and remove terminal controls."""
+    def log(self, text: str) -> int:
+        """Retain redacted updates; return their byte charge for the operation budget."""
 
         def redact(value: Any) -> Any:
             if isinstance(value, dict):
@@ -139,19 +141,67 @@ class DockerAgents:
             value = re.sub(r"\b(?:sk-|xai-)[A-Za-z0-9_-]{16,}", "[redacted]", value)
             return "".join(c for c in value if c in "\n\t" or ord(c) >= 32)
 
+        raw_size = len(text.encode("utf-8")) + 1
+        entries = None
         if text.startswith("ARISU_ACTIVITY "):
             try:
-                text = "ARISU_ACTIVITY " + json.dumps(redact(json.loads(text.removeprefix("ARISU_ACTIVITY "))), ensure_ascii=False)
-            except ValueError:
+                record = redact(json.loads(text.removeprefix("ARISU_ACTIVITY ")))
+                if (
+                    not isinstance(record, dict)
+                    or set(record) != {"version", "entries"}
+                    or type(record["version"]) is not int
+                    or record["version"] != 1
+                    or not isinstance(record["entries"], list)
+                ):
+                    raise ValueError("invalid activity envelope")
+                for entry in record["entries"]:
+                    # Only the host creates append records. Provider messages are
+                    # full snapshots, including those from existing Docker images.
+                    if (
+                        not isinstance(entry, dict)
+                        or set(entry) != {"id", "kind", "text", "details"}
+                        or not all(isinstance(value, str) for value in entry.values())
+                        or entry["kind"] not in ("analysis", "agent", "tool", "details", "progress", "error")
+                    ):
+                        raise ValueError("invalid activity entry")
+                entries = record["entries"]
+            except (ValueError, RecursionError):
                 text = "[details] Invalid activity record"
         else:
             text = redact(str(text))
         with self.log_lock:
+            updates: Dict[Tuple[str, str], Dict[str, str]] = {}
+            if entries is not None:
+                compact = []
+                for entry in entries:
+                    if not entry["id"]:
+                        compact.append(entry)
+                        continue
+                    key = entry["kind"], entry["id"]
+                    previous = updates.get(key, self.log_items.get(key))
+                    if previous == entry:
+                        continue
+                    updates[key] = entry
+                    if previous and all(entry[field].startswith(previous[field]) for field in ("text", "details")):
+                        # Compare complete redacted snapshots, so credentials split
+                        # across provider chunks never bypass redaction in a suffix.
+                        compact.append(
+                            {**entry, **{field: entry[field][len(previous[field]) :] for field in ("text", "details")}, "append": True}
+                        )
+                    else:
+                        compact.append(entry)
+                if not compact:
+                    return 0
+                text = "ARISU_ACTIVITY " + json.dumps({"version": 1, "entries": compact}, ensure_ascii=False)
             size = len(text.encode("utf-8")) + 1
             if self.log_bytes + size > 16 * 1024 * 1024:
                 raise ValueError("operation log exceeds 16 MiB; stopped without truncating output")
             self.logs.append(text)
             self.log_bytes += size
+            self.log_items.update(updates)
+            # Malformed frames and plain diagnostics cannot evade the transport
+            # limit by collapsing to a short redacted message.
+            return size if entries is not None else max(size, raw_size)
 
     def run_args(self, agent: str, name: str, image: Optional[str] = None) -> List[str]:
         """Apply the same isolation to discovery, login and generation."""
@@ -282,13 +332,18 @@ class DockerAgents:
             try:
                 total = 0
                 while line := process.stdout.readline(1024 * 1024 + 1):
-                    total += len(line)
-                    if len(line) > 1024 * 1024 or total > 16 * 1024 * 1024:
+                    size = len(line.encode("utf-8"))
+                    if size > 1024 * 1024:
                         raise ValueError("operation log exceeds limit")
                     if receive:
                         receive(line)
                     if not line.startswith(("ARISU_RESULT ", "ARISU_AUDIT ")):
-                        self.log(line.rstrip())
+                        size = self.log(line.rstrip("\r\n"))
+                    # Count new log content, not repeated full-text activity
+                    # snapshots. Audits and final results retain their raw bound.
+                    total += size
+                    if total > 16 * 1024 * 1024:
+                        raise ValueError("operation log exceeds limit")
             except (ValueError, OSError, KeyError, TypeError) as error:
                 errors.append(error)
 
