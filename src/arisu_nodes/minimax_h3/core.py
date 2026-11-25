@@ -795,6 +795,28 @@ class VideoSettings:
     frame_picture_tags: Optional[str] = None
 
 
+def unpack_video_settings(settings: VideoSettings) -> Tuple[int, int, int, str, float, int, int]:
+    """Read scalar settings, using an unchanged canvas when no upscale is defined.
+
+    Args:
+        settings: A bundle from Video Settings, Video Settings (Upscale), or Director.
+
+    Returns:
+        Width, height, frame count, aspect ratio, upscale factor, target width and
+        target height. Missing upscale values become 1.0 and the canvas dimensions.
+        The source bundle and its frame count remain unchanged.
+    """
+    return (
+        settings.width,
+        settings.height,
+        settings.length,
+        settings.aspect_ratio,
+        settings.upscale_factor if settings.upscale_factor is not None else 1.0,
+        settings.target_width if settings.target_width is not None else settings.width,
+        settings.target_height if settings.target_height is not None else settings.height,
+    )
+
+
 @dataclass(frozen=True)
 class Resource:
     """Immutable source description; locations are relative and never capabilities."""

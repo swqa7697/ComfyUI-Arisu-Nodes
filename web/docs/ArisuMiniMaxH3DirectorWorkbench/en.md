@@ -2,6 +2,8 @@
 
 Add **MiniMax H3 Director Workbench** to plan a film and render its segments in order. Connect its `prompt`, `video_settings`, and `resources` outputs to the matching inputs on **MiniMax H3 Hybrid to Video**.
 
+To use a single setting elsewhere, also connect `video_settings` to **MiniMax H3 Unpack Video Settings**. Its `length` output gives the selected segment's generation frame count before continuation trimming.
+
 ## Plan the Film
 
 1. Open **Film Setup** (or **Set up the film** on an empty sequence) to write the **Film Requirements**. Use your own format, including Markdown, for the story, required events, exact words, or continuity instructions. Set the canvas size in megapixels and use the two sliders to choose a generation range within 5–15 seconds per segment. Enter an optional target in minutes, including fractional minutes, to guide the approximate length of the whole film.

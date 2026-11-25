@@ -362,6 +362,16 @@ def test_studio_bundles_originals_and_rejects_invalid_or_conflicting_resources(t
     prompt, settings, resources = director.execute(json.dumps(film))
     assert prompt == "<Picture 1> follows <Picture 2>" and resources.first.crop == (1, 2, 10, 9)
     assert [r.id for r in resources.images] == ["ref"]
+    # Unpack emits the selected continuation's full generation length, before its 22-frame trim.
+    assert tuple(h3.ArisuMiniMaxH3UnpackVideoSettings.execute(settings)) == (
+        settings.width,
+        settings.height,
+        362,
+        settings.aspect_ratio,
+        1.0,
+        settings.width,
+        settings.height,
+    )
     clip, _ = _run(prompt=prompt, video_settings=settings, resources=resources)
     assert [tuple(ref["data"].shape[1:3]) for ref in clip.tokenize_kwargs["minimax_ref_items"]] == [
         (settings.height, settings.width),

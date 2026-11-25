@@ -78,6 +78,7 @@ from .core import (
     scaled_canvas,
     soundtrack_key,
     temporal_shape,
+    unpack_video_settings,
     validate_bundle,
 )
 from .director import EMPTY_FILM, parse_document, segment_snapshot
@@ -1255,6 +1256,48 @@ class ArisuMiniMaxH3VideoSettingsUpscale(io.ComfyNode):
         return io.NodeOutput(bundle, width, height, length, upscale_factor, target_width, target_height, aspect_ratio)
 
 
+class ArisuMiniMaxH3UnpackVideoSettings(io.ComfyNode):
+    """Expose individual values from any MiniMax H3 Video Settings bundle."""
+
+    @classmethod
+    def define_schema(cls) -> io.Schema:
+        """Declare one settings input and scalar outputs for downstream nodes."""
+        return io.Schema(
+            node_id="ArisuMiniMaxH3UnpackVideoSettings",
+            display_name="MiniMax H3 Unpack Video Settings",
+            category="Arisu Nodes/MiniMax H3",
+            description=(
+                "Read individual values from Director Workbench or either Video Settings node. "
+                "Length is the generation frame count at 24 fps, before continuation trimming. "
+                "Without upscale settings, the factor is 1.0 and the target matches the canvas."
+            ),
+            inputs=[
+                io.Custom("ARISU_MINIMAX_H3_VIDEO_SETTINGS").Input(
+                    "video_settings", tooltip="Connect the video_settings output of Director Workbench or either Video Settings node."
+                ),
+            ],
+            outputs=[
+                *_settings_outputs_head(),
+                io.Combo.Output("aspect_ratio", options=list(ASPECT_RATIO_LABELS)),
+                io.Float.Output("upscale_factor", tooltip="Upscale factor from the bundle, or 1.0 when absent."),
+                io.Int.Output("target_width", tooltip="Target width in pixels, or the canvas width when absent."),
+                io.Int.Output("target_height", tooltip="Target height in pixels, or the canvas height when absent."),
+            ],
+        )
+
+    @classmethod
+    def execute(cls, video_settings: VideoSettings) -> io.NodeOutput:
+        """Read the bundle without recalculating its canvas or frame count.
+
+        Args:
+            video_settings: The connected MiniMax H3 settings bundle.
+
+        Returns:
+            ``(width, height, length, aspect_ratio, upscale_factor, target_width, target_height)``.
+        """
+        return io.NodeOutput(*unpack_video_settings(video_settings))
+
+
 def _resource_roots() -> Dict[str, str]:
     return image_roots(folder_paths.get_input_directory(), folder_paths.get_output_directory())
 
@@ -1700,5 +1743,6 @@ NODES: List[Type[io.ComfyNode]] = [
     ArisuMiniMaxH3HybridToVideoAdvanced,
     ArisuMiniMaxH3VideoSettings,
     ArisuMiniMaxH3VideoSettingsUpscale,
+    ArisuMiniMaxH3UnpackVideoSettings,
     ArisuMiniMaxH3SelfLiftProgressiveSampler,
 ]
