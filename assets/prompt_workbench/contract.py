@@ -21,6 +21,14 @@ class DirectorBudgetError(ValueError):
     """Identify a one-shot input or output limit for the host's review UI."""
 
 
+class DirectorResponseError(ValueError):
+    """Identify invalid output separately from a confirmed budget limit."""
+
+    def __init__(self, reason: str):
+        self.reason = reason
+        super().__init__("Director response validation failed: " + reason)
+
+
 def read_text(path: Path, limit: int = MAX_TEXT) -> str:
     """Read bounded UTF-8 from an opened regular file without following a symlink."""
     descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
@@ -133,9 +141,14 @@ def final_response(value: str, director: bool = False) -> str:
     """Validate stream output, including the explicit policy refusal signal."""
     if not isinstance(value, str) or REFUSAL in value:
         raise ValueError("request refused by the prompt-only policy")
-    match = re.fullmatch(r"\s*```(?:markdown|text)?[ \t]*\r?\n([\s\S]*?)\r?\n```\s*", value)
-    if director and (not match or len(match[1].encode("utf-8")) > 256 * 1024):
-        raise DirectorBudgetError("Incomplete Director response or single-task output budget exceeded.")
+    labels = "json|markdown|text" if director else "markdown|text"
+    match = re.fullmatch(r"\s*```(?:" + labels + r")?[ \t]*\r?\n([\s\S]*?)\r?\n```\s*", value)
+    if director:
+        if not match or not match[1].strip() or "```" in match[1]:
+            raise DirectorResponseError("format")
+        size = len(match[1].encode("utf-8"))
+        if size > 256 * 1024:
+            raise DirectorBudgetError(f"Director response is {size} UTF-8 bytes; the output limit is 262144 bytes.")
     if not match or not match[1].strip() or "```" in match[1] or (not director and len(match[1]) > 65536):
         raise ValueError("agent must return one nonempty markdown or plain-text fence")
     return value

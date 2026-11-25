@@ -133,6 +133,24 @@ def test_agent_update_preserves_working_image_and_settings_reject_unavailable_mo
         with pytest.raises(ValueError, match="update"):
             agents.generate("codex", tmp_path, tmp_path, {}, agents.stopping, time.monotonic() + 1)
 
+    # Format failures must reach the host as format failures, not budget advice.
+    with monkeypatch.context() as generation:
+        generation.setattr(agents, "policy_image", lambda agent: True)
+        for marker, expected in (
+            ('ARISU_DIRECTOR_ERROR {"reason":"format"}', "invalid format"),
+            ('ARISU_DIRECTOR_ERROR {"reason":"json"}', "malformed JSON"),
+            ('ARISU_DIRECTOR_ERROR {"reason":"budget"}', "exceeded"),
+            ("ARISU_DIRECTOR_INCOMPLETE", "incomplete or exceeds"),
+        ):
+
+            def failed_stream(*args: Any, marker: str = marker):
+                args[-1](marker)
+                raise ValueError("agent operation failed")
+
+            generation.setattr(agents, "stream", failed_stream)
+            with pytest.raises(ValueError, match=expected):
+                agents.generate("codex", tmp_path, tmp_path, {}, agents.stopping, time.monotonic() + 1)
+
     def command(args: List[str], **kwargs: Any) -> str:
         if args[0] == "tag":
             tagged.append(args[-1])
@@ -784,6 +802,10 @@ def test_mcp_manifest_images_and_unlisted_or_escaping_assets(
     complete = {"type": "turn.completed"}
     for events, accepted in (
         ([assistant, complete], True),
+        (
+            [{"type": "item.completed", "item": {"type": "agent_message", "text": '```json\n{"prompt":"A quiet room."}\n```'}}, complete],
+            False,
+        ),
         ([assistant], False),
         ([assistant, complete, assistant], False),
         ([{"type": "item.started", "item": {"type": "command_execution", "command": "touch /tmp/forbidden"}}], False),
@@ -850,22 +872,61 @@ def test_mcp_manifest_images_and_unlisted_or_escaping_assets(
                 runner.generate("grok", {"model": "test"})
             assert "ARISU_RESULT " not in capsys.readouterr().out
 
-    # A Director task can share one audited writing-skill read across multiple segments.
+    # A Director task shares one audited writing-skill read across a film whose
+    # combined prompts exceed both 7000 characters and the single-prompt output cap.
     with monkeypatch.context() as director:
         path = "writing/1/SKILL.md"
         director.setattr(
             runner, "context", lambda: {"assets": [], "director": {"task": "plan", "writing_skills": [{"id": "base", "path": path}]}}
         )
-        payload = json.dumps({"segments": [{"id": "a", "skill": "base"}, {"id": "b", "skill": "base"}]})
-        message = {**result, "result": "```text\n" + payload + "\n```"}
+        film = {"segments": [{"id": f"scene-{i}", "skill": "base", "prompt": "A quiet room. " * 300} for i in range(20)]}
+        payload = json.dumps(film)
+        message = {**result, "result": "```json\n" + payload + "\n```"}
         wire = json.dumps(init) + "\n" + json.dumps(message)
         director.setattr(grok_provider, "command", lambda *args: [sys.executable, "-c", "print(" + repr(wire) + ")"])
         director.setattr(runner, "audit", lambda: reads)
         with pytest.raises(ValueError, match="writing skill"):
             runner.generate("grok", {"model": "test"})
         director.setattr(runner, "audit", lambda: [*reads, {"tool": "read_skill", "arguments": {"path": path}}])
-        runner.generate("grok", {"model": "test"})
-        assert "ARISU_RESULT " in capsys.readouterr().out
+        # Director accepts JSON fences from both providers and preserves legacy
+        # text wrappers. Ordinary Prompt Workbench still requires prompt text.
+        for agent, selected in (("grok", grok_provider), ("codex", provider)):
+            director.setattr(runner, "adapter_for", lambda agent, selected=selected: selected)
+            for label in ("json", "text", "markdown", ""):
+                response = "```" + label + "\n" + payload + "\n```"
+                events = (
+                    [init, {**result, "result": response}]
+                    if agent == "grok"
+                    else [{"type": "item.completed", "item": {"type": "agent_message", "text": response}}, complete]
+                )
+                wire = "\n".join(json.dumps(event) for event in events)
+                director.setattr(selected, "command", lambda *args, wire=wire: [sys.executable, "-c", "print(" + repr(wire) + ")"])
+                runner.generate(agent, {"model": "test"})
+                output = next(
+                    line.removeprefix("ARISU_RESULT ") for line in capsys.readouterr().out.splitlines() if line.startswith("ARISU_RESULT ")
+                )
+                assert json.loads(output)["final"] == response
+        director.setattr(runner, "adapter_for", lambda agent: grok_provider)
+        # Wrong labels, incomplete fences and invalid JSON remain distinct from
+        # actual budget exhaustion. Never salvage or truncate an invalid result.
+        for response, error_type, reason in (
+            ("```python\n" + payload + "\n```", runner.DirectorResponseError, "format"),
+            ("```json\n" + payload, runner.DirectorResponseError, "format"),
+            ("```json\n\n```", runner.DirectorResponseError, "format"),
+            ('```json\n{"segments":\n```', runner.DirectorResponseError, "json"),
+            ("```json\n" + "雪" * (256 * 1024 // 3 + 1) + "\n```", runner.DirectorBudgetError, "UTF-8 bytes"),
+        ):
+            # Use a fixture file so a size-limit case cannot hit the OS argv limit.
+            stream = tmp_path / "director-events.jsonl"
+            stream.write_text(json.dumps(init) + "\n" + json.dumps({**result, "result": response}) + "\n")
+            director.setattr(
+                grok_provider,
+                "command",
+                lambda *args, stream=stream: [sys.executable, "-c", "import sys; sys.stdout.write(open(sys.argv[1]).read())", str(stream)],
+            )
+            with pytest.raises(error_type, match=reason):
+                runner.generate("grok", {"model": "test"})
+            assert "ARISU_RESULT " not in capsys.readouterr().out
         exhausted = json.dumps({"type": "error", "error": {"code": "context_length_exceeded"}})
         director.setattr(grok_provider, "command", lambda *args: [sys.executable, "-c", "print(" + repr(exhausted) + ")"])
         with pytest.raises(runner.DirectorBudgetError, match="context or output budget"):

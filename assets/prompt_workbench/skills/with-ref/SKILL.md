@@ -40,7 +40,7 @@ Duration typically 5–15 s. If MCP duration/aspect are null, use 6 seconds and 
    - Declare their role in `summary` and `retention_analysis`.
    - Optionally place a short base-style alignment instruction as the very first line before the six sections when a first-frame lock remains (Motion Context Off).
 4. **Reference list is not 1:1 with files.** Apply the decision tree below. Character / identity / costume / style / object images are cited inline inside `<Subject N>` and do not get an independent `<Picture N>` item. Standalone `<Picture N>` only when that image is itself a frame, composition, or storyboard anchor.
-5. **Character count hard limit ≤ 7000.** Soft target for `detailed_description`: 350–500 English words for generation tasks.
+5. **Complete H3 prompt hard limit ≤ 7000 characters.** In a Director task, apply this independently to each segment's prompt text before JSON escaping. The complete film JSON has the separate UTF-8 byte budget in `director.limits.max_result_utf8_bytes`. Soft target for each prompt's `detailed_description`: 350–500 English words for generation tasks.
 6. **Background music.** When `motion.present` is true, continue any score described in `motion.audio_notes` unless `requirements` explicitly changes or removes it. Otherwise use `non_diegetic_music: N/A` unless the brief requests music. Diegetic music stays inside `detailed_description`.
 7. Output the finished prompt inside the single markdown fence required by `mcp.md`.
 

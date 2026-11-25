@@ -207,7 +207,7 @@ def test_workbench_routes_reject_untrusted_requests_and_queue_only_preparation(t
                         "\n\nTrigger words:\nbrass lock\n\nContinuity:\nMorning light."
                     )
                     assert set(catalog) == {"bundled:no-ref", "bundled:with-ref"}
-                    return "```text\n" + json.dumps(plan) + "\n```"
+                    return "```json\n" + json.dumps(plan, ensure_ascii=False) + "\n```"
                 assert task["selected"] == "opening" and task["segments"][0]["id"] == "arrival"
                 assert task["film"]["brief"] == document["film"]["brief"] and task["coverage"] == plan["coverage"]
                 assert set(catalog) == {"custom:handwritten"} and not context["motion"]["present"]
@@ -222,7 +222,7 @@ def test_workbench_routes_reject_untrusted_requests_and_queue_only_preparation(t
                         *replacement["bindings"],
                         {"asset_id": "chime", "role": "audio", "clip": {"start": 0, "end": 120}},
                     ]
-                return "```text\n" + json.dumps({"version": 1, "segment": replacement, "suggestions": ["Hold on the desk."]}) + "\n```"
+                return "```json\n" + json.dumps({"version": 1, "segment": replacement, "suggestions": ["Hold on the desk."]}) + "\n```"
 
             async def director_job(task: str, note: str) -> Dict[str, Any]:
                 value = {
@@ -256,6 +256,24 @@ def test_workbench_routes_reject_untrusted_requests_and_queue_only_preparation(t
                 draft = json.loads(result["draft"])
                 assert len(draft["segments"]) == 2 and draft["segments"][1]["prompt"] == "The lock on <Picture:box> opens."
                 assert draft["coverage"] == plan["coverage"] and not document["segments"]
+                # The film has its own budget: twenty individually short prompts
+                # can exceed 7000 characters in total without truncation or refusal.
+                long_prompt = "The camera crosses the quiet room. " * 170
+                plan["segments"] = [
+                    {**segments[i % 2], "id": segments[i]["id"] if i < 2 else f"scene-{i}", "prompt": long_prompt} for i in range(20)
+                ]
+                long_result = await director_job("plan", "")
+                assert long_result["state"] == "complete", long_result["error"]
+                long_draft = json.loads(long_result["draft"])
+                assert len(long_draft["segments"]) == 20 and all(s["prompt"] == long_prompt for s in long_draft["segments"])
+                # UTF-8 size, not the sum of prompt character counts, bounds the JSON.
+                # Each prompt remains below 7000 characters, but this film is too large.
+                for segment in plan["segments"]:
+                    segment["prompt"] = "镜头缓慢移动。" * 850
+                oversized = await director_job("plan", "")
+                assert oversized["state"] == "failed" and "budget" in oversized["error"] and not oversized["draft"]
+                assert not document["segments"]
+                plan["segments"] = segments
                 document["film"] = {"brief": "## Sound\n\nA bell rings throughout the film.\n"}
                 document.update({key: draft[key] for key in ("segments", "outline", "continuity", "coverage")}, selected="opening")
                 document["segments"][1].update(skill="custom:handwritten", skill_locked=True)
@@ -270,7 +288,7 @@ def test_workbench_routes_reject_untrusted_requests_and_queue_only_preparation(t
                 assert not result["draft"] and document["segments"][1]["bindings"] == segments[1]["bindings"]
                 result = await director_job("refine", "long chime")
                 assert result["state"] == "failed" and "asset chime" in result["error"] and not result["draft"]
-                assert calls == ["plan", "plan", "refine", "refine", "refine", "refine"] and not queued
+                assert calls == ["plan", "plan", "plan", "plan", "refine", "refine", "refine", "refine"] and not queued
             # Real operations still refuse concurrent generation immediately.
             owner.agents.guard.acquire()
             try:

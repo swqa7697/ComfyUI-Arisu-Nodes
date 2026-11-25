@@ -119,7 +119,9 @@ def activity(event: Dict[str, Any], provider: str = "") -> str:
         )
     elif kind in ("thread.started", "turn.started", "turn.completed", "result"):
         # The Grok result repeats assistant output and includes usage/session metadata.
-        add("progress", "Generation complete" if kind in ("turn.completed", "result") else "Generation started", kind)
+        add(
+            "progress", "Agent response received; validating output" if kind in ("turn.completed", "result") else "Generation started", kind
+        )
     else:
         add("details", "Agent event: " + str(kind))
     return "ARISU_ACTIVITY " + json.dumps({"version": 1, "entries": entries}, ensure_ascii=False)

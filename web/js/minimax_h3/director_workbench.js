@@ -44,6 +44,7 @@ const sessions = workbenchSessions(
 );
 const filmWidget = (node) => node.widgets.find((w) => w.name === 'film_json');
 const read = (node) => readDocument(filmWidget(node).value);
+const selectedAgent = (node) => (node.properties?.directorAgent === 'grok' ? 'grok' : 'codex');
 const selected = (doc) => doc.segments.find((segment) => segment.id === doc.selected);
 const label = (textContent) => el('span', { textContent });
 const row = (children) => el('div', { className: 'actions' }, children);
@@ -521,7 +522,7 @@ async function generate(ui, task) {
     state.message = '';
     const target = executionTarget(node);
     if (!target) throw new Error('The Director is absent from this workflow.');
-    const agent = state.agent;
+    const agent = selectedAgent(node);
     const motion = refine && (await revisionMotion(node, doc, index));
     const prompt = motion || { nodeId: target.id, output: { [target.id]: { class_type: TYPE, inputs: {} } } };
     prompt.output[prompt.nodeId].inputs.film_json = JSON.stringify(doc);
@@ -693,22 +694,30 @@ function openEditor(ui, title) {
     }
     const planning = title === FILM;
     if (planning || (segmentEditor && tab === REVISION)) {
-      const ready = state.agents?.agents?.[state.agent]?.ready;
+      const ready = state.agents?.agents?.[selectedAgent(node)]?.ready;
       foot.replaceChildren(
         row([
           ui.select(
             'Agent',
-            state.agent,
+            selectedAgent(node),
             [
               ['codex', 'Codex'],
               ['grok', 'Grok'],
             ],
             (v) => {
-              state.agent = v;
+              node.graph?.beforeChange?.();
+              node.graph?.canvasAction?.((canvas) => canvas.emitBeforeChange?.());
+              try {
+                node.properties ??= {};
+                node.properties.directorAgent = v;
+              } finally {
+                node.graph?.afterChange?.();
+                node.graph?.canvasAction?.((canvas) => canvas.emitAfterChange?.());
+              }
               render(node);
             },
           ),
-          ui.button('Agent settings', () => openAgentSettings(state.agent)),
+          ui.button('Agent settings', () => openAgentSettings(selectedAgent(node))),
           ...(!ready ? [meta('Agent unavailable')] : []),
         ]),
         action(
@@ -888,10 +897,12 @@ function render(node) {
   const library = launcher(ui, LIBRARY);
   library.ariaLabel = LIBRARY;
   library.append(text('span', String(doc.assets.length), 'count'));
-  const ready = state.agents?.agents?.[state.agent]?.ready;
+  const ready = state.agents?.agents?.[selectedAgent(node)]?.ready;
   const message = state.message || ((run.running || run.hasOutput) && run.directorSubmission?.context);
   const feedback = el('div', { className: 'status', role: 'status' }, [
-    ...(!run.status && !state.message ? [label((state.agent === 'codex' ? 'Codex' : 'Grok') + (ready ? ' ready' : ' unavailable'))] : []),
+    ...(!run.status && !state.message
+      ? [label((selectedAgent(node) === 'codex' ? 'Codex' : 'Grok') + (ready ? ' ready' : ' unavailable'))]
+      : []),
     status,
     elapsed,
     ...(message ? [label(' ' + message)] : []),
@@ -987,7 +998,7 @@ app.registerExtension({
     chain('onNodeCreated', function () {
       const body = el('div', { className: 'arisu-director' });
       forwardToCanvas(body);
-      nodes.set(this, { body, agent: 'codex', message: '', revisions: new Map() });
+      nodes.set(this, { body, message: '', revisions: new Map() });
       sessions.views.add(this);
       sessions.bindSession(this);
       const w = filmWidget(this);

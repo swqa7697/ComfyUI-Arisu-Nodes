@@ -526,6 +526,27 @@ def inspect_director(page: Page, server: FixtureServer, name: str) -> str:
     node_id = add_node(page, "ArisuMiniMaxH3DirectorWorkbench")
     panel = page.locator(".arisu-director")
     setup = panel.get_by_role("button", name="Film Setup", exact=True)
+    # Agent choice belongs to the workflow, including refresh and undo/redo.
+    setup.click()
+    agent = page.get_by_role("combobox", name="Agent", exact=True)
+    expect(agent).to_have_value("codex")
+    agent.select_option("grok")
+    page.keyboard.press("Escape")
+    page.reload()
+    setup.click()
+    expect(agent).to_have_value("grok")
+    page.evaluate("window.comfyAPI.app.app.extensionManager.workflow.activeWorkflow.changeTracker.captureCanvasState()")
+    agent.select_option("codex")
+    page.keyboard.press("Escape")
+    page.evaluate("window.comfyAPI.app.app.extensionManager.workflow.activeWorkflow.changeTracker.undo()")
+    setup.click()
+    expect(agent).to_have_value("grok")
+    page.keyboard.press("Escape")
+    page.evaluate("window.comfyAPI.app.app.extensionManager.workflow.activeWorkflow.changeTracker.redo()")
+    setup.click()
+    expect(agent).to_have_value("codex")
+    agent.select_option("grok")
+    page.keyboard.press("Escape")
     # Manual writing is available before the first plan.
     screenshot(page, name, "director-empty")
     panel.get_by_role("button", name="Add segment").click()
@@ -597,6 +618,7 @@ def inspect_director(page: Page, server: FixtureServer, name: str) -> str:
     expect(page.locator(".arisu-director .status")).to_contain_text("Output ready to apply")
     assert len(server.generation_requests) == before + 1
     planned = server.generation_requests[-1]
+    assert planned["options"]["agent"] == "grok"
     assert not planned["director"].get("request") and not planned["options"]["motion_enabled"]
     submitted = json.loads(planned["prompt"][planned["node_id"]]["inputs"]["film_json"])["film"]
     assert submitted["brief"] == requirements and submitted["target_runtime"] == "0.2 min"

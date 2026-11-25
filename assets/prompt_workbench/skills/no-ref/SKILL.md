@@ -22,7 +22,7 @@ This skill writes T2VA / I2VA / FL2VA / L2VA only. Keep that field order even if
    - `overall_soundscape:`
    - `non_diegetic_music:`
 3. Read `references/base-en.txt` and follow its shot notation, camera vocabulary, speaker IDs, `<d>` dialogue format, and examples exactly.
-4. **Character count hard limit ≤ 7000.** Soft target: keep tight; when keyframe images carry visual load the prompt can be shorter.
+4. **Complete H3 prompt hard limit ≤ 7000 characters.** In a Director task, apply this independently to each segment's prompt text before JSON escaping. The complete film JSON has the separate UTF-8 byte budget in `director.limits.max_result_utf8_bytes`. Soft target: keep tight; when keyframe images carry visual load the prompt can be shorter.
 5. **Background music.** When `motion.present` is true, continue any score described in `motion.audio_notes` unless `requirements` explicitly changes or removes it. Otherwise use `non_diegetic_music: N/A` unless the brief requests music. Diegetic music belongs inside the multimodal description.
 6. Output the finished prompt inside the single markdown fence required by `mcp.md`.
 
@@ -96,7 +96,7 @@ Duration and aspect come from MCP; if null, use 6 seconds and 16:9.
 - Prefer hard cuts over dissolves unless the user asks.
 - When a still-active keyframe is supplied, never re-describe its static appearance at length; anchor once then move forward.
 - For FL2VA (Motion Context Off) favor a single continuous shot so the model can interpolate cleanly from the starting pose to the last-frame pose. If Motion Context is On, there is no first-frame pose; open from the pinned closing state and land on last if present.
-- Spell every readable on-screen string in double quotes; add “do not misspell, do not add extra text”.
+- Spell every readable on-screen string in double quotes; add "do not misspell, do not add extra text".
 - Camera motion is written as natural English inside the shot, never as trailing tags.
 - **LoRA trigger words**: when `trigger_words` is nonempty, place it at the very start of `integrated_multimodal_description` (right after the colon or as the first tokens of `[Shot 1]`).
 

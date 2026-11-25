@@ -226,12 +226,14 @@ class DirectorTask:
         if "ARISU_POLICY_REFUSAL" in text:
             raise ValueError("Request refused by Workbench policy.")
         lines = text.strip().splitlines()
-        if len(lines) < 3 or lines[0] not in ("```text", "```markdown", "```") or lines[-1] != "```":
-            raise ValueError("Incomplete Director response. Check the single-task output budget or shorten the brief.")
+        if len(lines) < 3 or lines[0] not in ("```json", "```text", "```markdown", "```") or lines[-1] != "```":
+            raise ValueError(
+                "Invalid Director response format. Expected one JSON fence; text, markdown, or unlabeled fences are also accepted."
+            )
         try:
             raw = h3_json("\n".join(lines[1:-1]))
         except ValueError:
-            raise ValueError("Incomplete or malformed Director JSON. Shorten the brief if the agent reached its output budget.") from None
+            raise ValueError("Incomplete or malformed Director JSON; a token limit has not been confirmed.") from None
         result = director.validate_draft(self.document, self.task, raw)
         fixed = self.fixed_choices()
         rows: List[Dict[str, Any]] = result["segments"] if self.task == "plan" else [result["segment"]]

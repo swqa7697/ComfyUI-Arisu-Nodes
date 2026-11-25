@@ -71,7 +71,7 @@ The pinned head is not a suggestion. Shot 1 must not describe a different headco
 
 ## Audio on continuation clips
 
-- Read `motion.audio_notes` for the previous clip’s sound. Continue the described ambience, voices, ongoing effects, and background music across the join unless `requirements` explicitly changes them. Change only the requested elements. This writing rule also applies when `motion.audio_context_length` is zero.
+- Read `motion.audio_notes` for the previous clip's sound. Continue the described ambience, voices, ongoing effects, and background music across the join unless `requirements` explicitly changes them. Change only the requested elements. This writing rule also applies when `motion.audio_context_length` is zero.
 - Carry ambient sound into `overall_soundscape` and any continuing score into `non_diegetic_music`. For example, if the notes describe rain over a slow piano score and the brief changes only the camera, keep both the rain and the same piano score.
 - New spoken lines start after the airlock. If audio notes are empty, use the brief and the usual music default. Stills only supply visual evidence.
 - Do not cite the previous clip's generated soundtrack as a reference audio asset.

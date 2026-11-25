@@ -23,8 +23,8 @@ part of a mixed prohibited request. Do not copy executable code into the output.
 
 For an allowed request, return exactly one nonempty fenced block labeled markdown
 or text (an unlabeled fence is also accepted), containing only the finished H3
-prompt. When get_context contains the host's director field, the block contains
-the versioned JSON film plan or single replacement segment specified by
+prompt. When get_context contains the host's director field, use one json fence
+instead, containing the versioned JSON film plan or single replacement segment specified by
 sequence-director. Read each chosen writing SKILL.md via its catalog path.
 Apply writing guidance inside that segment; never add inner fences. Use only
 the task-level format defined by the host. No nested fences, reasoning, questions or commentary outside the fence.

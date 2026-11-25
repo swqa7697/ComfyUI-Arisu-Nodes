@@ -481,11 +481,19 @@ class DockerAgents:
         name = self.namespace + "-generate-" + uuid.uuid4().hex
         result: List[str] = []
         incomplete = False
+        response_error = ""
 
         def receive(line: str):
-            nonlocal incomplete
+            nonlocal incomplete, response_error
             if line.rstrip() == "ARISU_DIRECTOR_INCOMPLETE":
                 incomplete = True
+            if line.startswith("ARISU_DIRECTOR_ERROR "):
+                reason = json.loads(line.removeprefix("ARISU_DIRECTOR_ERROR ")).get("reason")
+                response_error = {
+                    "format": "The Director response has an invalid format. Expected one JSON fence; text, markdown, or unlabeled fences are also accepted. See the agent response in the logs.",
+                    "json": "The Director response contains incomplete or malformed JSON. See the agent response in the logs; a token limit has not been confirmed.",
+                    "budget": "The Director task exceeded the provider context/output limit or the host's 256 KiB response limit. See the logs for the reported limit.",
+                }.get(reason, "The Director response failed validation. See the logs.")
             if line.startswith("ARISU_RESULT "):
                 result.append(json.loads(line.removeprefix("ARISU_RESULT "))["final"])
 
@@ -509,6 +517,8 @@ class DockerAgents:
                 receive,
             )
         except ValueError:
+            if response_error:
+                raise ValueError(response_error) from None
             if incomplete:
                 raise ValueError(
                     "The Director response is incomplete or exceeds the single-task context or output budget. Shorten the brief or target runtime and try again."

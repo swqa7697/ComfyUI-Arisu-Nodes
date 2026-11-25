@@ -12,7 +12,7 @@ import sys
 import tempfile
 from typing import Any, Dict, Iterator, List, Tuple
 
-from contract import POLICY_REVISION, DirectorBudgetError, context, final_response, read_text
+from contract import POLICY_REVISION, DirectorBudgetError, DirectorResponseError, context, final_response, read_text
 from events import ActivityStream, EventValidationError, diagnostic
 from gate import AUDIT
 from runtime import Runtime, stop_on_signal
@@ -87,7 +87,9 @@ def generate(agent: str, options: Dict[str, Any]):
     manifest = context()
     director = manifest.get("director")
     instruction = (
-        "Read the complete Director task and skills via Workbench MCP. Return the structured film or segment draft." if director else PROMPT
+        "Read the complete Director task and skills via Workbench MCP. Return the structured film or segment draft in one json fence."
+        if director
+        else PROMPT
     )
     prompt = instruction + "\nAttachment identity index (image order is one-based):\n" + json.dumps(manifest["assets"], ensure_ascii=False)
     final = ""
@@ -166,7 +168,7 @@ def generate(agent: str, options: Dict[str, Any]):
             try:
                 payload = json.loads("\n".join(final.strip().splitlines()[1:-1]))
             except (ValueError, RecursionError):
-                raise DirectorBudgetError("Director output is incomplete or invalid JSON.") from None
+                raise DirectorResponseError("json") from None
             if not isinstance(payload, dict):
                 raise ValueError("Director response must be a structured plan or replacement.")
             segments = payload.get("segments") if director["task"] == "plan" else [payload.get("segment")]
@@ -210,7 +212,10 @@ def main():
             try:
                 generate(agent, json.loads(sys.stdin.buffer.read(65536)))
             except DirectorBudgetError:
-                print("ARISU_DIRECTOR_INCOMPLETE", flush=True)
+                print('ARISU_DIRECTOR_ERROR {"reason": "budget"}', flush=True)
+                raise
+            except DirectorResponseError as error:
+                print("ARISU_DIRECTOR_ERROR " + json.dumps({"reason": error.reason}), flush=True)
                 raise
         else:
             raise ValueError("unsupported action")
