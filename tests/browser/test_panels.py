@@ -11,6 +11,7 @@ from playwright.sync_api import Locator, Page, expect, sync_playwright
 from tests.browser.support.assembly import inspect_assembly
 from tests.browser.support.director import edit_segment, inspect_project_render, inspect_render_recovery
 from tests.browser.support.harness import ASSEMBLY, DRAFT, STUDIO, WORKBENCH, FixtureServer, add_node, browser_page, contained, screenshot
+from tests.browser.support.node_layers import inspect_node_layers
 
 pytestmark = pytest.mark.browser
 
@@ -515,6 +516,7 @@ def test_resource_studio():
                     assert page.evaluate("Array.from(window.comfyAPI.app.app.canvas.ds.offset)") != offset
                     contained(page, ".arisu-studio")
                     screenshot(page, name, "canvas")
+                    inspect_node_layers(page, name)
         finally:
             browser.close()
 

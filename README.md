@@ -61,6 +61,7 @@ JSONC supports comments; omit trailing commas.
 
 #### Optional setup
 
+- **Node layers:** open **Settings → Arisu Nodes → Workflow**. **Save Node Layer Order** defaults to off; enable it to record the current overlap order when saving. **Restore Node Layer Order** defaults to on and restores recorded layers when loading, independently of saving. Both options apply to all workflows, including those without Arisu nodes, and cover subgraphs. Turning saving off keeps existing records unchanged. Changing the restore option takes effect on the next load. Layer records travel with the workflow JSON; another installation needs this extension to restore them.
 - **Agent generation:** install Docker with Linux container support and give the ComfyUI process access to its daemon.
   Open **Settings → Arisu Nodes → Prompt Workbench → Agents** to build an agent image, sign in,
   and select a model and reasoning effort. Docker Desktop must use Linux containers on macOS/Windows. Provider accounts and settings are shared by users of the ComfyUI instance.
