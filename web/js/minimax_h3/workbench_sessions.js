@@ -246,5 +246,13 @@ export function workbenchSessions(nodes, render, notify, messages, onComplete) {
     }
     reapSessions();
   }
-  return { bindSession, views, updateRun, generate, cancelGeneration, remove };
+
+  function resetSession(node) {
+    const run = nodes.get(node)?.run;
+    if (run?.node !== node) return;
+    disposeSession(run);
+    run.node = null;
+    bindSession(node);
+  }
+  return { bindSession, views, updateRun, generate, cancelGeneration, resetSession, remove };
 }

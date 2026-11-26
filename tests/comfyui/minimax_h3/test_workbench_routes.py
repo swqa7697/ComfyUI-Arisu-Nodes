@@ -205,6 +205,10 @@ def test_workbench_routes_reject_untrusted_requests_and_queue_only_preparation(t
                 "assets": [{"id": "box", "kind": "image", "root": "input", "path": "prop.png", "muted": False, "note": "The brass lock"}],
                 "segments": [],
                 "selected": "",
+                # Earlier versions left these applied fields in a cleared film.
+                "outline": "The previous twelve segments",
+                "continuity": "The previous ending",
+                "coverage": {"An old requirement": []},
             }
             document["assets"].extend(
                 [
@@ -271,6 +275,7 @@ def test_workbench_routes_reject_untrusted_requests_and_queue_only_preparation(t
                 catalog = {row["id"]: row for row in task["writing_skills"]}
                 assert all((skill / row["path"]).is_file() for row in catalog.values())
                 if task["task"] == "plan":
+                    assert (task["segments"], task["outline"], task["continuity"], task["coverage"]) == ([], "", "", {})
                     assert task["film"]["target_runtime"] == "2 min"
                     assert task["film"]["brief"] == (
                         "# Find the red box\n\nKeep  **this**  formatting.\n\nRequired story elements:\nOpen the box"

@@ -20,16 +20,16 @@ export const ASPECTS = [
   '21:9 (Ultrawide)',
 ];
 
+export function emptyPlan() {
+  return { outline: '', continuity: '', coverage: {}, segments: [], selected: '' };
+}
+
 export function readDocument(text) {
   const doc = text ? JSON.parse(text) : { version: 1 };
   if (doc?.version !== 1) throw new Error('Unsupported Director film document.');
   const result = {
-    outline: '',
-    continuity: '',
-    coverage: {},
+    ...emptyPlan(),
     assets: [],
-    segments: [],
-    selected: '',
     ...doc,
     film: { ...DEFAULT_FILM, ...doc.film },
   };
@@ -66,7 +66,8 @@ export function readDocument(text) {
     .filter(Boolean)
     .join('\n\n');
   result.film = film;
-  return result;
+  // Saved films from before a full reset can still carry the old plan beside an empty sequence.
+  return result.segments.length ? result : Object.assign(result, emptyPlan());
 }
 
 export function clearLocations(text) {

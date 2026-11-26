@@ -218,6 +218,9 @@ def parse_document(text: str) -> Dict[str, Any]:
     _text(doc.setdefault("continuity", ""), "continuity decisions", 32768)
     if not isinstance(doc.setdefault("coverage", {}), dict):
         raise TypeError("invalid requirement coverage")
+    if not segments:
+        # Older workflows could retain applied planning notes after clearing the sequence.
+        doc.update(outline="", continuity="", coverage={})
     return doc
 
 

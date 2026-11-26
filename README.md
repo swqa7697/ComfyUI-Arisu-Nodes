@@ -100,7 +100,7 @@ Open **Film Setup** to write the **Film Requirements** in plain text or Markdown
 
 Review the coverage, timing, bindings and prompts, then apply the plan. The **Sequence** cards summarize each segment; click a card to open its editor, with **Prompt**, **Direction**, **Assets & Skill**, and **Revise Prompt** sections. Edit the film requirements to replan the sequence, or use **Revise Prompt** for a local change. Continuations automatically use verified predecessor tail images when available. Agent generation uses the same Docker and account settings as Prompt Workbench.
 
-To clear the sequence in one undoable edit, choose **Film Setup → Clear all segments** and confirm. You can reuse the film settings and library assets for the next sequence.
+To start a new plan from your film requirements, settings and asset library, choose **Film Setup → Clear all segments** and confirm. This clears the applied plan and discards any pending draft. One Undo restores the applied plan and its render records.
 
 Render the current segment to inspect its footage, or render the remaining segments in order. A continuation loads the previous take and trims its overlap from both picture and sound. Save the workflow to retain the plan and render records. Keep each take’s video and latent together under ComfyUI’s output directory for recovery.
 

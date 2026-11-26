@@ -7,7 +7,7 @@ import { moveItem, resourceId } from '../common/shared.js';
 import { registerTakeSource } from '../common/take_sources.js';
 import { hideWidget, setWidget } from '../common/widgets.js';
 import { agentStatus, openAgentSettings } from './agent_settings.js';
-import { ASPECTS, clearLocations, readDocument, secondsLabel, stableTags, timeline } from './director_document.js';
+import { ASPECTS, clearLocations, emptyPlan, readDocument, secondsLabel, stableTags, timeline } from './director_document.js';
 import { assetButton, bindingView, browseAssets, libraryView } from './director_media.js';
 import {
   installDirectorQueue,
@@ -308,12 +308,12 @@ function filmView(ui, doc) {
 }
 
 function confirmClearSegments(ui, parent, trigger) {
-  const count = ui.read().segments.length;
+  const { node, state } = ui;
   const title = 'Clear all segments?';
   const dialog = el('dialog', { className: 'arisu-director-dialog clear-segments-dialog', ariaLabel: title });
   const message = text(
     'p',
-    `Remove ${count} ${count === 1 ? 'segment' : 'segments'} and their prompts from this film. You can undo this change.`,
+    'Clear the segments, outline, continuity, coverage and render records. Undo restores the applied plan. This also discards drafts and cancels any active planning or revision.',
   );
   const cancel = ui.button('Cancel', () => dialog.close());
   const clear = ui.button('Clear segments', () => dialog.close('clear'));
@@ -329,15 +329,22 @@ function confirmClearSegments(ui, parent, trigger) {
     dialog.remove();
     if (!parent.open) return;
     if (dialog.returnValue === 'clear') {
+      const film = JSON.stringify({ ...ui.read(), ...emptyPlan() });
       // The dialog closes after the canvas has handled mouseup. Record this edit for both pointer and keyboard confirmation.
       const tracker = app.extensionManager?.workflow?.activeWorkflow?.changeTracker;
       tracker?.captureCanvasState?.();
-      ui.change((doc) => {
-        doc.segments = [];
-        doc.selected = '';
-        for (const ids of Object.values(doc.coverage)) ids.length = 0;
-      });
+      node.graph?.beforeChange?.();
+      try {
+        if (node.properties) delete node.properties.directorRenders;
+        setWidget(node, filmWidget(node), film);
+      } finally {
+        node.graph?.afterChange?.();
+      }
       tracker?.captureCanvasState?.();
+      state.revisions.clear();
+      state.message = '';
+      sessions.resetSession(node);
+      render(node);
       parent.querySelector('textarea')?.focus();
     } else trigger.focus();
   };
@@ -741,7 +748,17 @@ function openEditor(ui, title) {
     const planning = title === FILM;
     if (planning || (segmentEditor && tab === REVISION)) {
       const provider = state.agents?.agents?.[selectedAgent(node)];
-      if (clearSegments) clearSegments.disabled = !doc.segments.length || !!state.rendering;
+      if (clearSegments) {
+        const records = node.properties?.directorRenders;
+        const hasWork =
+          doc.segments.length ||
+          state.run?.running ||
+          state.run?.status ||
+          state.revisions.size ||
+          records?.pending ||
+          records?.takes?.length;
+        clearSegments.disabled = !hasWork || !!state.rendering;
+      }
       foot.replaceChildren(
         row([
           ui.select(
@@ -1076,16 +1093,28 @@ app.registerExtension({
       invalidate(this);
       const linked = this.inputs?.some((input) => input.name === 'film_json' && input.link != null);
       for (let i = (this.inputs?.length ?? 0) - 1; i >= 0; i--) if (this.inputs[i].name === 'film_json') this.removeInput(i);
+      const w = filmWidget(this);
       if (linked || !preservingSelections() || !app.configuringGraph) {
-        const w = filmWidget(this);
         w.value = clearLocations(w.value);
         if (this.properties) delete this.properties.directorRenders;
         if (linked) notify('warn', 'Film location wire removed. Reselect assets.');
-      } else if (this.properties?.directorRenders?.takes?.length) {
-        void refreshRenderTakes(this, read(this), () => render(this)).catch((error) => {
-          state.message = error.message;
-          render(this);
-        });
+      } else {
+        try {
+          const doc = read(this);
+          const records = this.properties?.directorRenders;
+          if (!doc.segments.length) {
+            w.value = JSON.stringify(doc);
+            if (this.properties) delete this.properties.directorRenders;
+          } else if (records?.takes?.length) {
+            void refreshRenderTakes(this, doc, () => render(this)).catch((error) => {
+              if (this.properties?.directorRenders !== records) return;
+              state.message = error.message;
+              render(this);
+            });
+          }
+        } catch {
+          // render() displays invalid saved documents and keeps the original widget value.
+        }
       }
       sessions.bindSession(this);
       render(this);

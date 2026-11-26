@@ -560,12 +560,13 @@ def inspect_director(page: Page, server: FixtureServer, name: str) -> str:
     page.get_by_role("button", name="Remove segment").click()
     requirements = "Follow a paper boat across the pond.\n\n## Must include\n- Launch the boat\n- Keep both segments short."
     expect(panel.locator("input, textarea, select")).to_have_count(0)
-    # Reopen saved settings, including a video that omits the optional soundtrack field.
+    # A legacy cleared film can carry the old outline and coverage beside an empty sequence.
     page.evaluate(
         """id => {
         const widget = window.comfyAPI.app.app.graph.getNodeById(id).widgets.find(w => w.name === 'film_json');
         const doc = JSON.parse(widget.value);
         doc.film.target_runtime = 'about 12 seconds';
+        Object.assign(doc, {outline:'Old sequence', continuity:'Old ending', coverage:{'Old requirement':[]}});
         doc.assets = [{id:'archive', kind:'video', root:'input', path:'clip.webm', clip:{start:0, end:2}}];
         widget.value = JSON.stringify(doc);
     }""",
@@ -582,6 +583,7 @@ def inspect_director(page: Page, server: FixtureServer, name: str) -> str:
     setup.click()
     film = page.get_by_role("dialog", name="Film Setup")
     contained(page, "dialog.arisu-director-dialog")
+    expect(film.get_by_text("Applied Plan and Coverage")).to_have_count(0)
     expect(film.locator("textarea")).to_have_count(1)
     brief = film.get_by_label("Film Requirements", exact=True)
     expect(brief).to_have_value("")
@@ -878,10 +880,16 @@ def inspect_director(page: Page, server: FixtureServer, name: str) -> str:
     assert restored["segments"][1]["bindings"] == [{"asset_id": asset_id, "role": "image"}]
     inspect_draft_assets(page, asset_id)
 
-    # Clear a populated sequence from Film Setup and recover the complete sequence with one Undo.
+    # Start over at a different runtime with the same brief and library, then recover the applied plan with one Undo.
+    setup.click()
+    target.fill("5")
+    brief.click()
     original = json.loads(widget_value(page, node_id, "film_json"))
     assert len(original["segments"]) == 2 and original["assets"] and any(original["coverage"].values())
-    setup.click()
+    assert original["film"]["target_runtime"] == "5 min" and original["outline"] and original["continuity"]
+    receipts = "id => window.comfyAPI.app.app.graph.getNodeById(id).properties.directorRenders"
+    original_receipts = page.evaluate(receipts, node_id)
+    assert original_receipts["takes"]
     clear = film.get_by_role("button", name="Clear all segments", exact=True)
     confirm = page.get_by_role("dialog", name="Clear all segments?", exact=True)
     cancel = confirm.get_by_role("button", name="Cancel", exact=True)
@@ -899,17 +907,33 @@ def inspect_director(page: Page, server: FixtureServer, name: str) -> str:
     expect(confirm).to_have_count(0)
     expect(brief).to_be_focused()
     expect(clear).to_be_disabled()
-    assert json.loads(widget_value(page, node_id, "film_json")) == {
-        **original,
-        "segments": [],
-        "selected": "",
-        "coverage": {key: [] for key in original["coverage"]},
-    }
+    cleared = {**original, "segments": [], "selected": "", "outline": "", "continuity": "", "coverage": {}}
+    assert json.loads(widget_value(page, node_id, "film_json")) == cleared
+    assert page.evaluate(receipts, node_id) is None
+    expect(film.get_by_text("Applied Plan and Coverage")).to_have_count(0)
+    expect(panel.get_by_role("button", name="Review Draft")).to_be_disabled()
+
+    # The next agent request contains only the author's inputs. An explicit clear can also discard a running first draft.
+    server.hold_generation = True
+    with page.expect_response("**/arisu/workbench/generate"):
+        film.get_by_role("button", name="Plan the film", exact=True).click()
+    fresh = server.generation_requests[-1]
+    assert json.loads(fresh["prompt"][fresh["node_id"]]["inputs"]["film_json"]) == cleared
+    assert fresh["workflow"] != planned["workflow"]
+    setup.click()
+    clear.click()
+    with page.expect_request("**/arisu/workbench/release") as release:
+        confirm.get_by_role("button", name="Clear segments", exact=True).click()
+    assert release.value.post_data_json["workflow"] == fresh["workflow"]
+    server.hold_generation = False
+    expect(clear).to_be_disabled()
+    expect(panel.get_by_role("button", name="Review Draft")).to_be_disabled()
     page.keyboard.press("Escape")
     expect(panel.get_by_role("button", name="Set up the film")).to_be_visible()
     page.evaluate("window.comfyAPI.app.app.extensionManager.workflow.activeWorkflow.changeTracker.undo()")
     expect(direction).to_be_visible()
     assert json.loads(widget_value(page, node_id, "film_json")) == original
+    assert page.evaluate(receipts, node_id) == original_receipts
     return node_id
 
 
