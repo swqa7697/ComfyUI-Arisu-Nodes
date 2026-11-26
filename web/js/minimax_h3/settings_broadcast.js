@@ -327,7 +327,7 @@ function checkCycles(output) {
   }
   for (const id of Object.keys(output)) visit(id);
 }
-function executionNodes() {
+export function executionNodes() {
   const result = [];
   const executionMap = new Map();
   for (const node of rootGraph()?.nodes ?? rootGraph()?._nodes ?? []) {

@@ -4,7 +4,7 @@ import { app } from '../../../../scripts/app.js';
 import { joinPath, resolveString } from '../common/prompt_paths.js';
 import { resourceId } from '../common/shared.js';
 import { readDocument, timing } from './director_document.js';
-import { executionTarget } from './settings_broadcast.js';
+import { executionNodes, executionTarget } from './settings_broadcast.js';
 
 const DIRECTOR = 'ArisuMiniMaxH3DirectorWorkbench';
 const ARISU_SAVER = 'ArisuSaveVideoSegment';
@@ -360,6 +360,63 @@ export function stopRender(node, detach = false) {
   }
 }
 
+function workflowNode(workflow, executionId) {
+  let nodes = workflow?.nodes;
+  let found;
+  for (const id of String(executionId).split(':')) {
+    found = nodes?.find((node) => String(node.id) === id);
+    nodes = workflow?.definitions?.subgraphs?.find((graph) => graph.id === found?.type)?.nodes;
+  }
+  return found;
+}
+
+function setWorkflowWidget(node, name, index, value) {
+  const values = node?.widgets_values;
+  if (Array.isArray(values)) values[index] = value;
+  else if (values) values[name] = value;
+  if (node?.widgets_values_named) node.widgets_values_named[name] = value;
+}
+
+// Director posts its own prompt ID for lost-response recovery. Run rgthree's seed queue handler
+// on the captured controls so each submitted take gets its seed and the live Last Seed button.
+function captureSeedHandlers({ output, workflow }) {
+  const handlers = [];
+  const shared = new Map();
+  for (const { id, node } of executionNodes()) {
+    const entry = output[id];
+    if (entry?.class_type !== 'Seed (rgthree)' || typeof entry.inputs.seed !== 'number' || typeof node.handleApiHijacking !== 'function')
+      continue;
+    const metadata = workflowNode(workflow, id);
+    const index = node.widgets.indexOf(node.seedWidget);
+    if (!metadata?.widgets_values || index < 0) continue;
+    // Instances of a subgraph can share one serialized seed widget. Draw once for that control.
+    const first = shared.get(metadata);
+    if (first?.mode === entry.inputs.seed) {
+      handlers.push(() => {
+        entry.inputs.seed = first.inputs.seed;
+      });
+      continue;
+    }
+    shared.set(metadata, { mode: entry.inputs.seed, inputs: entry.inputs });
+    const seedWidget = { name: node.seedWidget.name, value: entry.inputs.seed, options: { ...node.seedWidget.options } };
+    const captured = {
+      __proto__: node,
+      id,
+      mode: node.mode,
+      properties: { ...node.properties },
+      widgets: node.widgets.map((widget, i) => (i === index ? seedWidget : widget)),
+      seedWidget,
+      lastSeed: node.lastSeed,
+    };
+    handlers.push(() => {
+      captured.handleApiHijacking({ detail: { workflow, output } });
+      setWorkflowWidget(metadata, 'seed', index, entry.inputs.seed);
+      node.lastSeed = captured.lastSeed;
+    });
+  }
+  return handlers;
+}
+
 export async function renderSegments(node, document, remaining, onProgress = () => {}) {
   if (active.has(node)) throw new Error('A render sequence is already running.');
   const owner = { stopped: false, detached: false };
@@ -395,10 +452,13 @@ export async function renderSegments(node, document, remaining, onProgress = () 
     }
     if (owner.stopped) return;
     const director = executionTarget(node)?.id;
-    const prompt = await app.graphToPrompt();
-    // Object-valued widgets can be reactive proxies. Capture the JSON sent to /prompt once for the whole sequence.
-    const graph = JSON.parse(JSON.stringify(prompt.output));
+    // Object-valued widgets can be reactive proxies. Snapshot both representations together.
+    const serialized = await app.graphToPrompt();
+    const prompt = JSON.parse(JSON.stringify({ output: serialized.output, workflow: serialized.workflow }));
+    const { output: graph, workflow } = prompt;
     if (graph[director]?.class_type !== DIRECTOR) throw new Error('The selected Director node is absent from this workflow.');
+    const directorMetadata = workflowNode(workflow, director);
+    const seedHandlers = captureSeedHandlers(prompt);
     const ids = chain(graph, String(director), node);
     const project = projectOf(graph, ids);
     for (const [index, segment] of doc.segments.entries()) {
@@ -424,6 +484,8 @@ export async function renderSegments(node, document, remaining, onProgress = () 
       else graph[ids.saveVideo].inputs.filename_prefix = prefix;
       Object.assign(graph[ids.saveLatent].inputs, { filename_prefix: prefix, clip_index: 1 });
       if (owner.stopped) break;
+      setWorkflowWidget(directorMetadata, 'film_json', 0, graph[director].inputs.film_json);
+      for (const prepareSeed of seedHandlers) prepareSeed();
       records.pending = {
         id,
         segment: segment.id,
@@ -444,6 +506,7 @@ export async function renderSegments(node, document, remaining, onProgress = () 
             prompt: graph,
             prompt_id: id,
             client_id: api.clientId,
+            extra_data: { extra_pnginfo: { workflow } },
             partial_execution_targets: [ids.saveVideo, ids.saveLatent],
           }),
         });

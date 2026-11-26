@@ -128,6 +128,9 @@ def inspect_render_recovery(page: Page, director_id: str, server: FixtureServer)
             return
         key = body["prompt_id"]
         selected = json.loads(graph[director_id]["inputs"]["film_json"])["selected"]
+        workflow = body["extra_data"]["extra_pnginfo"]["workflow"]
+        saved_director = next(entry for entry in workflow["nodes"] if str(entry["id"]) == director_id)
+        assert saved_director["widgets_values"][0] == graph[director_id]["inputs"]["film_json"]
         subfolder = "arisu_director/" + key
         assert graph[save]["inputs"]["filename_prefix"] == graph[latent]["inputs"]["filename_prefix"] == subfolder + "/clip"
         assert set(body["partial_execution_targets"]) == {save, latent}
@@ -160,7 +163,7 @@ def inspect_render_recovery(page: Page, director_id: str, server: FixtureServer)
         const {app}=await import('/scripts/app.js'), {api}=await import('/scripts/api.js');
         const toPrompt=app.graphToPrompt, fetch=api.fetchApi;
         window.restoreDirectorFixture=()=>{app.graphToPrompt=toPrompt;api.fetchApi=fetch;};
-        app.graphToPrompt=async()=>({output:graph});
+        app.graphToPrompt=async()=>({output:graph, workflow:app.graph.serialize()});
         api.fetchApi=async function(path,...rest) {
             const result=await fetch.call(this,path,...rest);
             if(path==='/prompt' && window.dropDirectorResponse) {
@@ -376,7 +379,7 @@ def inspect_project_render(page: Page, server: FixtureServer, director_id: str):
         const toPrompt=app.graphToPrompt;
         window.directorProjectGraph=graph;
         window.restoreDirectorFixture=()=>{app.graphToPrompt=toPrompt;};
-        app.graphToPrompt=async()=>({output:graph});
+        app.graphToPrompt=async()=>({output:graph, workflow:app.graph.serialize()});
     }""",
         output,
     )

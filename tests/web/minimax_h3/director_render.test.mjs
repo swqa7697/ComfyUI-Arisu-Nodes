@@ -100,7 +100,9 @@ test('Director renders through either saver into the legacy or project layout an
   const director = makeNode({ id: 1, type: DIRECTOR, graph });
   const server = { prompts: [], inspected: [], removed: { video: new Set(), latent: new Set() } };
   let output;
-  app.graphToPrompt = async () => ({ output, workflow: {} });
+  const savedDirector = { id: 1, type: DIRECTOR, widgets_values: ['original'], widgets_values_named: { film_json: 'original' } };
+  const workflow = { nodes: [savedDirector], definitions: { subgraphs: [] } };
+  app.graphToPrompt = async () => ({ output, workflow });
   const render = (selected) => renderSegments(director, { ...FILM, selected }, false);
   const refresh = () => refreshRenderTakes(director, FILM);
   const last = () => server.prompts.at(-1);
@@ -295,8 +297,37 @@ test('Director renders through either saver into the legacy or project layout an
   const lora = { lora: 'film.safetensors', on: true, strength: 0.5 };
   output[sampler].inputs.model = ['14', 0];
   output[14] = { class_type: 'Power Lora Loader (rgthree)', inputs: { PowerLoraLoaderHeaderWidget: header, lora_1: lora } };
+  // rgthree resolves its special seeds on queue and writes the last value into its control and both prompt representations.
+  const seedId = '12:15';
+  const seed = makeNode({ id: 15, type: 'Seed (rgthree)', widgets: [{ name: 'seed', value: -1, options: { step: 10 } }] });
+  seed.seedWidget = seed.widgets[0];
+  seed.properties.randomMin = 700;
+  seed.lastSeedButton = {};
+  const seedCalls = [];
+  seed.handleApiHijacking = function ({ detail }) {
+    seedCalls.push([this.id, this.seedWidget.value, this.properties.randomMin, this.lastSeed]);
+    const value = this.seedWidget.value === -1 ? this.properties.randomMin + seedCalls.length : this.seedWidget.value;
+    detail.output[this.id].inputs.seed = value;
+    detail.workflow.definitions.subgraphs[0].nodes[0].widgets_values[this.widgets.indexOf(this.seedWidget)] = value;
+    this.lastSeed = value;
+    this.lastSeedButton.label = String(value);
+  };
+  graph.nodes.push({ getInnerNodes: () => [{ node: seed, id: seedId }] });
+  const sharedSeedId = '17:15';
+  graph.nodes.push({ getInnerNodes: () => [{ node: seed, id: sharedSeedId }] });
+  const savedSeed = { id: 15, type: seed.type, widgets_values: [-1], widgets_values_named: { seed: -1 } };
+  workflow.nodes.push({ id: 12, type: 'sampling' }, { id: 17, type: 'sampling' });
+  workflow.definitions.subgraphs.push({ id: 'sampling', nodes: [savedSeed] });
+  output[seedId] = { class_type: seed.type, inputs: { seed: -1 } };
+  output[sharedSeedId] = { class_type: seed.type, inputs: { seed: -1 } };
+  output[16] = { class_type: 'ComfySwitchNode', inputs: { switch: false, on_false: [seedId, 0], on_true: [sharedSeedId, 0] } };
+  output[sampler].inputs.seed = ['16', 0];
   await renderSegments(director, edited, true, () => {
-    if (server.prompts.length > beforeInvalid) lora.strength = 1;
+    if (server.prompts.length > beforeInvalid) {
+      lora.strength = 1;
+      seed.seedWidget.value = 42;
+      seed.properties.randomMin = 900;
+    }
   });
   assert.deepEqual(
     server.prompts
@@ -309,4 +340,27 @@ test('Director renders through either saver into the legacy or project layout an
   );
   assert.deepEqual(last().prompt[14].inputs.PowerLoraLoaderHeaderWidget, header);
   assert.deepEqual(last().prompt[toggle], output[toggle], 'the linked switch stays under workflow control');
+  assert.deepEqual(seedCalls, [
+    [seedId, -1, 700, undefined],
+    [seedId, -1, 700, 701],
+  ]);
+  assert.deepEqual([seed.lastSeed, seed.lastSeedButton.label], [702, '702']);
+  for (const [i, body] of server.prompts.slice(beforeInvalid).entries()) {
+    const meta = body.extra_data.extra_pnginfo.workflow;
+    const film = body.prompt[1].inputs.film_json;
+    const stored = meta.definitions.subgraphs[0].nodes[0];
+    assert.deepEqual([meta.nodes[0].widgets_values[0], meta.nodes[0].widgets_values_named.film_json], [film, film]);
+    assert.deepEqual([body.prompt[seedId].inputs.seed, stored.widgets_values[0], stored.widgets_values_named.seed], Array(3).fill(701 + i));
+    assert.equal(body.prompt[sharedSeedId].inputs.seed, body.prompt[seedId].inputs.seed);
+    assert.deepEqual(body.prompt[16], output[16]);
+  }
+  assert.deepEqual([output[seedId].inputs.seed, savedSeed.widgets_values[0], savedSeed.widgets_values_named.seed], [-1, -1, -1]);
+  assert.equal(savedDirector.widgets_values[0], 'original');
+  await renderSegments(director, edited, true);
+  assert.equal(seedCalls.length, 2, 'skipping completed takes does not advance the seed');
+  output[seedId].inputs.seed = ['13', 0];
+  output[sharedSeedId].inputs.seed = ['13', 0];
+  await render('a');
+  assert.deepEqual(last().prompt[seedId].inputs.seed, ['13', 0], 'a linked seed stays under workflow control');
+  assert.equal(seedCalls.length, 2);
 });
