@@ -55,6 +55,10 @@ class AgentUpdateRequired(ValueError):
     """The installed agent image must be rebuilt for this Workbench."""
 
 
+def _supports_context_window(agent: str, model: Dict[str, Any], size: Any) -> bool:
+    return agent == "grok" and type(size) is int and size > 0 and size in model.get("context_windows", [])
+
+
 def image_source_digest(agent: str) -> str:
     """Fingerprint the build recipe and the local files it uses for this provider."""
     if agent not in AGENT_IDS:
@@ -361,6 +365,9 @@ class DockerAgents:
                         "model": model["id"],
                         "effort": effort if effort in efforts else "medium" if "medium" in efforts else next(iter(efforts), ""),
                     }
+                    window = choice.get("context_window")
+                    if choice.get("model") == model["id"] and _supports_context_window(agent, model, window):
+                        info["selection"]["context_window"] = window
                 result["agents"][agent] = info
         except (OSError, ValueError, subprocess.SubprocessError):
             result["error"] = "Docker is unavailable to the ComfyUI server."
@@ -370,18 +377,23 @@ class DockerAgents:
             self.discovery.release()
         return {**result, "operation": self.operation}
 
-    def configure(self, agent: str, model: str, effort: str):
+    def configure(self, agent: str, model: str, effort: str, context_window: Optional[int] = None):
         """Persist validated preferences outside workflow state."""
-        info = self.status()["agents"].get(agent, {})
-        selected = next((item for item in info.get("models", []) if item["id"] == model), None)
-        if selected is None or effort not in selected.get("efforts", []) + ([""] if not selected.get("efforts") else []):
-            raise ValueError("unsupported model or effort")
-        if effort and effort not in BASIC_EFFORTS:
-            raise ValueError("unsupported reasoning effort")
-        preferences = {"model": model, "effort": effort}
-        save_workbench_preferences(self.directory, {agent: preferences})
-        self.preferences[agent] = preferences
-        self._checked = 0
+        with self.discovery:
+            info = self.status()["agents"].get(agent, {})
+            selected = next((item for item in info.get("models", []) if item["id"] == model), None)
+            if selected is None or effort not in selected.get("efforts", []) + ([""] if not selected.get("efforts") else []):
+                raise ValueError("unsupported model or effort")
+            if effort and effort not in BASIC_EFFORTS:
+                raise ValueError("unsupported reasoning effort")
+            if context_window is not None and not _supports_context_window(agent, selected, context_window):
+                raise ValueError("unsupported context window for this model")
+            preferences: Dict[str, Any] = {"model": model, "effort": effort}
+            if agent == "grok":
+                preferences["context_window"] = context_window
+            save_workbench_preferences(self.directory, {agent: preferences})
+            self.preferences[agent] = preferences
+            self._checked = 0
 
     def stream(
         self,

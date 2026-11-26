@@ -72,6 +72,12 @@ node's **Setup** shortcut to the same interface. Build an image, complete the
 device-code login shown in Activity, and choose a supported model and effort.
 Only low, medium, and high efforts are exposed.
 
+Under **Grok Build → Context window (tokens)**, **Model default** follows the selected
+model and shows its default token count when available. Choose a larger listed window
+to give Grok more room for the brief, reference images, and conversation. Prompt and
+Director Workbench use the saved choice from the next generation. Selecting another
+model resets the window to its default.
+
 Docker must already be installed and accessible to the ComfyUI server process.
 If unavailable, the left column is disabled and Finalized prompt stays editable.
 Images use `python:3.13-slim-trixie` and official standalone CLI distributions.

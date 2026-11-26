@@ -64,7 +64,7 @@ JSONC supports comments; omit trailing commas.
 - **Node layers:** open **Settings → Arisu Nodes → Workflow**. **Save Node Layer Order** defaults to off; enable it to record the current overlap order when saving. **Restore Node Layer Order** defaults to on and restores recorded layers when loading, independently of saving. Both options apply to all workflows, including those without Arisu nodes, and cover subgraphs. Turning saving off keeps existing records unchanged. Changing the restore option takes effect on the next load. Layer records travel with the workflow JSON; another installation needs this extension to restore them.
 - **Agent generation:** install Docker with Linux container support and give the ComfyUI process access to its daemon.
   Open **Settings → Arisu Nodes → Prompt Workbench → Agents** to build an agent image, sign in,
-  and select a model and reasoning effort. Docker Desktop must use Linux containers on macOS/Windows. Provider accounts and settings are shared by users of the ComfyUI instance.
+  and select a model and reasoning effort. Under **Grok Build**, keep **Model default** or choose a supported **Context window (tokens)** for both Workbench nodes. Docker Desktop must use Linux containers on macOS/Windows. Provider accounts and settings are shared by users of the ComfyUI instance.
   If either Workbench reports an outdated image, select the named provider in **Agents** and click **Update CLI**. The update preserves your login.
 - **Custom prompt skills:** place each skill folder, including its `SKILL.md` and supporting files, at
   `user/__arisu_nodes/skills/<skill-name>/` under ComfyUI's user directory. The pack creates the `skills`

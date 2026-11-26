@@ -268,7 +268,7 @@ class Workbench:
             identifier = uuid.uuid4().hex
             destination = self.temp / identifier
             destination.mkdir(mode=0o700)
-            job = Generation(identifier, node_id, workflow, options, provider["selection"], destination, graph, director=director)
+            job = Generation(identifier, node_id, workflow, options, provider["selection"].copy(), destination, graph, director=director)
             graph[node_id]["inputs"]["prepare_job"] = identifier
             with self.lock:
                 if workflow in self.released:

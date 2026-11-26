@@ -16,6 +16,7 @@ from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 from PIL import Image
 
+from src.arisu_nodes.common.paths import CONFIG_NAME, CONFIG_TEMPLATE, read_configuration
 from src.arisu_nodes.minimax_h3 import workbench_routes
 from src.arisu_nodes.minimax_h3.agent_docker import IMAGE_SOURCE_LABEL, POLICY_REVISION, image_source_digest
 from src.arisu_nodes.minimax_h3.workbench import Generation, Workbench
@@ -146,6 +147,41 @@ def test_workbench_routes_reject_untrusted_requests_and_queue_only_preparation(t
             await asyncio.sleep(0.01)
             response = await client.get("/arisu/workbench/jobs/" + identifier)
             assert (await response.json())["draft"] == "review me"
+            # Both nodes use the settings action and capture the provider selection at admission.
+            owner.directory.mkdir()
+            (owner.directory / CONFIG_NAME).write_text(CONFIG_TEMPLATE)
+            with monkeypatch.context() as local:
+                model = {"id": "test", "efforts": ["medium"], "context_windows": [256000, 500000], "default_context_window": 256000}
+                local.setattr(owner.agents, "status", real_status)
+                local.setattr(shutil, "which", lambda name: "/test/docker")
+                local.setattr(owner.agents, "command", lambda *args, **kwargs: "linux")
+                local.setattr(owner.agents, "owned", lambda *args: True)
+                catalogue = {"authenticated": True, "policy_ready": True, "policy_revision": POLICY_REVISION, "models": [model]}
+                local.setattr(owner.agents, "invoke", lambda *args: catalogue)
+                legacy = real_status(refresh=True)["agents"]["grok"]["selection"]
+                assert legacy == {"model": "test", "effort": "medium"}
+                configure = {"agent": "grok", "action": "configure", **legacy}
+                action = "/arisu/workbench/action"
+                assert (await client.post(action, json={**configure, "context_window": 500000})).status == 200
+                assert read_configuration(owner.directory)["workbench"]["grok"]["context_window"] == 500000
+                for agent, invalid in (("grok", 128000), ("grok", "500000"), ("grok", 500000.0), ("grok", True), ("codex", 500000)):
+                    assert (await client.post(action, json={**configure, "agent": agent, "context_window": invalid})).status == 400
+                pending = await client.post(
+                    "/arisu/workbench/generate",
+                    json={"node_id": "w", "workflow": "grok-tab", "prompt": graph, "options": {"agent": "grok"}},
+                )
+                assert pending.status == 202
+                job = owner.get((await pending.json())["id"])
+                assert job.selection["context_window"] == 500000
+                assert await asyncio.to_thread(owner.agents.guard.acquire, True, 5)
+                owner.agents.guard.release()
+                model["context_windows"] = [256000]
+                assert real_status(refresh=True)["agents"]["grok"]["selection"] == legacy
+                assert (await client.post(action, json={**configure, "context_window": None})).status == 200
+                model["context_windows"] = [256000, 500000]
+                assert real_status(refresh=True)["agents"]["grok"]["selection"] == legacy
+                assert read_configuration(owner.directory)["workbench"]["grok"]["context_window"] is None
+                assert job.selection["context_window"] == 500000
             # Cross the whole Director HTTP/CPU/attachment/review path, replacing only the provider.
             # The planning call returns both prompts. Refinement returns one draft and preserves the neighbor.
             root = tmp_path / "media"

@@ -16,6 +16,10 @@ A film can contain up to 128 segments and 256 library assets. The saved film doc
 
 If Director reports an outdated agent image, open **Agent settings**, select the named provider, and click **Update CLI** before planning or refining a segment.
 
+For longer briefs and plans, open **Agent settings → Grok Build → Context window (tokens)**.
+Keep **Model default** or choose a larger window offered by the selected model.
+This setting applies to both film planning and segment refinement.
+
 ## Review a Segment
 
 The **Sequence** cards show each segment’s intent, timing, transition, asset count, and render status. Click a card to select the segment and open its editor, or use **+ Add** to write a segment manually. **Prompt** holds the finalized text and any rendered footage. **Direction** holds the intent, timing, transition, opening and closing states, and sequence order. **Assets & Skill** holds the bound assets and writing skill. Edits are saved as you work. Use the arrow keys to switch focused tabs; close the dialog, choose **Done**, or press Escape to return to the cards. The render controls act on the selected card. Library assets are available to the director during planning. Only the current segment’s bindings are sent to Hybrid. Select a bound thumbnail to override the crop or clip interval for that segment. Video bindings also have a segment soundtrack setting.

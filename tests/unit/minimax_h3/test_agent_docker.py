@@ -16,6 +16,7 @@ import time
 from contextlib import nullcontext
 from pathlib import Path
 from typing import Any, Dict, List
+from unittest.mock import Mock
 
 import pytest
 from PIL import Image
@@ -263,6 +264,7 @@ def test_agent_update_preserves_working_image_and_settings_reject_unavailable_mo
         "source": {"type": "requirements", "path": "/etc/grok/requirements.toml"},
     }
     configured = {"mcpServers": [{"name": "workbench", "target": "/usr/local/bin/python"}]}
+    authenticated = False
 
     def discover(args: List[str], **kwargs: Any) -> subprocess.CompletedProcess:
         if args[-1] == "--version":
@@ -274,6 +276,8 @@ def test_agent_update_preserves_working_image_and_settings_reject_unavailable_mo
         if args[-1] == "--json":
             return subprocess.CompletedProcess(args, 0, json.dumps(configured))
         if args[-1] == "models":
+            if authenticated:
+                return subprocess.CompletedProcess(args, 0, "You are using XAI_API_KEY.")
             return subprocess.CompletedProcess(args, 1, "Login required")
         raise AssertionError(f"unexpected discovery command: {args!r}")
 
@@ -287,6 +291,25 @@ def test_agent_update_preserves_working_image_and_settings_reject_unavailable_mo
             configured["hooks"] = hooks
             agents.manage("grok", "build")
             assert tagged[-1] == agents.image("grok") and agents.operation["state"] == "complete"
+        authenticated = True
+        discovery.setattr(
+            grok_provider,
+            "rpc",
+            lambda *args: {
+                "availableModels": [
+                    {
+                        "modelId": "multi",
+                        "_meta": {"totalContextTokens": 256000, "contextWindows": [500000, 256000, 500000, True, 1.5, -1]},
+                    },
+                    {"modelId": "single", "_meta": {"totalContextTokens": 128000}},
+                    {"modelId": "unknown", "_meta": {"totalContextTokens": True, "contextWindows": "500k"}},
+                ]
+            },
+        )
+        multi, single, unknown = grok_provider.inspect()["models"]
+        assert (multi["default_context_window"], multi["context_windows"]) == (256000, [500000, 256000])
+        assert (single["default_context_window"], single["context_windows"]) == (128000, [])
+        assert (unknown["default_context_window"], unknown["context_windows"]) == (None, [])
         activated = list(tagged)
         for hooks in (
             None,
@@ -792,6 +815,18 @@ def test_mcp_manifest_images_and_unlisted_or_escaping_assets(
         assert blocks[2]["mimeType"] == "image/webp" and base64.b64decode(blocks[2]["data"]) == original
         assert grok_command[grok_command.index("--tools") + 1] == "search_tool,use_tool"
         assert "--include-partial-messages" in grok_command
+        grok_defaults = tmp_path / "managed_config.toml"
+        assert not grok_defaults.exists()
+        (tmp_path / "workbench-prompt.json").unlink()
+        for invalid_window in (True, "500000", 500000.5, 0, 2**53):
+            with pytest.raises(ValueError, match="context window"):
+                grok_provider.command("test", "", "identity index", [], invalid_window)
+        quoted_model = 'test.v2"\n[other]\x7f'
+        grok_command = grok_provider.command(quoted_model, "high", "identity index", [], 500000)
+        assert grok_command[grok_command.index("--model") + 1] == quoted_model
+        assert grok_defaults.read_text() == '[model."test.v2\\"\\n[other]\\u007f"]\ncontext_window = 500000\n'
+        with pytest.raises(FileExistsError):
+            grok_provider.command("other", "", "identity index", [], 256000)
         # The authenticated catalog remains usable at its bound; larger or linked files fail closed.
         catalog = tmp_path / "models_cache.json"
         valid = json.dumps({"models": [{"slug": "test"}]}).encode()
@@ -990,8 +1025,20 @@ def test_mcp_manifest_images_and_unlisted_or_escaping_assets(
             assert "ARISU_RESULT " not in output and "private-" not in output + errors and "Traceback" not in errors
 
     # Grok can emit init before MCP connects; required reads still gate final output.
-    monkeypatch.setattr(grok_provider, "inspect", lambda: {"policy_ready": True, "policy_revision": 7})
+    monkeypatch.setattr(
+        grok_provider,
+        "inspect",
+        lambda: {"policy_ready": True, "policy_revision": 7, "models": [{"id": "test", "context_windows": [256000, 500000]}]},
+    )
     monkeypatch.setattr(runner, "adapter_for", lambda agent: grok_provider)
+    for agent, model_id, window in (
+        ("grok", "test", 320000),
+        ("grok", "other", 500000),
+        ("grok", "test", 500000.0),
+        ("codex", "test", 500000),
+    ):
+        with pytest.raises(ValueError, match="context window is unavailable"):
+            runner.generate(agent, {"model": model_id, "context_window": window})
     init = {
         "type": "system",
         "subtype": "init",
@@ -1024,11 +1071,12 @@ def test_mcp_manifest_images_and_unlisted_or_escaping_assets(
     ):
         wire = "".join(json.dumps(event) + "\n" for event in events)
         monkeypatch.setattr(runner, "audit", lambda records=records: records)
-        monkeypatch.setattr(
-            grok_provider, "command", lambda *args, wire=wire: [sys.executable, "-c", "import sys; sys.stdout.write(" + repr(wire) + ")"]
-        )
+
+        grok_command = Mock(return_value=[sys.executable, "-c", "import sys; sys.stdout.write(" + repr(wire) + ")"])
+        monkeypatch.setattr(grok_provider, "command", grok_command)
         if accepted:
-            runner.generate("grok", {"model": "test"})
+            runner.generate("grok", {"model": "test", "context_window": 500000})
+            assert grok_command.call_args.kwargs == {"context_window": 500000}
             assert "ARISU_RESULT " in capsys.readouterr().out
         else:
             with pytest.raises(ValueError):

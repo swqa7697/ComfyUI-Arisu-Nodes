@@ -93,6 +93,13 @@ def generate(agent: str, options: Dict[str, Any]):
     details = adapter.inspect()
     if details.get("policy_revision") != POLICY_REVISION or not details.get("policy_ready"):
         raise ValueError("agent policy is incompatible; update its image")
+    command_options = {}
+    window = options.get("context_window")
+    if window is not None:
+        selected = next((item for item in details.get("models", []) if item["id"] == model), {}) if agent == "grok" else {}
+        if type(window) is not int or window <= 0 or window not in selected.get("context_windows", []):
+            raise ValueError("context window is unavailable for the selected model")
+        command_options["context_window"] = window
     manifest = context()
     director = manifest.get("director")
     instruction = (
@@ -110,7 +117,7 @@ def generate(agent: str, options: Dict[str, Any]):
         prompt_input.write(prompt)
         prompt_input.seek(0)
         process = subprocess.Popen(
-            adapter.command(model, effort, prompt, manifest["assets"]),
+            adapter.command(model, effort, prompt, manifest["assets"], **command_options),
             stdin=prompt_input,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,

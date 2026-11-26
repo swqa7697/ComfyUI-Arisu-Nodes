@@ -89,7 +89,7 @@ def register_routes(server: Any, owner: Workbench):
             agent, operation = value.get("agent"), value.get("action")
             owner.agents.image(agent)
             if operation == "configure":
-                await asyncio.to_thread(owner.agents.configure, agent, value.get("model"), value.get("effort"))
+                await asyncio.to_thread(owner.agents.configure, agent, value.get("model"), value.get("effort"), value.get("context_window"))
             else:
                 if operation not in ("build", "update", "login", "logout", "remove"):
                     raise ValueError("unsupported agent action")

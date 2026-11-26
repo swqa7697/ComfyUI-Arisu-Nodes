@@ -5,7 +5,7 @@ from __future__ import annotations
 import base64
 import json
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from contract import INPUTS, POLICY_REVISION, contained_file, read_text
 from events import EventValidationError, ProviderResultError, failure_reason
@@ -16,6 +16,11 @@ from agents.grok.hook import normalize
 
 BASIC = ("low", "medium", "high")
 PROMPT_LIMIT = 384 * 1024 * 1024
+
+
+def _valid_window(value: Any) -> bool:
+    # Token counts must survive JSON round trips through the browser exactly.
+    return type(value) is int and 0 < value <= 2**53 - 1
 
 
 def inspect() -> Dict[str, Any]:
@@ -70,11 +75,16 @@ def inspect() -> Dict[str, Any]:
             meta = item.get("_meta", {})
             efforts = meta.get("supportedReasoningEfforts", meta.get("reasoningEfforts", []))
             efforts = [e.get("value", e.get("id")) if isinstance(e, dict) else e for e in efforts]
+            default_window = meta.get("totalContextTokens")
+            choices = meta.get("contextWindows")
+            windows = list(dict.fromkeys(w for w in choices if _valid_window(w))) if isinstance(choices, list) else []
             models.append(
                 {
                     "id": item["modelId"],
                     "name": item.get("name", item["modelId"]),
                     "efforts": [e for e in BASIC if e in efforts],
+                    "default_context_window": default_window if _valid_window(default_window) else None,
+                    "context_windows": windows,
                     "default": item["modelId"] == data.get("currentModelId"),
                 }
             )
@@ -115,7 +125,15 @@ def write_prompt(path: Path, prompt: str, assets: List[Dict[str, Any]]):
         raise
 
 
-def command(model: str, effort: str, prompt: str, assets: List[Dict[str, Any]]) -> List[str]:
+def command(model: str, effort: str, prompt: str, assets: List[Dict[str, Any]], context_window: Optional[int] = None) -> List[str]:
+    if context_window is not None:
+        if not _valid_window(context_window):
+            raise ValueError("invalid Grok context window")
+        # Headless Grok reads this defaults layer from its disposable home; remote
+        # sync stays disabled and the image-owned user and system policies take precedence.
+        key = json.dumps(model, ensure_ascii=False).replace("\x7f", "\\u007f")
+        with Path("/home/agent/.grok/managed_config.toml").open("x", encoding="utf-8") as config:
+            config.write(f"[model.{key}]\ncontext_window = {context_window}\n")
     prompt_file = Path("/tmp/workbench-prompt.json")
     # File input avoids ARG_MAX; reserve 128 MiB of /tmp for other CLI files.
     write_prompt(prompt_file, prompt, assets)

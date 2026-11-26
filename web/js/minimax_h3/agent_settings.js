@@ -35,7 +35,7 @@ const STYLE = `
 .arisu-agents button:disabled{opacity:.45;cursor:default;}.arisu-agents :focus-visible{outline:2px solid var(--arisu-blue);outline-offset:2px;}
 .arisu-agents select{min-width:0;max-width:100%;}
 .arisu-agents select:focus{outline:none;border-color:var(--arisu-blue);box-shadow:inset 0 0 0 1px var(--arisu-blue);}
-.arisu-agents .fields label{flex:1;min-width:0;align-items:stretch;flex-direction:column;gap:4px;}
+.arisu-agents .fields label{flex:1 1 150px;min-width:0;align-items:stretch;flex-direction:column;gap:4px;}
 .arisu-agents .actions,.arisu-agents .fields{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;}
 .arisu-agents label{display:flex;align-items:center;gap:8px;}.arisu-agents pre{white-space:pre-wrap;overflow-wrap:anywhere;
  background:var(--comfy-input-bg,#222);padding:12px;max-height:240px;overflow:auto;font:11px/1.6 monospace;}
@@ -173,11 +173,11 @@ export function openAgentSettings(selected = 'codex', parent = document.body) {
     error.textContent = '';
     try {
       await workbenchRequest('/action', { agent, action: operation, confirm: operation === 'remove', ...extra });
-      signature = '';
     } catch (failure) {
       error.textContent = failure.message;
     } finally {
       busy = false;
+      signature = '';
       await refresh(true);
     }
   }
@@ -191,8 +191,11 @@ export function openAgentSettings(selected = 'codex', parent = document.body) {
     );
     model.value = info.selection?.model ?? '';
     const effort = el('select', { ariaLabel: `${title} Effort` });
-    function updateEfforts() {
-      const supported = info.models?.find((item) => item.id === model.value)?.efforts ?? [];
+    const contextWindow = agent === 'grok' ? el('select', { ariaLabel: 'Grok Build Context Window' }) : null;
+    const locked = busy || operation?.state === 'running';
+    function updateModelOptions() {
+      const selectedModel = info.models?.find((item) => item.id === model.value);
+      const supported = selectedModel?.efforts ?? [];
       effort.replaceChildren(
         ...(supported.length ? supported : ['']).map((value) =>
           el('option', { value, textContent: value ? value[0].toUpperCase() + value.slice(1) : 'Provider Default' }),
@@ -203,15 +206,38 @@ export function openAgentSettings(selected = 'codex', parent = document.body) {
         : supported.includes('medium')
           ? 'medium'
           : (supported[0] ?? '');
-      effort.disabled = !supported.length || busy || operation?.state === 'running';
+      effort.disabled = !supported.length || locked;
+      if (contextWindow) {
+        const sizes = selectedModel?.context_windows ?? [];
+        const defaultSize = selectedModel?.default_context_window;
+        const saved = info.selection?.model === model.value ? info.selection.context_window : null;
+        contextWindow.replaceChildren(
+          el('option', {
+            value: '',
+            textContent: defaultSize ? `Model default (${defaultSize.toLocaleString('en-US')})` : 'Model default',
+          }),
+          ...sizes.map((size) => el('option', { value: String(size), textContent: size.toLocaleString('en-US') })),
+        );
+        contextWindow.value = sizes.includes(saved) ? String(saved) : '';
+        contextWindow.disabled = locked || (!contextWindow.value && !sizes.some((size) => size !== defaultSize));
+      }
     }
-    updateEfforts();
+    function configure() {
+      const preferences = { model: model.value, effort: effort.value };
+      if (contextWindow) preferences.context_window = contextWindow.value ? Number(contextWindow.value) : null;
+      model.disabled = true;
+      effort.disabled = true;
+      if (contextWindow) contextWindow.disabled = true;
+      void action(agent, 'configure', preferences);
+    }
+    updateModelOptions();
     model.onchange = () => {
-      updateEfforts();
-      void action(agent, 'configure', { model: model.value, effort: effort.value });
+      updateModelOptions();
+      configure();
     };
-    effort.onchange = () => void action(agent, 'configure', { model: model.value, effort: effort.value });
-    model.disabled = !info.models?.length || busy || operation?.state === 'running';
+    effort.onchange = configure;
+    if (contextWindow) contextWindow.onchange = configure;
+    model.disabled = !info.models?.length || locked;
     const state =
       info.error ||
       (!docker
@@ -244,6 +270,7 @@ export function openAgentSettings(selected = 'codex', parent = document.body) {
       el('div', { className: 'actions' }, buttons),
       el('div', { className: 'fields' }, [
         el('label', {}, [el('span', { textContent: 'Model' }), model]),
+        ...(contextWindow ? [el('label', {}, [el('span', { textContent: 'Context window (tokens)' }), contextWindow])] : []),
         el('label', {}, [el('span', { textContent: 'Effort' }), effort]),
       ]),
     ]);

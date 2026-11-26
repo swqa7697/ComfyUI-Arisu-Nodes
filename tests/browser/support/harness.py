@@ -128,7 +128,10 @@ class FixtureServer:
         }
         return {
             "docker": True,
-            "agents": {"codex": info, "grok": info},
+            "agents": {
+                "codex": info,
+                "grok": {**info, "models": [{**info["models"][0], "context_windows": [256000, 500000], "default_context_window": 256000}]},
+            },
             "skills": [{"id": "bundled:with-ref", "name": "with-ref", "source": "bundled"}],
         }
 

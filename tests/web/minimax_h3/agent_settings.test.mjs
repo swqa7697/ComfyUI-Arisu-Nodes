@@ -7,7 +7,7 @@ import { body, descendants, resetDom } from '../support/dom.mjs';
 
 const find = (root, label) => descendants(root).find((item) => item.textContent === label || item.ariaLabel === label);
 const settle = () => new Promise((resolve) => setImmediate(resolve));
-test('settings manage shared accounts, supported effort choices, logs and confirmed removal', async () => {
+test('settings manage shared accounts, model options, logs and confirmed removal', async () => {
   resetApi();
   resetDom();
   const info = {
@@ -22,7 +22,16 @@ test('settings manage shared accounts, supported effort choices, logs and confir
   const error = 'Codex image is out of date. Choose Update CLI.';
   const status = {
     docker: true,
-    agents: { codex: { installed: true, ready: false, update_required: true, error }, grok: { installed: false } },
+    agents: {
+      codex: { installed: true, ready: false, update_required: true, error },
+      grok: {
+        ...info,
+        models: [
+          { ...info.models[0], context_windows: [256000, 500000], default_context_window: 256000 },
+          { id: 'm2', name: 'Model two', efforts: [], context_windows: [500000], default_context_window: 500000 },
+        ],
+      },
+    },
   };
   const responses = () =>
     api.responses.push(
@@ -105,8 +114,39 @@ test('settings manage shared accounts, supported effort choices, logs and confir
     assert(find(dialog, '<script>untrusted</script>'));
     assert.equal(descendants(dialog).filter((item) => item.tagName === 'SCRIPT').length, 0);
     assert.equal(descendants(dialog).filter((item) => item.role === 'tabpanel').length, 1);
+    assert(!find(dialog, 'Context window (tokens)'));
     find(dialog, 'Grok Build').onclick();
+    await settle();
     assert(find(dialog, 'Grok Build Model') && !find(dialog, 'Codex Model'));
+    const windowSelect = () => find(dialog, 'Grok Build Context Window');
+    assert.deepEqual(
+      windowSelect().children.map((option) => option.textContent),
+      ['Model default (256,000)', '256,000', '500,000'],
+    );
+    assert.equal(windowSelect().value, '');
+    async function choose(label, value) {
+      api.responses.push((_route, init) => {
+        const { model, effort, context_window } = JSON.parse(init.body);
+        status.agents.grok.selection = { model, effort, context_window };
+        return jsonResponse(200, { accepted: true });
+      });
+      responses();
+      const control = find(dialog, label);
+      assert.equal(control.disabled, false);
+      control.value = value;
+      control.onchange();
+      await settle();
+    }
+    await choose('Grok Build Context Window', '500000');
+    await choose('Grok Build Effort', 'high');
+    assert.equal(windowSelect().value, '500000');
+    await choose('Grok Build Context Window', '');
+    assert.equal(windowSelect().value, '');
+    await choose('Grok Build Context Window', '500000');
+    await choose('Grok Build Model', 'm2');
+    assert.equal(windowSelect().value, '');
+    assert.equal(windowSelect().disabled, true);
+    assert.equal(windowSelect().children[0].textContent, 'Model default (500,000)');
     find(dialog, 'Codex').onclick();
     await settle();
     await settle();
