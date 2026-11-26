@@ -9,7 +9,7 @@ import pytest
 from playwright.sync_api import Locator, Page, expect, sync_playwright
 
 from tests.browser.support.assembly import inspect_assembly
-from tests.browser.support.director import edit_segment, inspect_project_render, inspect_render_recovery
+from tests.browser.support.director import edit_segment, inspect_draft_assets, inspect_project_render, inspect_render_recovery
 from tests.browser.support.harness import ASSEMBLY, DRAFT, STUDIO, WORKBENCH, FixtureServer, add_node, browser_page, contained, screenshot
 from tests.browser.support.node_layers import inspect_node_layers
 
@@ -560,16 +560,25 @@ def inspect_director(page: Page, server: FixtureServer, name: str) -> str:
     page.get_by_role("button", name="Remove segment").click()
     requirements = "Follow a paper boat across the pond.\n\n## Must include\n- Launch the boat\n- Keep both segments short."
     expect(panel.locator("input, textarea, select")).to_have_count(0)
-    # A duration saved by the previous free-text editor can still be edited in minutes.
+    # Reopen saved settings, including a video that omits the optional soundtrack field.
     page.evaluate(
         """id => {
         const widget = window.comfyAPI.app.app.graph.getNodeById(id).widgets.find(w => w.name === 'film_json');
         const doc = JSON.parse(widget.value);
         doc.film.target_runtime = 'about 12 seconds';
+        doc.assets = [{id:'archive', kind:'video', root:'input', path:'clip.webm', clip:{start:0, end:2}}];
         widget.value = JSON.stringify(doc);
     }""",
         node_id,
     )
+    panel.get_by_role("button", name="Asset Library", exact=True).click()
+    old_video = page.get_by_role("article", name="clip.webm")
+    soundtrack = old_video.get_by_role("button", name="Include soundtrack")
+    expect(soundtrack).to_have_attribute("aria-pressed", "true")
+    soundtrack.click()
+    expect(soundtrack).to_have_attribute("aria-pressed", "false")
+    old_video.get_by_role("button", name="Remove asset").click()
+    page.keyboard.press("Escape")
     setup.click()
     film = page.get_by_role("dialog", name="Film Setup")
     contained(page, "dialog.arisu-director-dialog")
@@ -834,7 +843,7 @@ def inspect_director(page: Page, server: FixtureServer, name: str) -> str:
     page.keyboard.press("Escape")
     expect(direction).to_be_focused()
     edit_segment(page)
-    page.get_by_label("Finalized Prompt", exact=True).fill("Follow <Picture 1>.")
+    page.get_by_label("Finalized Prompt", exact=True).fill("Follow <Picture   1>.")
     assert json.loads(widget_value(page, node_id, "film_json"))["segments"][1]["prompt"] == f"Follow <Picture:{asset_id}>."
     # Read a long prompt with the wheel while the graph stays at the same zoom.
     prompt = page.get_by_label("Finalized Prompt", exact=True)
@@ -867,6 +876,7 @@ def inspect_director(page: Page, server: FixtureServer, name: str) -> str:
     )
     assert not restored["assets"]
     assert restored["segments"][1]["bindings"] == [{"asset_id": asset_id, "role": "image"}]
+    inspect_draft_assets(page, asset_id)
     return node_id
 
 

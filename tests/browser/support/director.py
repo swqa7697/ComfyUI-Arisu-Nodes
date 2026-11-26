@@ -18,6 +18,77 @@ def edit_segment(page: Page, section: str = "Prompt"):
     page.get_by_role("tab", name=section, exact=True).click()
 
 
+def inspect_draft_assets(page: Page, asset_id: str):
+    """Review a bound draft while its library source is muted, reselected, removed and explicitly restored."""
+    panel = page.locator(".arisu-director")
+    library = page.get_by_role("dialog", name="Asset Library")
+    open_library = panel.get_by_role("button", name="Asset Library")
+    review = page.get_by_role("dialog", name="Generation Results")
+    open_review = panel.get_by_role("button", name="Review Draft")
+    apply = review.get_by_role("button", name="Apply to Workbench")
+
+    edit_segment(page, "Revise Prompt")
+    page.get_by_label("What should change in segment 2?").fill("Use the selected image for this shot.")
+    with page.expect_response("**/arisu/workbench/generate"):
+        page.get_by_role("button", name="Refine current segment").click()
+    expect(panel.locator(".status")).to_contain_text("Output ready to apply")
+
+    open_library.click()
+    source = library.locator(f'[data-asset="{asset_id}"]')
+    note = source.get_by_label("Asset Notes").input_value()
+    source.get_by_role("button", name="Mute asset").click()
+    source.get_by_role("button", name="Reselect asset").click()
+    picker = page.locator("dialog[open] .arisu-browser-file")
+    expect(picker.filter(has_text="scene-2.png")).to_be_visible()
+    expect(picker.filter(has_text="sound.wav")).to_have_count(0)
+    picker.filter(has_text="scene-2.png").click()
+    expect(source).to_have_attribute("aria-label", "scene-2.png")
+    expect(source.get_by_role("button", name="Mute asset")).to_have_attribute("aria-pressed", "true")
+    expect(source.get_by_label("Asset Notes")).to_have_value(note)
+    page.keyboard.press("Escape")
+    open_review.click()
+    expect(apply).to_be_disabled()
+    expect(review.locator(".output-hint")).to_contain_text("Unmute")
+    review.get_by_role("button", name="Close").click()
+    open_library.click()
+    source.get_by_role("button", name="Mute asset").click()
+    page.keyboard.press("Escape")
+    open_review.click()
+    expect(apply).to_be_disabled()
+    expect(review.locator(".output-hint")).to_contain_text("source has changed")
+    review.get_by_role("button", name="Close").click()
+
+    # Only the pending draft now refers to this ID. The original source can still be reselected under it.
+    edit_segment(page, "Assets & Skill")
+    page.get_by_role("button", name="Unbind", exact=True).click()
+    page.keyboard.press("Escape")
+    open_library.click()
+    source.get_by_role("button", name="Remove asset").click()
+    page.keyboard.press("Escape")
+    open_review.click()
+    expect(apply).to_be_disabled()
+    expect(review.locator(".output-hint")).to_contain_text("missing asset")
+    review.get_by_role("button", name="Close").click()
+    open_library.click()
+    library.get_by_role("button", name=f"Reselect missing asset scene.png ({asset_id})", exact=True).click()
+    expect(picker.filter(has_text="scene.png")).to_be_visible()
+    expect(picker.filter(has_text="sound.wav")).to_have_count(0)
+    picker.filter(has_text="scene.png").click()
+    expect(source).to_have_attribute("aria-label", "scene.png")
+    source.get_by_label("Asset Notes").fill("Updated while reviewing the draft.")
+    page.keyboard.press("Escape")
+    open_review.click()
+    apply.click()
+    expect(review.get_by_role("button", name="Applied", exact=True)).to_be_disabled()
+    review.get_by_role("button", name="Close").click()
+    edit_segment(page, "Assets & Skill")
+    expect(page.locator(f'.binding[data-asset="{asset_id}"] select')).to_have_value("image")
+    page.keyboard.press("Escape")
+    open_library.click()
+    expect(source.get_by_label("Asset Notes")).to_have_value("Updated while reviewing the draft.")
+    page.keyboard.press("Escape")
+
+
 def inspect_render_recovery(page: Page, director_id: str, server: FixtureServer):
     """Exercise render recovery with the execution links consumed by the Director controls."""
 
@@ -205,6 +276,8 @@ def inspect_render_recovery(page: Page, director_id: str, server: FixtureServer)
         expect(first).to_contain_text("Rendered")
         assert len(jobs) == 4 and jobs[-1]["id"] != saved
     finally:
+        # Later revisions can still inspect the predecessor saved by this render.
+        server.director_takes.update(files)
         page.evaluate("window.restoreDirectorFixture()")
         page.unroute("**/api/prompt", submit)
         page.unroute("**/api/history/*", check_history)

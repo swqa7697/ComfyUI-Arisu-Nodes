@@ -97,6 +97,8 @@ def generate(agent: str, options: Dict[str, Any]):
     director = manifest.get("director")
     instruction = (
         "Read the complete Director task and skills via Workbench MCP. Return the structured film or segment draft in one json fence."
+        " Use director.library[].id for bindings and stable prompt tags. Match each non-motion attachment by resource_id."
+        " Use motion stills only to inspect the predecessor."
         if director
         else PROMPT
     )
@@ -176,7 +178,7 @@ def generate(agent: str, options: Dict[str, Any]):
                 event = {"exit_code": status}
                 raise ProviderResultError("execution" if completed else "incomplete")
             raise ValueError("agent execution failed")
-        final_response(final, director=bool(director))
+        content = final_response(final, director=bool(director))
         records = audit()
         if not any(r["tool"] == "get_context" for r in records) or not any(
             r["tool"] == "read_skill" and r["arguments"] == {"path": "SKILL.md"} for r in records
@@ -185,7 +187,7 @@ def generate(agent: str, options: Dict[str, Any]):
         if director:
             # A writing skill may serve many segments. Audit each distinct selection once.
             try:
-                payload = json.loads("\n".join(final.strip().splitlines()[1:-1]))
+                payload = json.loads(content)
             except (ValueError, RecursionError):
                 raise DirectorResponseError("json") from None
             if not isinstance(payload, dict):

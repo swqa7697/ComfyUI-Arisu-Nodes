@@ -34,6 +34,10 @@ const sessions = workbenchSessions(
   { generating: 'Directing the film…', ready: 'Director draft ready to review.' },
   (run, job) => {
     const submitted = run.directorSubmission;
+    const draft = JSON.parse(job.draft);
+    submitted.boundAssets = new Set(
+      (draft.segments ?? [draft.segment]).flatMap((segment) => segment.bindings.map((binding) => binding.asset_id)),
+    );
     if (typeof job.director_tail_frames !== 'boolean' || !submitted?.request) return;
     submitted.context = job.director_tail_frames
       ? `Used tail frames from segment ${submitted.previousSegment}.`
@@ -518,6 +522,7 @@ async function generate(ui, task) {
     submittedRun = run;
     const previousSegment = index > 0 && doc.segments[index].transition === 'continuation' ? index : null;
     const submitted = refine ? { request: draft.request, previousSegment } : { brief: doc.film.brief };
+    submitted.assets = new Map(doc.assets.map((asset) => [asset.id, asset]));
     run.directorSubmission = submitted;
     state.message = '';
     const target = executionTarget(node);
@@ -555,7 +560,7 @@ function review(ui) {
       if (!run.node) return;
       try {
         const draft = JSON.parse(run.draft);
-        change(run.node, (doc) => applyDraft(doc, draft));
+        change(run.node, (doc) => applyDraft(doc, draft, run.directorSubmission.assets));
         if (draft.segments) nodes.get(run.node)?.revisions.clear();
         run.status = 'Draft applied';
         sessions.updateRun(run);

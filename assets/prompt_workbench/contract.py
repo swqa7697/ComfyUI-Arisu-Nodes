@@ -138,7 +138,7 @@ def skill_text(relative: str, root: Path = SKILL) -> str:
 
 
 def final_response(value: str, director: bool = False) -> str:
-    """Validate stream output, including the explicit policy refusal signal."""
+    """Validate stream output and return the contents of its single fence verbatim."""
     if not isinstance(value, str) or REFUSAL in value:
         raise ValueError("request refused by the prompt-only policy")
     labels = "json|markdown|text" if director else "markdown|text"
@@ -151,4 +151,4 @@ def final_response(value: str, director: bool = False) -> str:
             raise DirectorBudgetError(f"Director response is {size} UTF-8 bytes; the output limit is 262144 bytes.")
     if not match or not match[1].strip() or "```" in match[1] or (not director and len(match[1]) > 65536):
         raise ValueError("agent must return one nonempty markdown or plain-text fence")
-    return value
+    return match[1]

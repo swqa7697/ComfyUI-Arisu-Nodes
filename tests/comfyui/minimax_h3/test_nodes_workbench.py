@@ -213,6 +213,17 @@ def test_workbench_stages_crops_refuses_escapes_and_cancellation_retains_guard(t
         with Image.open(destination / sampled[0]["file"]) as first:
             assert first.getpixel((0, 0))[0] == 1
 
+    # A declared duration can exceed the decoded timeline. More than one missing
+    # native tick at EOF still fails even if the header admits the whole clip.
+    with monkeypatch.context() as patches:
+        duration = media.stream_duration
+        patches.setattr(media, "stream_duration", lambda *args, **kwargs: duration(*args, **kwargs) + 0.02)
+        destination = tmp_path / "incomplete"
+        destination.mkdir()
+        selected = replace(video, clip=(0, 2.02))
+        with pytest.raises(ValueError, match="incomplete coverage"):
+            stage({**payload, "directory": str(destination), "resources": [{"role": "reference", "item": selected.__dict__}]})
+
     # Cap only oversized pixels, preserve alpha, and retain lossless small pixels.
     for number, size in enumerate(((39, 17), (4000, 20), (5000, 100))):
         alpha = source / ("alpha-" + str(number) + ".png")

@@ -6,6 +6,7 @@ import asyncio
 import json
 import shutil
 import threading
+from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Dict
@@ -16,8 +17,8 @@ from aiohttp.test_utils import TestClient, TestServer
 from PIL import Image
 
 from src.arisu_nodes.minimax_h3 import workbench_routes
-from src.arisu_nodes.minimax_h3.workbench import Workbench
-from tests.support.media import make_audio
+from src.arisu_nodes.minimax_h3.workbench import Generation, Workbench
+from tests.support.media import make_audio, make_video
 
 pytestmark = pytest.mark.comfyui
 
@@ -134,6 +135,8 @@ def test_workbench_routes_reject_untrusted_requests_and_queue_only_preparation(t
             root.mkdir()
             Image.new("RGB", (20, 16), "red").save(root / "prop.png")
             make_audio(root / "sound.wav")
+            make_video(root / "pan.mkv")
+            video_id = "57ee5edb-dac7-4290-aeea-22c86896dbdd"
             custom = owner.directory / "skills" / "handwritten"
             custom.mkdir(parents=True)
             (custom / "SKILL.md").write_text("Write in short sentences.")
@@ -149,8 +152,19 @@ def test_workbench_routes_reject_untrusted_requests_and_queue_only_preparation(t
                 "segments": [],
                 "selected": "",
             }
-            document["assets"].append(
-                {"id": "chime", "kind": "audio", "root": "input", "path": "sound.wav", "muted": False, "clip": {"start": 0, "end": 1}}
+            document["assets"].extend(
+                [
+                    {"id": "motion", "kind": "audio", "root": "input", "path": "sound.wav", "clip": {"start": 0, "end": 1}},
+                    {
+                        "id": video_id,
+                        "kind": "video",
+                        "root": "input",
+                        "path": "pan.mkv",
+                        "include_audio": True,
+                        "clip": {"start": 0, "end": 1},
+                    },
+                    {"id": "unused", "kind": "image", "root": "input", "path": "never-opened.png", "muted": True},
+                ]
             )
             segments = [
                 {
@@ -175,8 +189,8 @@ def test_workbench_routes_reject_untrusted_requests_and_queue_only_preparation(t
                     "seconds": 6,
                     "transition": "continuation",
                     "overlap_frames": 22,
-                    "prompt": "The lock on <Picture 1> opens.",
-                    "bindings": [{"asset_id": "box", "role": "image"}],
+                    "prompt": f"The lock on <Picture 1> opens.\u2028Hold <Picture:box> during <Video:{video_id}>.",
+                    "bindings": [{"asset_id": "box", "role": "first"}, {"asset_id": video_id, "role": "video"}],
                     "skill": "bundled:with-ref",
                     "skill_reason": "Match the lock.",
                     "skill_locked": False,
@@ -198,6 +212,7 @@ def test_workbench_routes_reject_untrusted_requests_and_queue_only_preparation(t
                 assert set(task["film"]).isdisjoint({"requirements", "triggers", "continuity"})
                 assert context["requirements"] == ""
                 assert context["assets"][0]["note"] == "The brass lock" and "root" not in task["library"][0]
+                assert {row["id"] for row in task["library"]} == {row["id"] for row in document["assets"] if not row.get("muted")}
                 assert (directory / context["assets"][0]["file"]).is_file()
                 catalog = {row["id"]: row for row in task["writing_skills"]}
                 assert all((skill / row["path"]).is_file() for row in catalog.values())
@@ -207,21 +222,48 @@ def test_workbench_routes_reject_untrusted_requests_and_queue_only_preparation(t
                         "\n\nTrigger words:\nbrass lock\n\nContinuity:\nMorning light."
                     )
                     assert set(catalog) == {"bundled:no-ref", "bundled:with-ref"}
-                    return "```json\n" + json.dumps(plan, ensure_ascii=False) + "\n```"
+                    for rows in (task["library"], context["references"]):
+                        assert not next(row for row in rows if row["id"] == video_id)["include_audio"]
+                    # The provider copies image and video still IDs from its attachments. Those
+                    # identify exact sources only within this job; the saved draft needs stable IDs.
+                    attachments = {asset["resource_id"]: asset["id"] for asset in context["assets"]}
+                    assert attachments["box"] != "box" and attachments[video_id] != video_id
+                    response = deepcopy(plan)
+                    for scene in response["segments"]:
+                        scene["bindings"] = [{**b, "asset_id": attachments[b["asset_id"]]} for b in scene["bindings"]]
+                        scene["prompt"] = scene["prompt"].replace("<Picture:box>", f"<Picture:{attachments['box']}>")
+                        scene["prompt"] = scene["prompt"].replace(video_id, video_id.replace("-", "").upper())
+                    return "```json \t\r\n" + json.dumps(response, ensure_ascii=False) + "\r\n```"
                 assert task["selected"] == "opening" and task["segments"][0]["id"] == "arrival"
                 assert task["film"]["brief"] == document["film"]["brief"] and task["coverage"] == plan["coverage"]
-                assert set(catalog) == {"custom:handwritten"} and not context["motion"]["present"]
+                assert set(catalog) == {"custom:handwritten"}
+                assert context["motion"]["present"] == (task["request"] == "bind the tail")
                 if task["request"] == "more":
                     return "x" * (256 * 1024 + 33)
                 replacement = {**segments[1], "prompt": "Open <Picture:box> slowly.", "skill": "custom:handwritten"}
+                if task["request"] == "Slow the action":
+                    preview = context["keyframes"]["first"]["asset_id"]
+                    replacement.update(bindings=[{"asset_id": preview, "role": "image"}], prompt=f"Open <Picture:{preview}> slowly.")
                 if task["request"] == "zoom":
                     crop = {"left": 0, "top": 0, "width": 1000, "height": 1000}
                     replacement["bindings"] = [{**replacement["bindings"][0], "crop": crop}]
                 if task["request"] == "long chime":
                     replacement["bindings"] = [
                         *replacement["bindings"],
-                        {"asset_id": "chime", "role": "audio", "clip": {"start": 0, "end": 120}},
+                        {"asset_id": "motion", "role": "audio", "clip": {"start": 0, "end": 120}},
                     ]
+                if task["request"] in ("unknown", "unused", "bind the tail"):
+                    identifier = context["motion"]["stills"][0]["asset_id"] if task["request"] == "bind the tail" else task["request"]
+                    role = "image" if task["request"] == "unused" else "audio"
+                    replacement.update(bindings=[{"asset_id": identifier, "role": role}], prompt="The bell rings.")
+                if task["request"] == "repeat the video":
+                    frames = next(row for row in context["references"] if row["id"] == video_id)["inspect"]["frames"]
+                    replacement.update(bindings=[{"asset_id": frame["asset_id"], "role": "video"} for frame in frames[:2]], prompt="Pan.")
+                if task["request"] == "ambiguous video":
+                    replacement.update(bindings=[{"asset_id": video_id.replace("-", "").upper(), "role": "video"}], prompt="Pan.")
+                if task["request"] == "replace source":
+                    Image.new("RGB", (20, 16), "blue").save(root / "replacement.png")
+                    (root / "replacement.png").replace(root / "prop.png")
                 return "```json\n" + json.dumps({"version": 1, "segment": replacement, "suggestions": ["Hold on the desk."]}) + "\n```"
 
             async def director_job(task: str, note: str) -> Dict[str, Any]:
@@ -229,7 +271,7 @@ def test_workbench_routes_reject_untrusted_requests_and_queue_only_preparation(t
                     "node_id": "d",
                     "workflow": "director",
                     "director": {"task": task, "request": note},
-                    "options": {"motion_enabled": False, "requirements": "Stale Prompt Workbench input"},
+                    "options": {"motion_enabled": note == "bind the tail", "requirements": "Stale Prompt Workbench input"},
                     "prompt": {"d": {"class_type": "ArisuMiniMaxH3DirectorWorkbench", "inputs": {"film_json": json.dumps(document)}}},
                 }
                 accepted = await client.post("/arisu/workbench/generate", json=value)
@@ -244,7 +286,14 @@ def test_workbench_routes_reject_untrusted_requests_and_queue_only_preparation(t
                 raise AssertionError("Director task did not finish")
 
             with monkeypatch.context() as local:
-                local.setattr(owner, "execute", real_execute)
+
+                def execute_with_prepared_tail(job: Generation):
+                    if job.director.request == "bind the tail":
+                        # Supply the decoded predecessor frames at the preparation boundary.
+                        owner.cache_motion(job, "test-tail", [Image.new("RGB", (16, 12), "blue")])
+                    real_execute(job)
+
+                local.setattr(owner, "execute", execute_with_prepared_tail)
                 local.setattr(workbench_routes, "image_roots", lambda *args: {"input": str(root)})
                 local.setattr(owner.agents, "generate", generate_director)
                 plan["coverage"]["Keep the morning light"] = ["missing"]
@@ -254,7 +303,9 @@ def test_workbench_routes_reject_untrusted_requests_and_queue_only_preparation(t
                 result = await director_job("plan", "")
                 assert result["state"] == "complete", result["error"]
                 draft = json.loads(result["draft"])
-                assert len(draft["segments"]) == 2 and draft["segments"][1]["prompt"] == "The lock on <Picture:box> opens."
+                assert len(draft["segments"]) == 2
+                assert draft["segments"][1]["prompt"] == segments[1]["prompt"].replace("<Picture 1>", "<Picture:box>")
+                assert draft["segments"][1]["bindings"] == segments[1]["bindings"]
                 assert draft["coverage"] == plan["coverage"] and not document["segments"]
                 # The film has its own budget: twenty individually short prompts
                 # can exceed 7000 characters in total without truncation or refusal.
@@ -280,15 +331,46 @@ def test_workbench_routes_reject_untrusted_requests_and_queue_only_preparation(t
                 result = await director_job("refine", "Slow the action")
                 assert result["state"] == "complete", result["error"]
                 assert result["director_tail_frames"] is False
-                assert json.loads(result["draft"])["segment"]["id"] == "opening" and document["segments"][0] == segments[0]
+                replacement = json.loads(result["draft"])["segment"]
+                assert replacement["id"] == "opening" and document["segments"][0] == segments[0]
+                assert (
+                    replacement["bindings"] == [{"asset_id": "box", "role": "image"}]
+                    and replacement["prompt"] == "Open <Picture:box> slowly."
+                )
                 result = await director_job("refine", "more")
                 assert result["state"] == "failed" and "budget" in result["error"] and not result["draft"]
                 result = await director_job("refine", "zoom")
                 assert result["state"] == "failed" and "Segment opening" in result["error"] and "asset box" in result["error"]
                 assert not result["draft"] and document["segments"][1]["bindings"] == segments[1]["bindings"]
                 result = await director_job("refine", "long chime")
-                assert result["state"] == "failed" and "asset chime" in result["error"] and not result["draft"]
-                assert calls == ["plan", "plan", "plan", "plan", "refine", "refine", "refine", "refine"] and not queued
+                assert result["state"] == "failed" and "asset motion" in result["error"] and not result["draft"]
+                # Even a library asset named "motion" does not own a predecessor still.
+                # An alternate UUID spelling can identify two saved IDs of different kinds.
+                # Selecting the only video would silently guess which source the provider meant.
+                document["assets"].append({**document["assets"][1], "id": video_id.replace("-", "")})
+                for refused, reason in (
+                    ("unknown", "missing"),
+                    ("unused", "muted"),
+                    ("bind the tail", "missing"),
+                    ("repeat the video", "more than once"),
+                    ("ambiguous video", "ambiguous"),
+                ):
+                    result = await director_job("refine", refused)
+                    assert (
+                        result["state"] == "failed"
+                        and "Segment opening" in result["error"]
+                        and reason in result["error"]
+                        and not result["draft"]
+                    ), result
+                    if refused == "unused":
+                        assert "never-opened.png" in result["error"]
+                # A legacy film can omit saved revisions. Review still refers to the
+                # media staged before generation, including when the file was replaced.
+                submitted = deepcopy(document)
+                result = await director_job("refine", "replace source")
+                assert result["state"] == "failed" and "asset box" in result["error"] and not result["draft"]
+                assert document == submitted
+                assert calls == ["plan"] * 4 + ["refine"] * 10 and not queued
             # Real operations still refuse concurrent generation immediately.
             owner.agents.guard.acquire()
             try:

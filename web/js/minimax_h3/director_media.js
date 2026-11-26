@@ -1,6 +1,7 @@
 import { el } from '../common/dom.js';
 import { AUDIO_ICON, browseResources, posterUrl, viewUrl } from '../common/resource_browser.js';
 import { moveItem, resourceId } from '../common/shared.js';
+import { bindingKind } from './director_document.js';
 import { cropFor, editMediaSelection, probe } from './media_selection.js';
 
 const roles = { first: 'First frame', last: 'Last frame', image: 'Image reference', video: 'Video reference', audio: 'Audio reference' };
@@ -31,11 +32,20 @@ function task(ui) {
   return { signal: controller.signal, current: () => !controller.signal.aborted };
 }
 
+function requiredKind(doc, id, submitted) {
+  if (!id) return;
+  const kinds = new Set(doc.segments.flatMap((s) => s.bindings.filter((b) => b.asset_id === id).map((b) => bindingKind(b.role))));
+  if (kinds.size > 1) throw new Error('This asset has conflicting roles. Unbind the incompatible role before reselecting the source.');
+  if (kinds.size) return kinds.values().next().value;
+  if (!doc.assets.some((asset) => asset.id === id) && submitted?.boundAssets?.has(id)) return submitted.assets.get(id)?.kind;
+}
+
 export async function browseAssets(ui, id) {
   const work = task(ui);
   const doc = ui.read(),
     old = doc.assets.find((a) => a.id === id),
     last = old ?? doc.assets.at(-1);
+  const expected = requiredKind(doc, id, ui.state.run?.directorSubmission);
   await browseResources(
     {
       widgets: [
@@ -45,14 +55,16 @@ export async function browseAssets(ui, id) {
     },
     {
       mixed: true,
+      kinds: expected ? [expected] : undefined,
       signal: work.signal,
       isCurrent: work.current,
       selected: (root, path) => doc.assets.some((a) => a.root === root && a.path === path),
       onPick: async (path, root) => {
         try {
-          const item = { id: id ?? resourceId(), path, root, muted: false, note: old?.note ?? '' };
+          const item = { id: id ?? resourceId(), path, root };
           const info = await probe(item, work.signal);
           if (!work.current()) return;
+          if (expected && info.kind !== expected) throw new Error(`Choose a file of type ${expected} for this asset's bindings.`);
           item.kind = info.kind;
           item.revision = info.revision;
           if (item.kind === 'image') item.crop = null;
@@ -64,6 +76,13 @@ export async function browseAssets(ui, id) {
           }
           ui.change((next) => {
             const position = next.assets.findIndex((a) => a.id === item.id);
+            if (position < 0 && old) throw new Error('This asset was removed while the picker was open.');
+            if (position < 0 && next.assets.length >= 256)
+              throw new Error('The library is full. Remove an unused asset before adding this one.');
+            const required = requiredKind(next, id, ui.state.run?.directorSubmission);
+            if (required && item.kind !== required) throw new Error(`Choose a file of type ${required} for this asset's bindings.`);
+            item.muted = next.assets[position]?.muted ?? false;
+            item.note = next.assets[position]?.note ?? '';
             if (position < 0) next.assets.push(item);
             else next.assets[position] = item;
             if (id)
@@ -254,15 +273,22 @@ export function libraryView(ui, doc) {
   });
   const list = el('div', { className: 'library' }, rows);
   sortableLibrary(ui, list);
-  // A retained binding can recover its stable ID after an import or an accidental library deletion.
+  // A reviewed draft can be the first place an asset is bound. Restore its ID only on an explicit pick.
+  const submitted = ui.state.run?.directorSubmission;
   const missing = new Set(
-    doc.segments.flatMap((s) => s.bindings.map((b) => b.asset_id)).filter((id) => !doc.assets.some((a) => a.id === id)),
+    [...doc.segments.flatMap((s) => s.bindings.map((b) => b.asset_id)), ...(submitted?.boundAssets ?? [])].filter(
+      (id) => !doc.assets.some((a) => a.id === id),
+    ),
   );
   return [
     ...(rows.length
       ? [list]
       : [el('p', { className: 'empty-library meta', textContent: 'Browse images, video or audio to add your first asset.' })]),
-    ...[...missing].map((id) => ui.button('Reselect missing asset ' + id, () => browseAssets(ui, id))),
+    ...[...missing].map((id) => {
+      const original = submitted?.assets.get(id);
+      const name = original ? `${original.path} (${id})` : id;
+      return ui.button('Reselect missing asset ' + name, () => browseAssets(ui, id));
+    }),
   ];
 }
 

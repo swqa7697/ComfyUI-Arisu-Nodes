@@ -1,13 +1,38 @@
 // Present the validated Director result alongside the current film, including changes made while preparing it.
 import { el } from '../common/dom.js';
 import { openAgentActivity } from './agent_activity.js';
-import { secondsLabel, timeline, timing } from './director_document.js';
+import { bindingKind, orderedTags, secondsLabel, timeline, timing } from './director_document.js';
 import { generationTime } from './workbench_sessions.js';
 
-export function applyDraft(doc, draft) {
+export function applyDraft(doc, draft, submittedAssets) {
+  const index = draft.segment ? doc.segments.findIndex((item) => item.id === draft.segment.id) : -1;
+  if (draft.segment && index < 0) throw new Error('This segment was removed. Undo its removal or generate a new draft.');
+  const assets = new Map(doc.assets.map((asset) => [asset.id, asset]));
+  for (const segment of draft.segments ?? [draft.segment]) {
+    for (const { asset_id, role } of segment.bindings) {
+      const asset = assets.get(asset_id);
+      const submitted = submittedAssets?.get(asset_id);
+      const needed = `Segment ${segment.id} needs ${submitted?.path ?? asset?.path ?? asset_id}.`;
+      if (!asset) throw new Error(needed + ' Reselect the missing asset in Asset Library or undo its removal.');
+      if (asset.muted) throw new Error(needed + ' Unmute the asset in Asset Library to apply this draft.');
+      if (asset.kind !== bindingKind(role))
+        throw new Error(
+          needed + ` The ${role} role requires a file of type ${bindingKind(role)}. Restore the source or generate a new draft.`,
+        );
+      if (
+        submitted &&
+        (asset.root !== submitted.root || asset.path !== submitted.path || (submitted.revision && asset.revision !== submitted.revision))
+      )
+        throw new Error(needed + ' Its source has changed. Restore the submitted source or generate a new draft.');
+    }
+    if (!segment.prompt.includes('<')) continue;
+    const tags = orderedTags(doc, segment, assets);
+    for (const [tag, kind, id] of segment.prompt.matchAll(/<(Picture|Video|Audio):([^<>\s]+)>/g)) {
+      if (!tags[kind].some((binding) => binding.asset_id === id))
+        throw new Error(`Segment ${segment.id} uses ${tag}. Restore its soundtrack or keyframe tag setting, or generate a new draft.`);
+    }
+  }
   if (draft.segment) {
-    const index = doc.segments.findIndex((item) => item.id === draft.segment.id);
-    if (index < 0) throw new Error('This segment was removed. Generate a new draft.');
     doc.segments[index] = draft.segment;
   } else {
     for (const field of ['outline', 'continuity', 'coverage', 'segments']) doc[field] = draft[field];
@@ -49,13 +74,14 @@ export function openDirectorReview(run, read, apply) {
   const snapshot = () => {
     const doc = read();
     let applied = false;
+    let applyError = '';
     if (run.draft) {
       const copy = structuredClone(doc);
       try {
-        applyDraft(copy, JSON.parse(run.draft));
+        applyDraft(copy, JSON.parse(run.draft), run.directorSubmission?.assets);
         applied = JSON.stringify(copy) === JSON.stringify(doc);
-      } catch {
-        /* The target may have been deleted after submission. */
+      } catch (error) {
+        applyError = error.message;
       }
     }
     return {
@@ -66,6 +92,7 @@ export function openDirectorReview(run, read, apply) {
       draft: run.draft,
       hasOutput: run.hasOutput,
       applied,
+      applyError,
     };
   };
   run.activity = openAgentActivity(

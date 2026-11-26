@@ -54,6 +54,8 @@ export function readDocument(text) {
     Object.values(result.coverage).some((ids) => !Array.isArray(ids))
   )
     throw new Error('Invalid Director film document.');
+  // Match the host default in saved films that predate the soundtrack switch.
+  for (const asset of result.assets) if (asset.kind === 'video' && !Object.hasOwn(asset, 'include_audio')) asset.include_audio = true;
   // Match the host migration. Keep the original text and strip legacy keys so subsequent reads are idempotent.
   film.brief = [
     film.brief,
@@ -103,13 +105,18 @@ export function timeline(doc) {
   });
 }
 
-export function orderedTags(doc, segment) {
-  const byRole = (role) =>
-    segment.bindings.filter((b) => b.role === role && doc.assets.some((asset) => asset.id === b.asset_id && !asset.muted));
+export const bindingKind = (role) => (role === 'first' || role === 'last' ? 'image' : role);
+
+export function orderedTags(doc, segment, assets = new Map(doc.assets.map((asset) => [asset.id, asset]))) {
+  const active = segment.bindings.filter((binding) => {
+    const asset = assets.get(binding.asset_id);
+    return asset && !asset.muted;
+  });
+  const byRole = (role) => active.filter((binding) => binding.role === role);
   const keys = [...byRole('first'), ...byRole('last')];
   const refs = byRole('image');
   const videos = byRole('video');
-  const sound = videos.filter((b) => b.include_audio ?? doc.assets.find((asset) => asset.id === b.asset_id)?.include_audio);
+  const sound = videos.filter((b) => b.include_audio ?? assets.get(b.asset_id).include_audio);
   return {
     Picture:
       doc.film.frame_picture_tags === 'after_refs'
@@ -124,7 +131,7 @@ export function orderedTags(doc, segment) {
 
 export function stableTags(doc, segment, prompt) {
   const ordered = orderedTags(doc, segment);
-  return prompt.replace(/<(Picture|Video|Audio) (\d+)>/g, (tag, kind, n) => {
+  return prompt.replace(/<(Picture|Video|Audio)\s+(\d+)>/g, (tag, kind, n) => {
     const binding = ordered[kind][Number(n) - 1];
     return binding ? '<' + kind + ':' + binding.asset_id + '>' : tag;
   });

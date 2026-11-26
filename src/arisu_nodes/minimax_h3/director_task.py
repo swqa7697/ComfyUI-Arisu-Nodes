@@ -4,14 +4,25 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import stat
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 from . import director
-from .core import CLIP_FRAME_STEP, FPS, MIN_CLIP_FRAMES, MOTION_WINDOWS, WORKBENCH_ID, h3_json, preparation_graph
-from .director_media import validate_draft_media
+from .core import (
+    CLIP_FRAME_STEP,
+    FPS,
+    MIN_CLIP_FRAMES,
+    MOTION_WINDOWS,
+    RESOURCE_LIMITS,
+    WORKBENCH_ID,
+    ResourceBundle,
+    h3_json,
+    preparation_graph,
+)
+from .director_media import library_resources, segment_resources, validate_draft_media
 
 ROLES = ("first", "last", "image", "video", "audio")
 DIRECTOR_SKILL = "bundled:sequence-director"
@@ -87,6 +98,7 @@ class DirectorTask:
     request: str
     reselect: bool
     catalog: Dict[str, Dict[str, Any]]
+    prepared_document: Optional[Dict[str, Any]] = field(default=None, init=False, repr=False)
 
     @classmethod
     def capture(
@@ -141,6 +153,20 @@ class DirectorTask:
         graph = preparation_graph({**prompt, node_id: {"class_type": WORKBENCH_ID, "inputs": prep}}, node_id)
         return selected, graph
 
+    def prepare_resources(self, roots: Mapping[str, str]) -> ResourceBundle:
+        """Freeze the revisions inspected by the agent and each planning reference's effective soundtrack."""
+        doc = self.document
+        plan = self.task == "plan"
+        resources = library_resources(doc, roots) if plan else segment_resources(doc, roots, doc["selected"])
+        assets = {asset["id"]: asset for asset in doc["assets"]}
+        for item in resources.sources():
+            asset = {**assets[item.id], "revision": item.revision}
+            if plan and item.kind == "video":
+                asset["include_audio"] = item.include_audio
+            assets[item.id] = asset
+        self.prepared_document = {**doc, "assets": list(assets.values())}
+        return resources
+
     def fixed_choices(self) -> Dict[str, str]:
         """Return writing skill restrictions for existing segments and newly planned segments."""
         film_skill = self.document["film"]["writing_skill"]
@@ -173,7 +199,7 @@ class DirectorTask:
             directory = "writing/" + str(len(options) + 1)
             remaining = copy_documents(skills[key], target / directory, remaining)
             options.append({**row, "path": directory + "/SKILL.md"})
-        doc = self.document
+        doc = self.prepared_document or self.document
         # Asset locations, revisions and render receipts are host data. Expose creative metadata only.
         return {
             "task": self.task,
@@ -181,6 +207,11 @@ class DirectorTask:
             "reselect_skill": self.reselect,
             "writing_skills": options,
             "film": doc["film"],
+            "library": [
+                {k: a[k] for k in ("id", "kind", "note", "muted", "crop", "crop_basis_ratio", "clip", "include_audio") if k in a}
+                for a in doc["assets"]
+                if not a.get("muted")
+            ],
             "outline": doc["outline"],
             "continuity": doc["continuity"],
             "coverage": doc["coverage"],
@@ -211,30 +242,33 @@ class DirectorTask:
                 "frame_grid_step": CLIP_FRAME_STEP,
                 "overlap_windows": [int(value) for value in MOTION_WINDOWS],
                 "max_segments": director.MAX_SEGMENTS,
+                "max_bindings_per_role": {role: RESOURCE_LIMITS.get(role, 1) for role in ROLES},
                 "max_result_utf8_bytes": director.RESULT_LIMIT,
             },
-            "library": [
-                {k: a[k] for k in ("id", "kind", "note", "muted", "crop", "crop_basis_ratio", "clip", "include_audio") if k in a}
-                for a in doc["assets"]
-            ],
         }
 
-    def result(self, text: str, roots: Mapping[str, str]) -> str:
+    def result(self, text: str, roots: Mapping[str, str], *, attachment_sources: Optional[Mapping[str, str]] = None) -> str:
         """Validate one complete provider result and every selected writing skill against the submitted snapshot."""
-        if len(text.encode("utf-8")) > director.RESULT_LIMIT + 32:
-            raise ValueError("Director output exceeds the single-task 256 KiB budget. Shorten the brief or target runtime.")
+        budget_error = "Director output exceeds the single-task 256 KiB budget. Shorten the brief or target runtime."
+        if len(text) > director.RESULT_LIMIT + 32:
+            raise ValueError(budget_error)
+        fence = re.fullmatch(r"\s*```(?:json|text|markdown)?[ \t]*\r?\n([\s\S]*?)\r?\n```\s*", text)
+        if len((fence[1] if fence else text).encode("utf-8")) > director.RESULT_LIMIT:
+            raise ValueError(budget_error)
         if "ARISU_POLICY_REFUSAL" in text:
             raise ValueError("Request refused by Workbench policy.")
-        lines = text.strip().splitlines()
-        if len(lines) < 3 or lines[0] not in ("```json", "```text", "```markdown", "```") or lines[-1] != "```":
+        if not fence or not fence[1].strip() or "```" in fence[1]:
             raise ValueError(
                 "Invalid Director response format. Expected one JSON fence; text, markdown, or unlabeled fences are also accepted."
             )
         try:
-            raw = h3_json("\n".join(lines[1:-1]))
+            raw = h3_json(fence[1])
         except ValueError:
             raise ValueError("Incomplete or malformed Director JSON; a token limit has not been confirmed.") from None
-        result = director.validate_draft(self.document, self.task, raw)
+        prepared = self.prepared_document or self.document
+        result = director.validate_draft(
+            self.document, self.task, raw, attachment_sources=attachment_sources, prepared_assets=prepared["assets"]
+        )
         fixed = self.fixed_choices()
         rows: List[Dict[str, Any]] = result["segments"] if self.task == "plan" else [result["segment"]]
         for segment in rows:
@@ -250,5 +284,5 @@ class DirectorTask:
                 raise ValueError(f"Segment {segment['id']}: {key} does not support the bound asset roles.")
             if not required and not segment["skill_reason"].strip():
                 raise ValueError(f"Segment {segment['id']}: explain the automatic skill selection.")
-        validate_draft_media(self.document, result, self.task, roots)
-        return json.dumps(result, ensure_ascii=False)
+        validate_draft_media(prepared, result, self.task, roots)
+        return json.dumps(result, ensure_ascii=False, separators=(",", ":"))

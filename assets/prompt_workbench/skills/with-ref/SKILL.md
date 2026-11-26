@@ -1,6 +1,6 @@
 ---
 name: with-ref
-description: Write MiniMax H3 Ref2VA or Hybrid prompts from Workbench MCP context when keyframes and/or mixed image, video, or audio references are present, including optional Motion Context continuation. Return exactly one markdown fence and nothing else.
+description: Write MiniMax H3 Ref2VA or Hybrid prompts from Workbench MCP context when keyframes and/or mixed image, video, or audio references are present, including optional Motion Context continuation.
 ---
 
 # MiniMax H3 Ref2VA / Hybrid Prompt
@@ -42,7 +42,7 @@ Duration typically 5–15 s. If MCP duration/aspect are null, use 6 seconds and 
 4. **Reference list is not 1:1 with files.** Apply the decision tree below. Character / identity / costume / style / object images are cited inline inside `<Subject N>` and do not get an independent `<Picture N>` item. Standalone `<Picture N>` only when that image is itself a frame, composition, or storyboard anchor.
 5. **Complete H3 prompt hard limit ≤ 7000 characters.** In a Director task, apply this independently to each segment's prompt text before JSON escaping. The complete film JSON has the separate UTF-8 byte budget in `director.limits.max_result_utf8_bytes`. Soft target for each prompt's `detailed_description`: 350–500 English words for generation tasks.
 6. **Background music.** When `motion.present` is true, continue any score described in `motion.audio_notes` unless `requirements` explicitly changes or removes it. Otherwise use `non_diegetic_music: N/A` unless the brief requests music. Diegetic music stays inside `detailed_description`.
-7. Output the finished prompt inside the single markdown fence required by `mcp.md`.
+7. Use the response format for the submitted task in `references/mcp.md`.
 
 ## Motion Context gate
 
@@ -81,11 +81,11 @@ Correct character-photo line:
 Wrong dump-all: extra `<Picture 1> is the reference image of the woman.`
 Wrong strip-all: `<Subject 1> is the young woman with long dark hair...` and no `<Picture 1>`.
 
-List every `references[]` row the local model will receive, including pure video and audio. Video is inspected only as stills; audio is notes only. Still assign `<Video N>` / `<Audio N>` when the decision tree requires a label, because those files reach the local model.
+List every reference the local model will receive, including pure video and audio. For Prompt Workbench, use `references[]`. For Director, use the segment's image, video, and audio reference bindings. Handle its first and last frames under the Hybrid keyframe rules. Video is inspected only as stills; audio is notes only. Still assign `<Video N>` / `<Audio N>` when the decision tree requires a label, because those files reach the local model.
 
 ### Numbering and later sections
 
-- Number `<Picture N>` / `<Video N>` / `<Audio N>` in the order the source assets are used as citations, even when they have no standalone line.
+- In Prompt Workbench, number `<Picture N>` / `<Video N>` / `<Audio N>` in the order the source assets are used as citations, including inline citations. For Director, use the bound source's stable library ID wherever you cite it.
 - `retention_analysis` gets one line per standalone label defined in `subject_definitions` (plus the Hybrid keyframe lock line). Do not add retention rows for pictures/videos that exist only as inline citations.
 - `summary` and `detailed_description` refer to people/objects/places as `<Subject N>`. Mention `<Picture N>` there only when that picture is a real frame/composition/storyboard anchor.
 - Never invent labels for Hybrid keyframes. Never invent a label for a Motion Context pinned head.
@@ -145,7 +145,7 @@ List every `references[]` row the local model will receive, including pure video
    - Readable on-screen text is spelled out in double quotes.
 
 5. **Output**
-   - Emit only the (optional alignment line +) six sections inside the markdown fence from `mcp.md`.
+   - Place the optional alignment line and the six sections in the response format specified for this task.
 
 ## Practical Optimizations
 

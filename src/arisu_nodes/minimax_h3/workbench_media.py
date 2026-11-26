@@ -114,8 +114,13 @@ def stage(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
                         break
                     previous, previous_time = frame, at
                 if target_index < len(targets) and previous is not None:
-                    duration = float(previous.duration * previous.time_base) if previous.duration else 1 / float(video.average_rate or 24)
-                    emit(previous, previous_time, previous_time + duration)
+                    duration = previous.duration * previous.time_base if previous.duration else Fraction(1, 1) / (video.average_rate or 24)
+                    last_end = previous.pts * previous.time_base - base + duration
+                    # The container and the decoder can round the final presentation endpoint one tick apart.
+                    clip_end = Fraction(str(end))
+                    if last_end < clip_end <= last_end + previous.time_base:
+                        last_end = clip_end
+                    emit(previous, previous_time, float(last_end))
                 if target_index != len(targets):
                     raise ValueError("selected video has incomplete coverage")
         # Audio remains metadata/notes only, including video soundtracks.

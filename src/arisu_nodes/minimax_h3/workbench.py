@@ -32,7 +32,6 @@ from .core import (
     workbench_options,
 )
 from .director import segment_frames
-from .director_media import library_resources, segment_resources
 from .director_task import DIRECTOR_SKILL, DirectorTask
 from .media import validate_workbench_source
 from .workbench_context import context_inputs
@@ -430,11 +429,7 @@ class Workbench:
             if job.error:
                 raise ValueError(job.error)
             if job.director:
-                doc = job.director.document
-                if job.director.task == "plan":
-                    job.resources = library_resources(doc, job.roots)
-                else:
-                    job.resources = segment_resources(doc, job.roots, doc["selected"])
+                job.resources = job.director.prepare_resources(job.roots)
             elif job.cpu_context:
                 values = context_inputs(job.context_graph, job.node_id, job.roots)
                 job.settings = values.get("video_settings")
@@ -490,8 +485,7 @@ class Workbench:
                 assets = json.loads(stdout)
                 self.store_assets(job, media_key, assets)
             job.wait_for_preparation()
-            assets = assets + job.motion
-            manifest = job_context(job, assets, resources)
+            manifest = job_context(job, assets + job.motion, resources)
             skills = skill_catalog(self.directory)
             staged_skill = job.directory / "skill"
             if job.director:
@@ -529,7 +523,18 @@ class Workbench:
                 )
             except TimeoutError as error:
                 raise ValueError(f"Agent generation timed out after {GENERATION_TIMEOUT // 60} minutes.") from error
-            draft = job.director.result(final, job.roots) if job.director else finalized_markdown(final)
+            if job.director:
+                # Only this job's staged library media can identify a binding. Motion stills belong to the predecessor.
+                source_ids = {item.id for item in resources.sources()}
+                attachment_sources = {
+                    asset["id"]: asset["resource_id"]
+                    for asset in assets
+                    if asset["role"] in ("reference", "first_keyframe", "last_keyframe", "reference_video_frame")
+                    and asset["resource_id"] in source_ids
+                }
+                draft = job.director.result(final, job.roots, attachment_sources=attachment_sources)
+            else:
+                draft = finalized_markdown(final)
             if job.cancelled.is_set():
                 raise ValueError("generation cancelled")
             job.draft = draft

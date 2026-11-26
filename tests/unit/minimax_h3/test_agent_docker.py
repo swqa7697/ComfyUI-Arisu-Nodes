@@ -1028,7 +1028,8 @@ def test_mcp_manifest_images_and_unlisted_or_escaping_assets(
             runner, "context", lambda: {"assets": [], "director": {"task": "plan", "writing_skills": [{"id": "base", "path": path}]}}
         )
         film = {"segments": [{"id": f"scene-{i}", "skill": "base", "prompt": "A quiet room. " * 300} for i in range(20)]}
-        payload = json.dumps(film)
+        film["segments"][0]["prompt"] += "Look up.\u2028Stay still."
+        payload = json.dumps(film, ensure_ascii=False)
         message = {**result, "result": "```json\n" + payload + "\n```"}
         wire = json.dumps(init) + "\n" + json.dumps(message)
         director.setattr(grok_provider, "command", lambda *args: [sys.executable, "-c", "print(" + repr(wire) + ")"])
@@ -1041,7 +1042,7 @@ def test_mcp_manifest_images_and_unlisted_or_escaping_assets(
         for agent, selected in (("grok", grok_provider), ("codex", provider)):
             director.setattr(runner, "adapter_for", lambda agent, selected=selected: selected)
             for label in ("json", "text", "markdown", ""):
-                response = "```" + label + "\n" + payload + "\n```"
+                response = "```" + label + " \t\r\n" + payload + "\r\n```"
                 events = (
                     [init, {**result, "result": response}]
                     if agent == "grok"
@@ -1051,7 +1052,7 @@ def test_mcp_manifest_images_and_unlisted_or_escaping_assets(
                 director.setattr(selected, "command", lambda *args, wire=wire: [sys.executable, "-c", "print(" + repr(wire) + ")"])
                 runner.generate(agent, {"model": "test"})
                 output = next(
-                    line.removeprefix("ARISU_RESULT ") for line in capsys.readouterr().out.splitlines() if line.startswith("ARISU_RESULT ")
+                    line.removeprefix("ARISU_RESULT ") for line in capsys.readouterr().out.split("\n") if line.startswith("ARISU_RESULT ")
                 )
                 assert json.loads(output)["final"] == response
         director.setattr(runner, "adapter_for", lambda agent: grok_provider)

@@ -6,7 +6,8 @@ import json
 import math
 import re
 from dataclasses import replace
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from pathlib import PureWindowsPath
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Set, Tuple
 
 from .core import (
     ASPECT_RATIO_LABELS,
@@ -43,6 +44,7 @@ EMPTY_FILM = json.dumps(
     separators=(",", ":"),
 )
 ID = re.compile(r"[A-Za-z0-9_-]{1,128}")
+UUID_ID = re.compile(r"(?:[0-9a-f]{32}|[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})", re.IGNORECASE | re.ASCII)
 TAG = re.compile(r"<(Picture|Video|Audio)(?:\s+(\d+)|:([^<>\s]+))>")
 BINDING_FIELDS = {"crop", "crop_basis_ratio", "clip", "include_audio"}
 SEGMENT_FIELDS = {
@@ -99,6 +101,12 @@ def _id(value: Any, name: str) -> str:
     return value
 
 
+def _asset_label(asset: Dict[str, Any]) -> str:
+    """Identify a library card in errors using its portable filename and stable ID."""
+    filename = PureWindowsPath(asset["path"]).name
+    return f"asset {asset['id']} ({filename[:255]!r})"
+
+
 def _list(value: Any, name: str, limit: int) -> List[Any]:
     if not isinstance(value, list) or len(value) > limit:
         raise ValueError(f"{name} must be a list of at most {limit} items")
@@ -130,13 +138,13 @@ def asset_resource(asset: Dict[str, Any], binding: Optional[Dict[str, Any]] = No
     return replace(parse_resource(source, keyframe), revision=asset.get("revision", ""))
 
 
-def _segment_fields(segment: Dict[str, Any]):
-    """Check editable fields before including them in a planning snapshot."""
+def _segment_fields(segment: Dict[str, Any], *, draft: bool = False):
+    """Validate editable fields and require complete text in a generated draft."""
     if set(segment) - SEGMENT_FIELDS:
         raise ValueError("unknown segment field")
     for field in ("intent", "opening", "closing", "skill", "skill_reason", "prompt"):
         limit = 65536 if field == "prompt" else 160 if field == "skill" else 4096
-        _text(segment.get(field), field, limit)
+        _text(segment.get(field), field, limit, required=draft)
     if type(segment.get("skill_locked")) is not bool or (segment["skill_locked"] and not segment["skill"]):
         raise ValueError("select a writing skill before locking it")
     if segment.get("transition") not in ("cut", "continuation") or type(segment.get("overlap_frames")) is not int:
@@ -225,10 +233,14 @@ def segment_bindings(doc: Dict[str, Any], segment: Dict[str, Any]) -> ResourceBu
         if not isinstance(role, str) or role not in groups:
             raise ValueError(f"asset {asset_id} has an invalid role")
         asset = assets.get(asset_id)
-        if not asset or asset.get("muted"):
-            raise ValueError(f"asset {asset_id} is missing or muted")
-        if asset_id in seen or asset["kind"] != ("image" if role in ("first", "last") else role):
-            raise ValueError(f"asset {asset_id} is duplicated or incompatible with role {role}")
+        if asset is None:
+            raise ValueError(f"asset {asset_id} is missing from the film library. Reselect the source or change the binding.")
+        if asset.get("muted"):
+            raise ValueError(f"{_asset_label(asset)} is muted. Unmute it in the Asset Library or change the binding.")
+        if asset_id in seen:
+            raise ValueError(f"asset {asset_id} is bound more than once")
+        if asset["kind"] != ("image" if role in ("first", "last") else role):
+            raise ValueError(f"asset {asset_id} is {asset['kind']} and cannot be bound as {role}")
         seen.add(asset_id)
         if len(groups[role]) >= RESOURCE_LIMITS.get(role, 1):
             raise ValueError(f"too many {role} bindings at asset {asset_id}")
@@ -303,7 +315,50 @@ def segment_snapshot(doc: Dict[str, Any], segment_id: Optional[str] = None) -> T
     )
 
 
-def validate_draft(doc: Dict[str, Any], task: str, result: Dict[str, Any]) -> Dict[str, Any]:
+def _draft_asset_resolver(assets: Sequence[Dict[str, Any]], attachments: Mapping[str, str]) -> Callable[[str], str]:
+    """Resolve only library IDs and source associations from this job's staged media."""
+    library = {asset["id"]: asset for asset in assets}
+    sources: Dict[str, Set[str]] = {}
+
+    def spelling(identifier: str) -> str:
+        # Browser-created library IDs are UUIDs. Other workflow IDs are opaque, case-sensitive strings.
+        return identifier.replace("-", "").lower() if UUID_ID.fullmatch(identifier) else identifier
+
+    for identifier in library:
+        sources.setdefault(spelling(identifier), set()).add(identifier)
+    for attachment, resource in attachments.items():
+        if resource in library:
+            sources.setdefault(spelling(attachment), set()).add(resource)
+
+    def resolve(identifier: str) -> str:
+        _id(identifier, "referenced asset")
+        # A literal library ID, including a muted one, keeps its meaning across jobs.
+        if identifier in library and attachments.get(identifier, identifier) == identifier:
+            resource = identifier
+        else:
+            matches = sources.get(spelling(identifier))
+            if not matches:
+                raise ValueError(f"asset {identifier} is missing from the submitted Asset Library. Check the library and generate again.")
+            if len(matches) != 1:
+                raise ValueError(f"asset ID {identifier} is ambiguous in the submitted library and attachments")
+            resource = next(iter(matches))
+        if library[resource].get("muted"):
+            raise ValueError(
+                f"{_asset_label(library[resource])} was muted in the submitted Asset Library. Review its mute setting and generate again."
+            )
+        return resource
+
+    return resolve
+
+
+def validate_draft(
+    doc: Dict[str, Any],
+    task: str,
+    result: Dict[str, Any],
+    *,
+    attachment_sources: Optional[Mapping[str, str]] = None,
+    prepared_assets: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
     """Validate the complete response against the request snapshot without modifying finalized state."""
     # The bound also applies to direct callers, independently of provider output limits.
     result = read_json(json.dumps(result, ensure_ascii=False, separators=(",", ":")), RESULT_LIMIT, "director result")
@@ -343,18 +398,29 @@ def validate_draft(doc: Dict[str, Any], task: str, result: Dict[str, Any]) -> Di
         changed = [seg]
         proposed = [seg if s["id"] == seg["id"] else s for s in doc["segments"]]
     candidate = {**doc, "segments": proposed}
+    # Media validation uses the inspected revisions and soundtracks. Apply keeps the submitted film's library.
+    snapshot = {**candidate, "assets": prepared_assets} if prepared_assets is not None else candidate
+    resolve_asset = _draft_asset_resolver(doc["assets"], attachment_sources or {})
+
+    def stable_tag(match: re.Match) -> str:
+        kind, _, identifier = match.groups()
+        return f"<{kind}:{resolve_asset(identifier)}>" if identifier is not None else match[0]
+
     for seg in changed:
         key = seg["id"]
-        if set(seg) - SEGMENT_FIELDS:
-            raise ValueError(f"Segment {key}: unknown draft fields")
-        for field in ("intent", "opening", "closing", "skill", "skill_reason"):
-            _text(seg.get(field), f"Segment {key} {field}", 160 if field == "skill" else 4096, True)
-        locked = old.get(key, {}).get("skill_locked", False)
-        required = old[key].get("skill") if locked else doc["film"]["writing_skill"]
-        if required and required != seg["skill"]:
-            raise ValueError(f"Segment {key}: expected writing skill {required}")
-        seg["skill_locked"] = locked
-        normalized, settings, _ = segment_snapshot(candidate, key)
+        prior = old.get(key, {})
+        seg["skill_locked"] = prior.get("skill_locked", False)
+        try:
+            _segment_fields(seg, draft=True)
+            required = prior["skill"] if seg["skill_locked"] else doc["film"]["writing_skill"]
+            if required and required != seg["skill"]:
+                raise ValueError(f"expected writing skill {required}")
+            for binding in seg["bindings"]:
+                binding["asset_id"] = resolve_asset(binding["asset_id"])
+            seg["prompt"] = TAG.sub(stable_tag, seg["prompt"])
+        except ValueError as error:
+            raise ValueError(f"Segment {key}: {error}") from error
+        normalized, settings, _ = segment_snapshot(snapshot, key)
         seg["prompt"] = _text(normalized["prompt"], f"Segment {key} normalized prompt", 65536, True)
         for binding in seg["bindings"]:
             if binding["role"] in ("first", "last") and binding.get("crop") and not binding.get("crop_basis_ratio"):

@@ -1,6 +1,6 @@
 ---
 name: no-ref
-description: Write MiniMax H3 T2VA, I2VA, FL2VA, or L2VA prompts from Workbench MCP context, including optional Motion Context continuation. Return exactly one markdown fence and nothing else.
+description: Write MiniMax H3 T2VA, I2VA, FL2VA, or L2VA prompts from Workbench MCP context, including optional Motion Context continuation.
 ---
 
 # MiniMax H3 T2VA / FL2VA Prompt
@@ -24,7 +24,7 @@ This skill writes T2VA / I2VA / FL2VA / L2VA only. Keep that field order even if
 3. Read `references/base-en.txt` and follow its shot notation, camera vocabulary, speaker IDs, `<d>` dialogue format, and examples exactly.
 4. **Complete H3 prompt hard limit ≤ 7000 characters.** In a Director task, apply this independently to each segment's prompt text before JSON escaping. The complete film JSON has the separate UTF-8 byte budget in `director.limits.max_result_utf8_bytes`. Soft target: keep tight; when keyframe images carry visual load the prompt can be shorter.
 5. **Background music.** When `motion.present` is true, continue any score described in `motion.audio_notes` unless `requirements` explicitly changes or removes it. Otherwise use `non_diegetic_music: N/A` unless the brief requests music. Diegetic music belongs inside the multimodal description.
-6. Output the finished prompt inside the single markdown fence required by `mcp.md`.
+6. Use the response format for the submitted task in `references/mcp.md`.
 
 ## Motion Context gate
 
@@ -87,7 +87,7 @@ Duration and aspect come from MCP; if null, use 6 seconds and 16:9.
    - Add quality prohibitions only when needed (no subtitles, no watermarks, no text unless spelled out, no soft dissolves unless requested, keep live-action texture). Prefer positive constraints.
 
 6. **Final output**
-   - Emit only the complete prompt text inside the markdown fence from `mcp.md`.
+   - Place the complete prompt text in the response format specified for this task.
    - Preserve user-supplied dialogue, lyrics, or on-screen text verbatim in the original language.
 
 ## Practical Optimizations

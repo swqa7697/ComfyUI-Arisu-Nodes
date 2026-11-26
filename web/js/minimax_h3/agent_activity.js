@@ -335,12 +335,12 @@ export function openAgentActivity(snapshot, onClose, onEdit, onApply, review) {
     review?.refresh(state);
     if (draft.value !== state.draft) draft.value = state.draft || '';
     draft.disabled = !state.hasOutput;
-    apply.disabled = !state.draft?.trim() || state.applied;
+    apply.disabled = !state.draft?.trim() || state.applied || !!state.applyError;
     apply.textContent = state.applied ? 'Applied' : 'Apply to Workbench';
     hint.textContent = state.running
       ? 'Generating…'
       : state.draft
-        ? (review?.hint ?? 'Only applied text is saved in the workflow.')
+        ? state.applyError || review?.hint || 'Only applied text is saved in the workflow.'
         : 'No output yet.';
   }
   draft.oninput = () => {

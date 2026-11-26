@@ -175,13 +175,13 @@ export function workbenchSessions(nodes, render, notify, messages, onComplete) {
     try {
       // Capture everything in one synchronous turn. Edits after this point belong to the next Generate.
       const captured = capture(node, run);
+      updateRun(run);
       const payload = captured?.then ? await captured : captured;
       if (!current() || run.cancelling) {
         run.status = 'Generation cancelled';
         return;
       }
       run.started = true;
-      updateRun(run);
       const response = await workbenchRequest('/generate', { ...payload, workflow: run.workflow, client_id: api.clientId });
       if (!current()) {
         void workbenchRequest('/release', { id: response.id }).catch(() => {});
