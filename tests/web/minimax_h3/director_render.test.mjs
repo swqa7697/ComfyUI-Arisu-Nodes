@@ -100,7 +100,7 @@ test('Director renders through either saver into the legacy or project layout an
   const director = makeNode({ id: 1, type: DIRECTOR, graph });
   const server = { prompts: [], inspected: [], removed: { video: new Set(), latent: new Set() } };
   let output;
-  app.graphToPrompt = async () => ({ output: structuredClone(output), workflow: {} });
+  app.graphToPrompt = async () => ({ output, workflow: {} });
   const render = (selected) => renderSegments(director, { ...FILM, selected }, false);
   const refresh = () => refreshRenderTakes(director, FILM);
   const last = () => server.prompts.at(-1);
@@ -290,6 +290,23 @@ test('Director renders through either saver into the legacy or project layout an
   await assert.rejects(render('a'));
   assert.equal(server.prompts.length, beforeInvalid);
   output[toggle].inputs.on_false = [sampler, 0];
-  await render('a');
+  // rgthree's header stays reactive in graphToPrompt's output. Editing a LoRA between takes applies to the next render sequence.
+  const header = new Proxy({ type: 'PowerLoraLoaderHeaderWidget' }, {});
+  const lora = { lora: 'film.safetensors', on: true, strength: 0.5 };
+  output[sampler].inputs.model = ['14', 0];
+  output[14] = { class_type: 'Power Lora Loader (rgthree)', inputs: { PowerLoraLoaderHeaderWidget: header, lora_1: lora } };
+  await renderSegments(director, edited, true, () => {
+    if (server.prompts.length > beforeInvalid) lora.strength = 1;
+  });
+  assert.deepEqual(
+    server.prompts
+      .slice(beforeInvalid)
+      .map(({ prompt }) => [JSON.parse(prompt[1].inputs.film_json).selected, prompt[14].inputs.lora_1.strength]),
+    [
+      ['a', 0.5],
+      ['b', 0.5],
+    ],
+  );
+  assert.deepEqual(last().prompt[14].inputs.PowerLoraLoaderHeaderWidget, header);
   assert.deepEqual(last().prompt[toggle], output[toggle], 'the linked switch stays under workflow control');
 });

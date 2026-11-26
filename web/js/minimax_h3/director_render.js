@@ -396,9 +396,11 @@ export async function renderSegments(node, document, remaining, onProgress = () 
     if (owner.stopped) return;
     const director = executionTarget(node)?.id;
     const prompt = await app.graphToPrompt();
-    if (prompt.output[director]?.class_type !== DIRECTOR) throw new Error('The selected Director node is absent from this workflow.');
-    const ids = chain(prompt.output, String(director), node);
-    const project = projectOf(prompt.output, ids);
+    // Object-valued widgets can be reactive proxies. Capture the JSON sent to /prompt once for the whole sequence.
+    const graph = JSON.parse(JSON.stringify(prompt.output));
+    if (graph[director]?.class_type !== DIRECTOR) throw new Error('The selected Director node is absent from this workflow.');
+    const ids = chain(graph, String(director), node);
+    const project = projectOf(graph, ids);
     for (const [index, segment] of doc.segments.entries()) {
       if (index < start || (!remaining && index !== start)) continue;
       if (owner.stopped) break;
@@ -410,7 +412,6 @@ export async function renderSegments(node, document, remaining, onProgress = () 
       const predecessor = previous ? renderTake(node, doc.segments[index - 1].id).id : null;
       const snapshotRevision = revision(doc, segment);
       if (snapshotRevision === null) throw new Error(`Segment ${segment.id} needs a generation length within the film limits.`);
-      const graph = structuredClone(prompt.output);
       graph[director].inputs.film_json = JSON.stringify({ ...doc, selected: segment.id });
       configureMotion(graph, ids, segment, previous, project ? `${project}/director` : LEGACY);
       if (ids.saver === ARISU_SAVER)
