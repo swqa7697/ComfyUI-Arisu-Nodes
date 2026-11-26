@@ -12,6 +12,8 @@ To use a single setting elsewhere, also connect `video_settings` to **MiniMax H3
 4. Compare the submitted requirements with the coverage the Director identified, the segments that cover each item, and the estimated runtime. Apply the plan in one edit. To change the whole sequence, edit **Film Requirements** and choose **Replan the film**. Undo restores the previous plan. If a plan exceeds the agent budget, reduce the brief or the requested scope and try again.
 5. A film-wide writing skill applies to all segments except those with a locked choice. Automatic selection records the skill and its reason for each segment.
 
+To start an empty sequence with the same film settings and library assets, open **Film Setup**, choose **Clear all segments**, then confirm with **Clear segments**. One workflow Undo restores the sequence and its selected segment.
+
 A shot change can happen within a segment. For example, if a character has no visual reference, Director can keep a cutaway and the character’s return in one generation. It can then place the boundary where the character is recognizable in the final frames that Motion Context carries into the next segment. A matching visual reference bound to the next segment can also establish the character’s appearance after a hard cut.
 
 A film can contain up to 128 segments and 256 library assets. The saved film document is limited to 1 MiB. Each structured agent result is limited to 256 KiB of UTF-8 text, including all prompts and planning fields. The bundled writing skills' 7000-character prompt limit applies separately to each segment, before JSON escaping. The with-ref 350–500-word target applies to each prompt's detailed description. The provider’s context and output limits can be lower.

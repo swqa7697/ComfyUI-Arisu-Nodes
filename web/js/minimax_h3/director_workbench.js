@@ -307,6 +307,45 @@ function filmView(ui, doc) {
   ];
 }
 
+function confirmClearSegments(ui, parent, trigger) {
+  const count = ui.read().segments.length;
+  const title = 'Clear all segments?';
+  const dialog = el('dialog', { className: 'arisu-director-dialog clear-segments-dialog', ariaLabel: title });
+  const message = text(
+    'p',
+    `Remove ${count} ${count === 1 ? 'segment' : 'segments'} and their prompts from this film. You can undo this change.`,
+  );
+  const cancel = ui.button('Cancel', () => dialog.close());
+  const clear = ui.button('Clear segments', () => dialog.close('clear'));
+  clear.className = 'danger';
+  dialog.append(
+    el('header', { className: 'dialog-head dialog-title' }, [text('h2', title)]),
+    el('div', { className: 'dialog-body' }, [message]),
+    el('footer', { className: 'dialog-foot actions' }, [cancel, clear]),
+  );
+  dialog.ariaDescribedByElements = [message];
+  closeOnBackdropClick(dialog);
+  dialog.onclose = () => {
+    dialog.remove();
+    if (!parent.open) return;
+    if (dialog.returnValue === 'clear') {
+      // The dialog closes after the canvas has handled mouseup. Record this edit for both pointer and keyboard confirmation.
+      const tracker = app.extensionManager?.workflow?.activeWorkflow?.changeTracker;
+      tracker?.captureCanvasState?.();
+      ui.change((doc) => {
+        doc.segments = [];
+        doc.selected = '';
+        for (const ids of Object.values(doc.coverage)) ids.length = 0;
+      });
+      tracker?.captureCanvasState?.();
+      parent.querySelector('textarea')?.focus();
+    } else trigger.focus();
+  };
+  parent.append(dialog);
+  dialog.showModal();
+  cancel.focus();
+}
+
 function addSegment(ui) {
   ui.change((doc) => {
     const id = resourceId();
@@ -631,6 +670,8 @@ function openEditor(ui, title) {
   const heading = text('h2', title);
   const context = text('small', '');
   const browse = title === LIBRARY ? assetButton(ui, 'Browse assets', 'plus', () => browseAssets(ui)) : null;
+  const clearSegments = title === FILM ? ui.button('Clear all segments', () => confirmClearSegments(ui, dialog, clearSegments)) : null;
+  clearSegments?.setAttribute('aria-haspopup', 'dialog');
   const headActions = row(browse ? [browse, close] : [close]);
   const head = el('header', { className: 'dialog-head bar' }, [el('div', { className: 'dialog-title' }, [heading, context]), headActions]);
   const segmentId = ui.read().selected;
@@ -700,6 +741,7 @@ function openEditor(ui, title) {
     const planning = title === FILM;
     if (planning || (segmentEditor && tab === REVISION)) {
       const provider = state.agents?.agents?.[selectedAgent(node)];
+      if (clearSegments) clearSegments.disabled = !doc.segments.length || !!state.rendering;
       foot.replaceChildren(
         row([
           ui.select(
@@ -727,17 +769,20 @@ function openEditor(ui, title) {
             ? [provider?.update_required ? text('p', provider.error, 'update-required') : meta('Agent unavailable')]
             : []),
         ]),
-        action(
-          ui,
-          planning ? (doc.segments.length ? 'Replan the film' : 'Plan the film') : 'Refine current segment',
-          () => {
-            const message = planning ? 'Enter the film requirements.' : 'Enter a revision request for this segment.';
-            if (!hasInstructions(body.querySelector('textarea'), message)) return;
-            dialog.close();
-            return generate(ui, planning ? 'plan' : 'refine');
-          },
-          !provider?.ready || state.run?.running,
-        ),
+        row([
+          ...(clearSegments ? [clearSegments] : []),
+          action(
+            ui,
+            planning ? (doc.segments.length ? 'Replan the film' : 'Plan the film') : 'Refine current segment',
+            () => {
+              const message = planning ? 'Enter the film requirements.' : 'Enter a revision request for this segment.';
+              if (!hasInstructions(body.querySelector('textarea'), message)) return;
+              dialog.close();
+              return generate(ui, planning ? 'plan' : 'refine');
+            },
+            !provider?.ready || state.run?.running,
+          ),
+        ]),
       );
     } else if (segmentEditor)
       foot.replaceChildren(

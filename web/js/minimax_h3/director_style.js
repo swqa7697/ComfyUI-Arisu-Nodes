@@ -61,6 +61,8 @@ dialog.arisu-director-dialog{
  padding:0;border:1px solid var(--line);border-radius:10px;background:var(--base);font-family:inherit
 }
 dialog.arisu-director-dialog.compact{width:min(640px,calc(100vw - 24px))}
+dialog.arisu-director-dialog.clear-segments-dialog{width:min(400px,calc(100vw - 24px))}
+.clear-segments-dialog .dialog-foot{justify-content:flex-end}
 dialog.arisu-director-dialog[open]{display:flex;flex-direction:column}
 .arisu-director-dialog .dialog-head,.arisu-director-dialog .dialog-foot{flex:none;padding:10px 14px}
 .arisu-director-dialog .dialog-head{border-bottom:1px solid var(--line)}

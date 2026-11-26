@@ -877,6 +877,39 @@ def inspect_director(page: Page, server: FixtureServer, name: str) -> str:
     assert not restored["assets"]
     assert restored["segments"][1]["bindings"] == [{"asset_id": asset_id, "role": "image"}]
     inspect_draft_assets(page, asset_id)
+
+    # Clear a populated sequence from Film Setup and recover the complete sequence with one Undo.
+    original = json.loads(widget_value(page, node_id, "film_json"))
+    assert len(original["segments"]) == 2 and original["assets"] and any(original["coverage"].values())
+    setup.click()
+    clear = film.get_by_role("button", name="Clear all segments", exact=True)
+    confirm = page.get_by_role("dialog", name="Clear all segments?", exact=True)
+    cancel = confirm.get_by_role("button", name="Cancel", exact=True)
+    clear.click()
+    expect(cancel).to_be_focused()
+    cancel.click()
+    expect(clear).to_be_focused()
+    clear.press("Enter")
+    page.keyboard.press("Escape")
+    expect(clear).to_be_focused()
+    assert json.loads(widget_value(page, node_id, "film_json")) == original
+
+    clear.click()
+    confirm.get_by_role("button", name="Clear segments", exact=True).click()
+    expect(confirm).to_have_count(0)
+    expect(brief).to_be_focused()
+    expect(clear).to_be_disabled()
+    assert json.loads(widget_value(page, node_id, "film_json")) == {
+        **original,
+        "segments": [],
+        "selected": "",
+        "coverage": {key: [] for key in original["coverage"]},
+    }
+    page.keyboard.press("Escape")
+    expect(panel.get_by_role("button", name="Set up the film")).to_be_visible()
+    page.evaluate("window.comfyAPI.app.app.extensionManager.workflow.activeWorkflow.changeTracker.undo()")
+    expect(direction).to_be_visible()
+    assert json.loads(widget_value(page, node_id, "film_json")) == original
     return node_id
 
 
