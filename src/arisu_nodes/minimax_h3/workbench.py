@@ -41,6 +41,8 @@ from .workbench_images import IMAGE_LIMIT, PROCESSING, encode_image
 logger = logging.getLogger(__name__)
 CACHE_LIMIT = 2 * 1024 * 1024 * 1024
 CACHE_TTL = 1800
+PREPARATION_TIMEOUT = 10 * 60
+GENERATION_TIMEOUT = 60 * 60
 
 
 def skill_catalog(directory: Path) -> Dict[str, Path]:
@@ -77,7 +79,7 @@ class Generation:
     selection: Dict[str, Any]
     directory: Path
     graph: Dict[str, Any]
-    deadline: float = field(default_factory=lambda: time.monotonic() + 600)
+    preparation_deadline: float = field(default_factory=lambda: time.monotonic() + PREPARATION_TIMEOUT)
     cancelled: threading.Event = field(default_factory=threading.Event)
     prepared: threading.Event = field(default_factory=threading.Event)
     preparation_done: threading.Event = field(default_factory=threading.Event)
@@ -94,16 +96,32 @@ class Generation:
     motion: List[Dict[str, Any]] = field(default_factory=list)
     roots: Dict[str, str] = field(default_factory=dict)
     queue_finished: Optional[Callable[[], bool]] = None
-    created: float = field(default_factory=time.monotonic)
     generation_started: Optional[float] = None
-    generation_finished: Optional[float] = None
+    finished_at: Optional[float] = None
+
+    def check_preparation_time(self):
+        """Stop cancelled or expired work before handing off to the agent."""
+        if self.cancelled.is_set():
+            raise ValueError("generation cancelled")
+        if time.monotonic() >= self.preparation_deadline:
+            raise ValueError(f"Workflow preparation timed out after {PREPARATION_TIMEOUT // 60} minutes.")
+
+    def wait_for_preparation(self):
+        """Wait for queued inputs within the preparation time limit."""
+        while not self.prepared.wait(0.1):
+            self.check_preparation_time()
+            if self.queue_finished and self.queue_finished():
+                raise ValueError("preparation did not complete; check the connected loaders and ComfyUI execution error")
+        self.check_preparation_time()
+        if self.error:
+            raise ValueError(self.error)
 
     def public(self) -> Dict[str, Any]:
         """Return UI state, excluding physical paths and runtime capabilities."""
         state = self.state
         elapsed = None
         if self.generation_started is not None:
-            end = self.generation_finished if self.generation_finished is not None else time.monotonic()
+            end = self.finished_at if self.finished_at is not None else time.monotonic()
             elapsed = max(0, int((end - self.generation_started) * 1000))
         result = {"id": self.id, "state": state, "error": self.error, "draft": self.draft, "generation_elapsed_ms": elapsed}
         if state == "complete" and self.director and self.director.task == "refine":
@@ -273,8 +291,9 @@ class Workbench:
     def preparation(self, identifier: str, node_id: Optional[str] = None) -> Generation:
         """Require a current, matching, unconsumed preparation job."""
         job = self.get(identifier)
-        if job.cancelled.is_set() or time.monotonic() > job.deadline or job.state != "preparing" or job.prepared.is_set():
+        if job.state != "preparing" or job.prepared.is_set():
             raise ValueError("Workbench preparation expired")
+        job.check_preparation_time()
         if node_id is not None and str(node_id) != job.node_id:
             raise ValueError("Workbench preparation target changed")
         return job
@@ -386,7 +405,8 @@ class Workbench:
                 ):
                     shutil.rmtree(path, ignore_errors=True)
             for key, job in list(self.jobs.items()):
-                if job.state in ("complete", "failed", "cancelled") and (now - job.created > CACHE_TTL or job.workflow == workflow):
+                expired = job.finished_at is not None and now - job.finished_at > CACHE_TTL
+                if job.state in ("complete", "failed", "cancelled") and (expired or job.workflow == workflow):
                     shutil.rmtree(job.directory, ignore_errors=True)
                     del self.jobs[key]
 
@@ -404,11 +424,11 @@ class Workbench:
     def execute(self, job: Generation):
         """Prepare CPU references independently, join queued motion, then run the agent."""
         process = None
+        terminal_state = "failed"
         try:
+            job.check_preparation_time()
             if job.error:
                 raise ValueError(job.error)
-            if job.cancelled.is_set() or time.monotonic() > job.deadline:
-                raise ValueError("generation cancelled or preparation timed out")
             if job.director:
                 doc = job.director.document
                 if job.director.task == "plan":
@@ -420,15 +440,7 @@ class Workbench:
                 job.settings = values.get("video_settings")
                 job.resources = values.get("resources")
             else:
-                while not job.prepared.wait(0.1):
-                    if job.queue_finished and job.queue_finished():
-                        raise ValueError("preparation did not complete; check the connected loaders and ComfyUI execution error")
-                    if job.cancelled.is_set() or time.monotonic() > job.deadline:
-                        raise ValueError("generation cancelled or preparation timed out")
-                if job.error:
-                    raise ValueError(job.error)
-                if job.cancelled.is_set():
-                    raise ValueError("generation cancelled")
+                job.wait_for_preparation()
             resources = job.resources or ResourceBundle()
             if not job.director or job.director.task == "refine":
                 validate_bundle(resources)
@@ -471,22 +483,13 @@ class Workbench:
                         break
                     except subprocess.TimeoutExpired:
                         sent = True
-                        if job.cancelled.is_set() or time.monotonic() > job.deadline:
-                            raise ValueError("generation cancelled or preparation timed out")
+                        job.check_preparation_time()
                 if process.returncode:
                     logger.warning("Workbench media worker: %s", stderr[-4000:])
                     raise ValueError("selected media could not be prepared")
                 assets = json.loads(stdout)
                 self.store_assets(job, media_key, assets)
-            while not job.prepared.wait(0.1):
-                if job.queue_finished and job.queue_finished():
-                    raise ValueError("preparation did not complete; check the connected loaders and ComfyUI execution error")
-                if job.cancelled.is_set() or time.monotonic() > job.deadline:
-                    raise ValueError("generation cancelled or preparation timed out")
-            if job.error:
-                raise ValueError(job.error)
-            if job.cancelled.is_set():
-                raise ValueError("generation cancelled")
+            job.wait_for_preparation()
             assets = assets + job.motion
             manifest = job_context(job, assets, resources)
             skills = skill_catalog(self.directory)
@@ -512,21 +515,36 @@ class Workbench:
             job.directory.chmod(0o755)
             for path in job.directory.rglob("*"):
                 path.chmod(0o755 if path.is_dir() else path.stat().st_mode | 0o444)
+            job.check_preparation_time()
             job.generation_started = time.monotonic()
             job.state = "generating"
             try:
-                final = self.agents.generate(job.options["agent"], job.directory, staged_skill, job.selection, job.cancelled, job.deadline)
-                job.draft = job.director.result(final, job.roots) if job.director else finalized_markdown(final)
-            finally:
-                job.generation_finished = time.monotonic()
+                final = self.agents.generate(
+                    job.options["agent"],
+                    job.directory,
+                    staged_skill,
+                    job.selection,
+                    job.cancelled,
+                    job.generation_started + GENERATION_TIMEOUT,
+                )
+            except TimeoutError as error:
+                raise ValueError(f"Agent generation timed out after {GENERATION_TIMEOUT // 60} minutes.") from error
+            draft = job.director.result(final, job.roots) if job.director else finalized_markdown(final)
             if job.cancelled.is_set():
                 raise ValueError("generation cancelled")
-            job.state = "complete"
+            job.draft = draft
+            terminal_state = "complete"
         except Exception as error:
-            logger.exception("Workbench generation failed")
-            job.state = "cancelled" if job.cancelled.is_set() else "failed"
-            job.error = str(error) if isinstance(error, ValueError) else "Prompt generation failed; see server logs."
+            if job.cancelled.is_set():
+                logger.info("Workbench generation cancelled")
+                job.error = "generation cancelled"
+                terminal_state = "cancelled"
+            else:
+                logger.exception("Workbench generation failed")
+                job.error = str(error) if isinstance(error, ValueError) else "Prompt generation failed; see server logs."
         finally:
+            job.finished_at = time.monotonic()
+            job.state = terminal_state
             job.cancelled.set()
             if process and process.poll() is None:
                 process.kill()

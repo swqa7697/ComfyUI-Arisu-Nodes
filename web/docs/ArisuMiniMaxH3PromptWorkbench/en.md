@@ -28,7 +28,8 @@ that text. A result matching Finalized prompt is shown as Applied.
 Generation and results survive Undo/Redo and switching between open workflow tabs. Cancel,
 deleting the Workbench node, closing/replacing its workflow, or leaving the page releases the
 job. Imported and duplicated workflows start with no generation state.
-One generation runs at a time, with a ten-minute deadline. Builds have a thirty-minute deadline.
+One generation runs at a time. Queuing and preparing inputs have a shared ten-minute limit.
+Once preparation finishes, the agent has up to 60 minutes to generate the prompt. Builds have a thirty-minute deadline.
 Cancellation affects this job; it does not interrupt unrelated ComfyUI work.
 
 ## Motion Context

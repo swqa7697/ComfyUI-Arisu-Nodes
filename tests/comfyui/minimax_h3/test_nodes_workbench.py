@@ -325,15 +325,21 @@ def test_workbench_stages_crops_refuses_escapes_and_cancellation_retains_guard(t
         workbench, "time", SimpleNamespace(monotonic=lambda: clock[0], time=workbench.time.time, sleep=workbench.time.sleep)
     )
 
-    def generated(agent: str, directory: Path, skill: Path, *args: Any) -> str:
+    def generated(agent: str, directory: Path, skill: Path, selection: Dict[str, Any], cancelled: threading.Event, deadline: float) -> str:
         assert prepared_job.public()["generation_elapsed_ms"] == 0
         clock[0] += 42.25
         assert prepared_job.public()["generation_elapsed_ms"] == 42250
         clock[0] += 35.75
-        if index == 2:
+        if index == 1:
             raise ValueError("provider failed")
+        if index == 2:
+            cancelled.set()
         if index == 3:
-            prepared_job.cancelled.set()
+            raise TimeoutError("Docker operation timed out")
+        if index == 4:
+            # A 59-minute generation succeeds even after 90 seconds of preparation.
+            clock[0] += 59 * 60 - 78
+            assert clock[0] < deadline <= clock[0] + 60
         context = json.loads((directory / "context.json").read_text())
         assert context["version"] == 3 and context["keyframes"] == {"first": None, "last": None}
         assert context["motion"]["present"] is False and context["motion"]["stills"] == []
@@ -350,7 +356,7 @@ def test_workbench_stages_crops_refuses_escapes_and_cancellation_retains_guard(t
         return "```markdown\nA red coat in the rain.\n```"
 
     monkeypatch.setattr(owner.agents, "generate", generated)
-    for index in range(4):
+    for index, expected_state in enumerate(("complete", "failed", "cancelled", "failed", "complete")):
         options = workbench_options(
             {
                 "source_id": "studio",
@@ -410,11 +416,13 @@ def test_workbench_stages_crops_refuses_escapes_and_cancellation_retains_guard(t
         else:
             prepared_job.prepared.set()
         owner.execute(prepared_job)
-        assert prepared_job.state == ("failed" if index == 2 else "cancelled" if index == 3 else "complete")
-        if index < 2:
+        assert prepared_job.state == expected_state, prepared_job.error
+        if expected_state == "complete":
             assert prepared_job.draft == "A red coat in the rain."
+        if index == 3:
+            assert "timed out" in prepared_job.error.lower() and "60 minutes" in prepared_job.error
         clock[0] += 120
-        assert prepared_job.public()["generation_elapsed_ms"] == 78000
+        assert prepared_job.public()["generation_elapsed_ms"] == (59 * 60 * 1000 if index == 4 else 78000)
         assert not prepared_job.directory.exists() and not owner.agents.guard.locked()
         if index == 0:
 
@@ -424,6 +432,35 @@ def test_workbench_stages_crops_refuses_escapes_and_cancellation_retains_guard(t
             monkeypatch.setattr(workbench.subprocess, "Popen", unexpected_worker)
     assert len(owner.cache) == 1 and image_path.read_bytes() == original
     assert not marker.exists()
+
+    # A long job's review window starts when the draft is ready.
+    clock[0] += 30 * 60 - 120 - 1
+    owner.reap()
+    assert owner.get(prepared_job.id).public()["draft"] == "A red coat in the rain."
+    clock[0] += 2
+    owner.reap()
+    with pytest.raises(ValueError, match="unavailable"):
+        owner.get(prepared_job.id)
+
+    # If final staging exhausts the preparation window or is cancelled, Docker must never start.
+    with monkeypatch.context() as handoff:
+        handoff.setattr(workbench.subprocess, "Popen", isolated)
+        handoff.setattr(owner.agents, "generate", lambda *args: pytest.fail("started Docker after preparation stopped"))
+        for cancel in (False, True):
+            pending = owner.create("w", "active", {}, {"w": {"inputs": {}}})
+            pending.prepared.set()
+
+            def finish_staging(cancel: bool = cancel, pending: Generation = pending):
+                if cancel:
+                    pending.cancelled.set()
+                else:
+                    clock[0] += 601
+
+            handoff.setattr(owner, "enforce_budget", finish_staging)
+            owner.execute(pending)
+            assert pending.state == ("cancelled" if cancel else "failed")
+            assert ("cancelled" if cancel else "timed out") in pending.error.lower()
+            assert pending.public()["generation_elapsed_ms"] is None and not owner.agents.guard.locked()
     grouped_job = Generation(
         "grouped",
         "w",

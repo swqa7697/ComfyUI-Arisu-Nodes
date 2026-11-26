@@ -10,6 +10,7 @@ import json
 import shutil
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import Any, Dict, List
@@ -276,6 +277,25 @@ def test_agent_update_preserves_working_image_and_settings_reject_unavailable_mo
         with pytest.raises(ValueError, match="without truncating"):
             DockerAgents.stream(agents, [], time.monotonic() + 5, agents.stopping)
     assert not agents.stopping.is_set()
+
+    # Both stop conditions reap a live child and report the actual reason.
+    children = []
+    cancelled = threading.Event()
+
+    def sleeping_child(*args: Any, **kwargs: Any) -> subprocess.Popen:
+        child = popen([sys.executable, "-c", "import time; print('ready', flush=True); time.sleep(30)"], **kwargs)
+        children.append(child)
+        return child
+
+    with monkeypatch.context() as local:
+        agents.begin_logs("codex", "generate", "stalled")
+        local.setattr(subprocess, "Popen", sleeping_child)
+        with pytest.raises(TimeoutError):
+            DockerAgents.stream(agents, [], time.monotonic() + 0.1, cancelled)
+        assert children[-1].returncode is not None and not cancelled.is_set()
+        with pytest.raises(ValueError, match="cancelled") as stopped:
+            DockerAgents.stream(agents, [], time.monotonic() + 5, cancelled, receive=lambda _: cancelled.set())
+        assert "timed out" not in str(stopped.value) and children[-1].returncode is not None
 
     # Provider text and reference details survive formatting, but image payloads do not enter logs.
     runner_path = Path(__file__).resolve().parents[3] / "assets/prompt_workbench/events.py"

@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-import threading
-import time
+from pathlib import Path
 from types import SimpleNamespace
 
 import comfy.model_management
@@ -12,11 +11,12 @@ import nodes
 import pytest
 
 from src.arisu_nodes.minimax_h3 import workbench_execution
+from src.arisu_nodes.minimax_h3.workbench import Generation
 
 pytestmark = pytest.mark.comfyui
 
 
-def test_motion_preparation_preserves_video_cache_on_success_failure_and_interrupt(monkeypatch: pytest.MonkeyPatch):
+def test_motion_preparation_preserves_video_cache_on_success_failure_and_interrupt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     calls = []
 
     class Output:
@@ -50,7 +50,7 @@ def test_motion_preparation_preserves_video_cache_on_success_failure_and_interru
         baseline = calls.count(1)
         for value in (2, -1, -2):
             graph = {"w": {"class_type": "ArisuCacheProbe", "inputs": {"value": value}}}
-            job = SimpleNamespace(node_id="w", cancelled=threading.Event(), deadline=time.monotonic() + 30, prepared=threading.Event())
+            job = Generation("motion", "w", "workflow", {}, {}, tmp_path, graph)
             workbench_execution.register("motion", job, graph)
             workbench_execution.install()
             runner.execute(graph, "motion", {}, ["w"])

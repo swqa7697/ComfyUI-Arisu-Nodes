@@ -356,8 +356,10 @@ class DockerAgents:
             while process.poll() is None:
                 if errors:
                     break
-                if cancelled.wait(0.1) or time.monotonic() > deadline:
-                    raise ValueError("operation cancelled or timed out")
+                if cancelled.wait(0.1):
+                    raise ValueError("operation cancelled")
+                if time.monotonic() >= deadline and process.poll() is None:
+                    raise TimeoutError("Docker operation timed out")
             reader.join(timeout=5)
             if errors:
                 if str(errors[0]).startswith("operation log exceeds"):

@@ -6,7 +6,6 @@ import functools
 import inspect
 import logging
 import threading
-import time
 from pathlib import Path
 from typing import Any, Dict, Tuple
 
@@ -42,7 +41,8 @@ def install():
             job, approved = registration
             original = self.caches
             try:
-                if job.cancelled.is_set() or time.monotonic() > job.deadline or prompt is not approved or execute_outputs != [job.node_id]:
+                job.check_preparation_time()
+                if prompt is not approved or execute_outputs != [job.node_id]:
                     raise ValueError("Workbench motion preparation authorization expired")
                 self.caches = execution.CacheSet(cache_type=self.cache_type, cache_args=self.cache_args)
                 if self.cache_type == execution.CacheType.RAM_PRESSURE:

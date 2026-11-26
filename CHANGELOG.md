@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Give Workbench agents up to 60 minutes to generate a prompt or film draft after input preparation finishes, and report timeouts separately from cancellation.
 - Prevent repeated Grok and Codex activity snapshots from exhausting the Workbench log budget during long generations, while preserving complete activity text and output limits.
 - Use ComfyUI’s Load Diffusion Model for MiniMax H3 native loading so checkpoints with stacked PDD output heads pass through to the installed loader.
 

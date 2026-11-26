@@ -76,7 +76,9 @@ For a first clip, turn off **Motion Context → Enable motion context** to keep 
 connected and generate without waiting for the video queue. Settings and references use
 CPU; enabled motion decoding uses the queued GPU with a separate preparation cache.
 **Agent time** shows elapsed generation time in the node and Generation results, excluding queueing
-and media preparation. The final duration stays available while the workflow remains open.
+and media preparation. Prompt and Director Workbench each allow up to 10 minutes for preparation,
+including queue time, followed by up to 60 minutes for agent generation. The final duration stays
+available while the workflow remains open.
 Open **Generation results**, review the **Output Prompt** tab, and click **Apply to Workbench**
 to replace the finalized prompt. Use Undo to restore the previous text. Workflow edits and
 switching between open tabs preserve the running job and its result.
