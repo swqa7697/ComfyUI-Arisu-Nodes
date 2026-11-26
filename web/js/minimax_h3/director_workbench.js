@@ -354,8 +354,8 @@ function confirmClearSegments(ui, parent, trigger) {
 }
 
 function addSegment(ui) {
+  const id = resourceId();
   ui.change((doc) => {
-    const id = resourceId();
     doc.segments.push({
       id,
       intent: 'New Segment',
@@ -372,7 +372,7 @@ function addSegment(ui) {
     });
     doc.selected = id;
   });
-  openEditor(ui, SEGMENT);
+  openEditor(ui, SEGMENT, `select:${id}`);
 }
 
 function directionView(ui, doc, seg) {
@@ -661,7 +661,7 @@ function retainFocus(root) {
   };
 }
 
-function openEditor(ui, title) {
+function openEditor(ui, title, openerKey) {
   const { state, node } = ui;
   if (state.dialog?.open) return;
   const segmentEditor = title === SEGMENT;
@@ -820,9 +820,7 @@ function openEditor(ui, title) {
     if (nodes.get(node) !== state) return;
     render(node);
     const opener =
-      (segmentEditor
-        ? Array.from(state.body.querySelectorAll('[data-focus]')).find((button) => button.dataset.focus === segmentId)
-        : null) ??
+      (openerKey ? Array.from(state.body.querySelectorAll('[data-focus]')).find((button) => button.dataset.focus === openerKey) : null) ??
       state.body.querySelector(`[data-editor="${title}"]`) ??
       state.body.querySelector('.timeline-head button');
     opener?.focus({ preventScroll: true });
@@ -840,28 +838,37 @@ function sequenceView(ui, doc, times) {
   for (const [i, seg] of doc.segments.entries()) {
     const t = times[i];
     const status = t.outside ? 'Adjust length' : renderStatus(ui.node, seg.id, doc);
-    const button = ui.button('', () => {
+    const number = String(i + 1).padStart(2, '0');
+    const intent = seg.intent || 'Untitled Segment';
+    const selectSegment = () =>
       ui.change((next) => {
         next.selected = seg.id;
       });
-      openEditor(ui, SEGMENT);
-    });
+    const button = ui.button('', selectSegment);
+    button.className = 'segment-select';
     button.ariaPressed = String(seg.id === doc.selected);
-    button.setAttribute('aria-haspopup', 'dialog');
-    button.dataset.focus = seg.id;
+    button.ariaDescription = status;
+    button.dataset.focus = `select:${seg.id}`;
     button.title = seg.intent;
     button.append(
-      text('span', String(i + 1).padStart(2, '0'), 'index'),
-      text('span', seg.intent || 'Untitled Segment', 'intent'),
+      text('span', number, 'index'),
+      text('span', intent, 'intent'),
       text('small', secondsLabel(t.start) + ' – ' + secondsLabel(t.end), 'card-time'),
       text(
         'small',
         (seg.transition === 'continuation' ? 'Continuation' : 'Hard cut') + ' · ' + seg.bindings.length + ' assets',
         'card-detail',
       ),
-      el('span', { className: 'card-bottom' }, [text('small', status), text('span', 'Edit →', 'card-edit')]),
     );
-    list.append(button);
+    const edit = ui.button('Edit', () => {
+      selectSegment();
+      openEditor(ui, SEGMENT, edit.dataset.focus);
+    });
+    edit.className = 'card-edit';
+    edit.dataset.focus = `edit:${seg.id}`;
+    edit.ariaLabel = `Edit segment ${number} · ${intent}`;
+    edit.setAttribute('aria-haspopup', 'dialog');
+    list.append(el('div', { className: 'segment-card' }, [button, el('div', { className: 'card-bottom' }, [text('small', status), edit])]));
   }
   const add = ui.button('+ Add', () => addSegment(ui), doc.segments.length >= 128);
   add.ariaLabel = 'Add segment';
@@ -994,7 +1001,7 @@ function render(node) {
   );
   timelinePane.scrollTop = listTop;
   if (state.selected !== doc.selected) {
-    const active = timelinePane.querySelector('[aria-pressed=true]');
+    const active = timelinePane.querySelector('[aria-pressed=true]')?.closest('.segment-card');
     if (active) {
       const offset = active.offsetTop;
       if (offset < listTop || offset + active.offsetHeight > listTop + timelinePane.clientHeight) timelinePane.scrollTop = offset;

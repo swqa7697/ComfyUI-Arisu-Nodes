@@ -173,10 +173,9 @@ def inspect_render_recovery(page: Page, director_id: str, server: FixtureServer)
         output,
     )
     try:
-        first = page.get_by_role("button", name="01 Launch the paper boat", exact=False)
-        second = page.get_by_role("button", name="02 Follow the boat", exact=False)
+        first = page.locator(".segment-card").filter(has_text="Launch the paper boat")
+        second = page.locator(".segment-card").filter(has_text="Follow the boat")
         first.click()
-        page.keyboard.press("Escape")
         remaining = page.get_by_role("button", name="Render remaining segments", exact=True)
         current = page.get_by_role("button", name="Render current segment", exact=True)
         status = page.locator(".arisu-director .status")
@@ -195,7 +194,6 @@ def inspect_render_recovery(page: Page, director_id: str, server: FixtureServer)
         expect(remaining).to_be_enabled()
         assert len(jobs) == 3
         second.click()
-        page.keyboard.press("Escape")
         page.evaluate(
             """async ([id, save]) => {
               const {app} = await import('/scripts/app.js'), {api} = await import('/scripts/api.js');
@@ -262,12 +260,10 @@ def inspect_render_recovery(page: Page, director_id: str, server: FixtureServer)
         expect(unavailable).to_be_visible()
         page.keyboard.press("Escape")
         second.click()
-        page.keyboard.press("Escape")
         current.click()
         expect(status).to_contain_text("missing or has changed")
         assert len(jobs) == 3
         first.click()
-        page.keyboard.press("Escape")
         page.evaluate("window.dropDirectorResponse=true")
         current.click()
         expect(status).to_contain_text("Connection lost after submission")
@@ -368,10 +364,9 @@ def inspect_project_render(page: Page, server: FixtureServer, director_id: str):
         output,
     )
     try:
-        first = page.get_by_role("button", name="01 Launch the paper boat", exact=False)
-        second = page.get_by_role("button", name="02 Follow the boat", exact=False)
+        first = page.locator(".segment-card").filter(has_text="Launch the paper boat")
+        second = page.locator(".segment-card").filter(has_text="Follow the boat")
         first.click()
-        page.keyboard.press("Escape")
         page.get_by_role("button", name="Render remaining segments", exact=True).click()
         expect(first).to_contain_text("Rendered")
         expect(second).to_contain_text("Rendered")

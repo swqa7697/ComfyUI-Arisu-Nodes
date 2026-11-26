@@ -27,18 +27,18 @@ export const DIRECTOR_STYLE = `
 .arisu-director .film-head>div:first-child{flex:1 1 210px}
 .arisu-director .film-head .meta{overflow:hidden;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;margin-top:3px;font-variant-numeric:tabular-nums}
 .arisu-director .workspace{min-height:0;flex:1;display:flex}
-.arisu-director .timeline{padding:16px;overflow:auto;scrollbar-width:thin;width:100%}
+.arisu-director .timeline{position:relative;padding:16px;overflow:auto;scrollbar-width:thin;width:100%}
 .arisu-director .count{margin-inline-start:6px;color:var(--accent);font-variant-numeric:tabular-nums}
 .arisu-director .timeline-head{margin-bottom:12px}
 .arisu-director .list{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(240px,100%),1fr));gap:10px}
-.arisu-director .list button{display:grid;grid-template-columns:28px minmax(0,1fr);align-content:start;text-align:left;gap:5px 10px;width:100%;padding:14px;background:var(--panel);border:1px solid var(--edge);border-radius:8px}
+.arisu-director .segment-card{position:relative;display:grid;grid-template-rows:1fr auto;gap:11px;padding:14px;background:var(--panel);border:1px solid var(--edge);border-radius:8px}
 .arisu-director .list .index{grid-row:span 3;display:grid;place-content:center;background:var(--well);border:1px solid var(--edge);border-radius:5px;height:28px;color:var(--muted);font-variant-numeric:tabular-nums;font-size:12px}
-.arisu-director .list button[aria-pressed=true]{background:var(--tint);border-color:var(--accent)}
+.arisu-director .segment-card:has(.segment-select[aria-pressed=true]),.arisu-director .segment-card:has(.segment-select:hover){background:var(--tint);border-color:var(--accent)}
 .arisu-director .list button[aria-pressed=true] .index{color:var(--base);background:var(--accent)}
 .arisu-director .list .intent{font-size:14px;font-weight:600;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
 .arisu-director .list :is(.card-time,.card-detail){grid-column:2;font-size:12px;font-weight:400}
-.arisu-director .card-bottom{grid-column:1/-1;display:flex;align-items:center;justify-content:space-between;gap:8px;border-top:1px solid var(--edge);padding-top:10px;margin-top:6px}
-.arisu-director .card-edit{color:var(--accent);font-size:12px}
+.arisu-director .card-bottom{display:flex;align-items:center;justify-content:space-between;gap:8px;border-top:1px solid var(--edge);padding-top:8px}
+.arisu-director .card-edit{position:relative;color:var(--accent)}
 .arisu-director .empty-sequence{display:flex;flex-direction:column;align-items:flex-start;gap:12px;max-width:400px;margin:32px auto;padding:12px}
 .arisu-director .empty-index{font-size:26px;font-variant-numeric:tabular-nums;color:var(--muted)}
 .arisu-director .empty-sequence button{margin-top:6px}
@@ -50,6 +50,9 @@ export const DIRECTOR_STYLE = `
 :is(.arisu-director,.arisu-director-dialog) button:hover:enabled{background:var(--tint);border-color:var(--accent)}
 :is(.arisu-director,.arisu-director-dialog) button:active:enabled{filter:brightness(.9)}
 :is(.arisu-director,.arisu-director-dialog) :is(button,input,textarea,select,summary):focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.arisu-director .segment-card button.segment-select{display:grid;grid-template-columns:28px minmax(0,1fr);align-content:start;text-align:left;gap:5px 10px;padding:0;border:0;background:transparent;filter:none;outline:0}
+.arisu-director .segment-select::after{content:'';position:absolute;inset:0;border-radius:8px}
+.arisu-director .segment-select:focus-visible::after{outline:2px solid var(--accent);outline-offset:2px}
 .arisu-director-dialog video{display:block;width:100%;max-height:240px;margin-top:6px}
 @container(max-width:565px){
  .arisu-director .timeline{padding:12px}
