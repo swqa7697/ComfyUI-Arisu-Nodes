@@ -46,6 +46,7 @@ export const DIRECTOR_STYLE = `
 .arisu-director .render-group .meta{flex:1;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 .arisu-director footer{padding:8px 14px;border-top:1px solid var(--edge);background:var(--panel)}
 .arisu-director .status{flex:1;min-width:10ch;color:var(--muted);font-size:12px;overflow-wrap:anywhere}
+:is(.arisu-director,.arisu-director-dialog) .update-required{font-size:12px;color:var(--error-text,#efaaaa)}
 :is(.arisu-director,.arisu-director-dialog) button:hover:enabled{background:var(--tint);border-color:var(--accent)}
 :is(.arisu-director,.arisu-director-dialog) button:active:enabled{filter:brightness(.9)}
 :is(.arisu-director,.arisu-director-dialog) :is(button,input,textarea,select,summary):focus-visible{outline:2px solid var(--accent);outline-offset:2px}

@@ -21,7 +21,8 @@ import pytest
 from PIL import Image
 
 from src.arisu_nodes.common.paths import CONFIG_TEMPLATE, parse_configuration
-from src.arisu_nodes.minimax_h3.agent_docker import AgentExitError, DockerAgents
+from src.arisu_nodes.minimax_h3 import agent_docker
+from src.arisu_nodes.minimax_h3.agent_docker import POLICY_REVISION, AgentExitError, DockerAgents
 from src.arisu_nodes.minimax_h3.core import (
     finalized_markdown,
     motion_samples,
@@ -122,23 +123,30 @@ def test_agent_update_preserves_working_image_and_settings_reject_unavailable_mo
     status = agents.status(refresh=True)
     assert status["docker"] and all(not provider["installed"] and not provider["ready"] for provider in status["agents"].values())
 
-    # An obsolete image must never run its old entrypoint for discovery.
+    # Even a matching source fingerprint cannot authorize a retired policy.
     with monkeypatch.context() as stale:
         stale.setattr(agents, "owned", lambda *args: True)
+        stale_labels = {
+            agents.image(provider): {
+                "org.arisu.workbench.policy": "5",
+                agent_docker.IMAGE_SOURCE_LABEL: agent_docker.image_source_digest(provider),
+            }
+            for provider in ("codex", "grok")
+        }
         stale.setattr(
             agents,
             "command",
-            lambda args, **kwargs: "linux" if args[0] == "info" else '[{"Config":{"Labels":{"org.arisu.workbench.policy":"5"}}}]',
+            lambda args, **kwargs: "linux" if args[0] == "info" else json.dumps([{"Config": {"Labels": stale_labels[args[-1]]}}]),
         )
         stale.setattr(agents, "invoke", lambda *args, **kwargs: pytest.fail("obsolete image executed"))
         old = agents.status(refresh=True)
-        assert not old["agents"]["codex"]["ready"]
-        with pytest.raises(ValueError, match="update"):
+        assert old["agents"]["codex"]["update_required"] and not old["agents"]["codex"]["ready"]
+        with pytest.raises(ValueError, match="Update CLI"):
             agents.generate("codex", tmp_path, tmp_path, {}, agents.stopping, time.monotonic() + 1)
 
     # Format failures must reach the host as format failures, not budget advice.
     with monkeypatch.context() as generation:
-        generation.setattr(agents, "policy_image", lambda agent: True)
+        generation.setattr(agents, "require_current_image", lambda agent: None)
         for agent, marker, expected in (
             ("codex", 'ARISU_DIRECTOR_ERROR {"reason":"format"}', "invalid format"),
             ("codex", 'ARISU_DIRECTOR_ERROR {"reason":"json"}', "malformed JSON"),
@@ -170,14 +178,35 @@ def test_agent_update_preserves_working_image_and_settings_reject_unavailable_mo
         with pytest.raises(ValueError, match="declined"):
             agents.generate("grok", tmp_path, tmp_path, {}, agents.stopping, time.monotonic() + 1)
 
+    context = tmp_path / "image-context"
+    shutil.copytree(agent_docker.ASSETS, context)
+    monkeypatch.setattr(agent_docker, "ASSETS", context)
+    labels: Dict[str, Dict[str, str]] = {}
+
     def command(args: List[str], **kwargs: Any) -> str:
         if args[0] == "tag":
+            labels[args[2]] = labels[args[1]]
             tagged.append(args[-1])
+        elif args[:2] == ["image", "inspect"]:
+            return json.dumps([{"Config": {"Labels": labels[args[-1]]}}])
+        elif args[:2] == ["image", "rm"]:
+            del labels[args[-1]]
         return ""
 
+    def stream(args: List[str], *rest: Any):
+        if args[0] == "build":
+            image_labels = {"org.arisu.workbench.policy": str(POLICY_REVISION)}
+            for index, arg in enumerate(args):
+                if arg == "--label":
+                    key, value = args[index + 1].split("=", 1)
+                    image_labels[key] = value
+            labels[args[args.index("-t") + 1]] = image_labels
+        elif args[-1] == "generate":
+            rest[-1]('ARISU_RESULT {"final":"new draft"}')
+
     monkeypatch.setattr(agents, "command", command)
-    monkeypatch.setattr(agents, "stream", lambda *args, **kwargs: None)
-    monkeypatch.setattr(agents, "owned", lambda *args: True)
+    monkeypatch.setattr(agents, "stream", stream)
+    monkeypatch.setattr(agents, "owned", lambda kind, name: kind == "volume" or name in labels)
 
     def bad_candidate(*args: Any, **kwargs: Any):
         raise ValueError("incompatible policy")
@@ -187,9 +216,39 @@ def test_agent_update_preserves_working_image_and_settings_reject_unavailable_mo
         agents.manage("codex", "update")
     assert not tagged and not agents.guard.locked() and agents.operation["state"] == "failed"
     assert any("Candidate image validation failed" in line for line in agents.read_logs()["lines"])
-    monkeypatch.setattr(agents, "invoke", lambda *args, **kwargs: {"policy_ready": True, "policy_revision": 7})
+    ready = {"authenticated": True, "policy_ready": True, "policy_revision": POLICY_REVISION, "models": [{"id": "available"}]}
+    monkeypatch.setattr(agents, "invoke", lambda *args, **kwargs: ready)
     agents.manage("codex", "update")
     assert tagged == [agents.image("codex")] and agents.operation["state"] == "complete"
+    agents.manage("grok", "build")
+
+    # Skills are mounted per job. Only the provider whose installed code changed needs a rebuild.
+    (context / "skills" / "no-ref" / "SKILL.md").write_text("Updated writing instructions")
+    assert all(provider["ready"] for provider in agents.status(refresh=True)["agents"].values())
+    (context / "agents" / "codex" / "adapter.py").write_text("# updated provider adapter")
+    providers = agents.status(refresh=True)["agents"]
+    assert providers["grok"]["ready"] and not providers["codex"]["ready"] and providers["codex"]["update_required"]
+    with pytest.raises(ValueError, match="Update CLI"):
+        agents.generate("codex", tmp_path, tmp_path, {}, agents.stopping, time.monotonic() + 1)
+    for action in ("login", "logout"):
+        with pytest.raises(ValueError, match="Update CLI"):
+            agents.manage("codex", action)
+    activated = list(tagged)
+    with monkeypatch.context() as racing_build:
+
+        def build_during_pack_update(*args: Any):
+            stream(*args)
+            (context / "agents" / "codex" / "adapter.py").write_text("# another update before activation")
+
+        racing_build.setattr(agents, "stream", build_during_pack_update)
+        with pytest.raises(ValueError, match="Update CLI"):
+            agents.manage("codex", "update")
+        assert tagged == activated
+    agents.manage("codex", "update")
+    assert agents.status()["agents"]["codex"]["ready"]
+    assert agents.generate("codex", tmp_path, tmp_path, {}, agents.stopping, time.monotonic() + 1) == "new draft"
+    (context / "instructions.txt").write_text("Updated shared instructions")
+    assert all(provider["update_required"] for provider in agents.status(refresh=True)["agents"].values())
 
     # Grok reports the immutable hook once per configuration source. Validate every
     # entry before activation, including unexpected hooks after a valid first entry.

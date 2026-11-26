@@ -17,6 +17,7 @@ from aiohttp.test_utils import TestClient, TestServer
 from PIL import Image
 
 from src.arisu_nodes.minimax_h3 import workbench_routes
+from src.arisu_nodes.minimax_h3.agent_docker import IMAGE_SOURCE_LABEL, POLICY_REVISION, image_source_digest
 from src.arisu_nodes.minimax_h3.workbench import Generation, Workbench
 from tests.support.media import make_audio, make_video
 
@@ -83,7 +84,6 @@ def test_workbench_routes_reject_untrusted_requests_and_queue_only_preparation(t
                 "w": {"class_type": "ArisuMiniMaxH3PromptWorkbench", "inputs": {"finalized_prompt": "keep"}},
                 "s": {"class_type": "KSampler", "inputs": {"x": ["w", 0]}},
             }
-            # A readiness probe must delay the first click, not reject it as busy.
             entered, finish = threading.Event(), threading.Event()
 
             def inspect_agent(*args: Any) -> Dict[str, Any]:
@@ -92,23 +92,39 @@ def test_workbench_routes_reject_untrusted_requests_and_queue_only_preparation(t
                 return {
                     "authenticated": True,
                     "policy_ready": True,
-                    "policy_revision": 7,
+                    "policy_revision": POLICY_REVISION,
                     "models": [{"id": "test", "efforts": ["medium"]}],
                 }
 
             with monkeypatch.context() as local:
                 local.setattr(owner.agents, "status", real_status)
                 local.setattr(shutil, "which", lambda name: "/test/docker")
+                labels = {"org.arisu.workbench.policy": str(POLICY_REVISION)}
                 local.setattr(
                     owner.agents,
                     "command",
-                    lambda args, **kwargs: (
-                        json.dumps([{"Config": {"Labels": {"org.arisu.workbench.policy": "7"}}}])
-                        if args[:2] == ["image", "inspect"]
-                        else "linux"
-                    ),
+                    lambda args, **kwargs: json.dumps([{"Config": {"Labels": labels}}]) if args[:2] == ["image", "inspect"] else "linux",
                 )
-                local.setattr(owner.agents, "owned", lambda *args: True)
+                local.setattr(owner.agents, "owned", lambda kind, name: name in (owner.agents.image("codex"), owner.agents.volume("codex")))
+                # A previously installed image has the current policy but no fingerprint.
+                # Both settings and direct callers get the same recovery action before a job exists.
+                local.setattr(owner.agents, "invoke", lambda *args: pytest.fail("legacy image executed"))
+                outdated = await (await client.get("/arisu/workbench/status")).json()
+                provider = outdated["agents"]["codex"]
+                assert provider["installed"] and provider["update_required"] and not provider["ready"]
+                assert "Codex" in provider["error"] and "Update CLI" in provider["error"]
+                for cached in (outdated, status):
+                    # Even a recent successful discovery cannot authorize a stale image at admission.
+                    owner.agents._status = cached
+                    response = await client.post(
+                        "/arisu/workbench/generate", json={"node_id": "w", "workflow": "tab", "prompt": graph, "options": {}}
+                    )
+                    assert response.status == 400 and (await response.json())["error"] == provider["error"]
+                    assert not owner.jobs and not queued and not owner.temp.exists() and not owner.agents.guard.locked()
+
+                # A readiness probe after the update must delay the first click, not reject it as busy.
+                labels[IMAGE_SOURCE_LABEL] = image_source_digest("codex")
+                owner.agents._checked = 0
                 local.setattr(owner.agents, "invoke", inspect_agent)
                 owner.agents._status = status
                 probe = asyncio.create_task(client.get("/arisu/workbench/status"))
@@ -123,6 +139,7 @@ def test_workbench_routes_reject_untrusted_requests_and_queue_only_preparation(t
                     finish.set()
                     await probe
                     response = await request
+            monkeypatch.setattr(owner.agents, "require_current_image", lambda agent: None)
             assert response.status == 202
             identifier = (await response.json())["id"]
             assert not queued and (await response.json())["prompt_id"] is None

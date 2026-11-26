@@ -22,6 +22,7 @@ ASSETS = Path(__file__).resolve().parents[3] / "assets" / "prompt_workbench"
 BASE_IMAGE = "python:3.13-slim-trixie"
 LABEL = "org.arisu.workbench.instance"
 PROVIDER_LABEL = "org.arisu.workbench.provider"
+IMAGE_SOURCE_LABEL = "org.arisu.workbench.source"
 POLICY_REVISION = 7
 MAX_OUTPUT = 2 * 1024 * 1024
 PROVIDER_FAILURES = {
@@ -48,6 +49,33 @@ class AgentBusy(ValueError):
 
 class AgentExitError(ValueError):
     """The supervised process exited with a nonzero status."""
+
+
+class AgentUpdateRequired(ValueError):
+    """The installed agent image must be rebuilt for this Workbench."""
+
+
+def image_source_digest(agent: str) -> str:
+    """Fingerprint the build recipe and the local files it uses for this provider."""
+    if agent not in AGENT_IDS:
+        raise ValueError("unsupported agent")
+    provider = ASSETS / "agents" / agent
+    # Match Dockerfile COPY inputs. Writing skills are mounted separately for each job.
+    paths = [
+        ASSETS / "Dockerfile",
+        ASSETS / ".dockerignore",
+        ASSETS / "instructions.txt",
+        ASSETS / "agents" / "__init__.py",
+        provider / "install.sh",
+        *ASSETS.glob("*.py"),
+        *provider.glob("*.py"),
+        *provider.glob("*.toml"),
+    ]
+    digest = hashlib.sha256()
+    for path in sorted(paths):
+        digest.update(path.relative_to(ASSETS).as_posix().encode() + b"\0")
+        digest.update(hashlib.sha256(path.read_bytes()).digest())
+    return digest.hexdigest()
 
 
 class DockerAgents:
@@ -109,13 +137,33 @@ class DockerAgents:
         except (OSError, ValueError, subprocess.SubprocessError):
             return False
 
-    def policy_image(self, agent: str) -> bool:
-        """Reject obsolete images before running their entrypoints."""
+    def build_args(self, agent: str, tag: str) -> List[str]:
+        """Build from the same provider inputs that discovery and generation expect."""
+        return [
+            "--label",
+            LABEL + "=" + self.namespace,
+            "--label",
+            PROVIDER_LABEL + "=" + agent,
+            "--label",
+            IMAGE_SOURCE_LABEL + "=" + image_source_digest(agent),
+            "--build-arg",
+            "AGENT=" + agent,
+            "-t",
+            tag,
+            str(ASSETS),
+        ]
+
+    def require_current_image(self, agent: str, image: Optional[str] = None):
+        """Check the image without running its entrypoint, including for pre-fingerprint installs."""
+        inspection = self.command(["image", "inspect", image or self.image(agent)])
         try:
-            data = json.loads(self.command(["image", "inspect", self.image(agent)]))
-            return len(data) == 1 and data[0].get("Config", {}).get("Labels", {}).get("org.arisu.workbench.policy") == str(POLICY_REVISION)
-        except (OSError, ValueError, TypeError, AttributeError, subprocess.SubprocessError):
-            return False
+            (details,) = json.loads(inspection)
+            labels = details["Config"].get("Labels") or {}
+            policy, source = labels.get("org.arisu.workbench.policy"), labels.get(IMAGE_SOURCE_LABEL)
+        except (AttributeError, KeyError, TypeError, ValueError) as error:
+            raise ValueError("Could not inspect the Workbench agent image.") from error
+        if policy != str(POLICY_REVISION) or source != image_source_digest(agent):
+            raise AgentUpdateRequired(f"The {agent.capitalize()} image is out of date. Select Update CLI in Agent settings.")
 
     def begin_logs(self, agent: str, action: str, job: str = ""):
         """Replace the previous session only after the caller owns the operation guard."""
@@ -288,18 +336,18 @@ class DockerAgents:
             result["docker"] = True
             for agent in AGENT_IDS:
                 info: Dict[str, Any] = {"installed": self.owned("image", self.image(agent)), "ready": False, "models": []}
-                if info["installed"] and self.owned("volume", self.volume(agent)):
+                if info["installed"]:
                     try:
-                        if not self.policy_image(agent):
-                            info["error"] = "Update required: Workbench policy changed."
-                            result["agents"][agent] = info
-                            continue
-                        info.update(self.invoke(agent, "inspect"))
-                        info["ready"] = bool(
-                            info.get("authenticated")
-                            and (info.get("policy_ready") and info.get("policy_revision") == POLICY_REVISION)
-                            and info.get("models")
-                        )
+                        self.require_current_image(agent)
+                        if self.owned("volume", self.volume(agent)):
+                            info.update(self.invoke(agent, "inspect"))
+                            info["ready"] = bool(
+                                info.get("authenticated")
+                                and (info.get("policy_ready") and info.get("policy_revision") == POLICY_REVISION)
+                                and info.get("models")
+                            )
+                    except AgentUpdateRequired as error:
+                        info.update(update_required=True, error=str(error))
                     except (ValueError, OSError, subprocess.SubprocessError):
                         info["error"] = "Agent discovery failed; inspect logs or update the image."
                 choice = self.preferences.get(agent, {})
@@ -420,21 +468,7 @@ class DockerAgents:
                     if name in existing and not self.owned("image", name):
                         raise ValueError("agent image name is already in use")
                 self.stream(
-                    [
-                        "build",
-                        "--pull",
-                        "--no-cache",
-                        "--progress=plain",
-                        "--label",
-                        LABEL + "=" + self.namespace,
-                        "--label",
-                        PROVIDER_LABEL + "=" + agent,
-                        "--build-arg",
-                        "AGENT=" + agent,
-                        "-t",
-                        candidate,
-                        str(ASSETS),
-                    ],
+                    ["build", "--pull", "--no-cache", "--progress=plain", *self.build_args(agent, candidate)],
                     time.monotonic() + 1800,
                     self.stopping,
                 )
@@ -446,6 +480,7 @@ class DockerAgents:
                     self.command(["volume", "create", "--label", LABEL + "=" + self.namespace, self.volume(agent)])
                 self.log("Docker build completed. Validating candidate image policy...")
                 try:
+                    self.require_current_image(agent, image=candidate)
                     self.invoke(agent, "check", image=candidate)
                 except (ValueError, OSError, subprocess.SubprocessError):
                     self.log("Candidate image validation failed; see the server log for details.")
@@ -477,17 +512,19 @@ class DockerAgents:
             else:
                 if not self.owned("image", self.image(agent)) or not self.owned("volume", self.volume(agent)):
                     raise ValueError("build this agent first")
+                self.require_current_image(agent)
                 name = self.namespace + "-" + action + "-" + uuid.uuid4().hex
                 self.stream([*self.run_args(agent, name), self.image(agent), agent, action], time.monotonic() + 600, self.stopping, name)
             self.operation["state"] = "complete"
         except Exception as error:
             logger.exception("Workbench management failed")
             self.operation["state"] = "failed"
-            self.operation["error"] = (
-                "Operation output exceeded its limit; stopped without truncating earlier logs."
-                if isinstance(error, ValueError) and str(error).startswith("operation log exceeds")
-                else "Operation failed; see the logs."
-            )
+            if isinstance(error, AgentUpdateRequired):
+                self.operation["error"] = str(error)
+            elif isinstance(error, ValueError) and str(error).startswith("operation log exceeds"):
+                self.operation["error"] = "Operation output exceeded its limit; stopped without truncating earlier logs."
+            else:
+                self.operation["error"] = "Operation failed; see the logs."
             raise
         finally:
             self.finish_logs(self.operation["state"])
@@ -498,8 +535,7 @@ class DockerAgents:
         self, agent: str, inputs: Path, skill: Path, selection: Dict[str, Any], cancelled: threading.Event, deadline: float
     ) -> str:
         """Run a single agent with only the prepared job and selected skill mounted."""
-        if not self.policy_image(agent):
-            raise ValueError("update the agent image before generation: Workbench policy changed")
+        self.require_current_image(agent)
         name = self.namespace + "-generate-" + uuid.uuid4().hex
         result: List[str] = []
         incomplete = False

@@ -212,22 +212,24 @@ export function openAgentSettings(selected = 'codex', parent = document.body) {
     };
     effort.onchange = () => void action(agent, 'configure', { model: model.value, effort: effort.value });
     model.disabled = !info.models?.length || busy || operation?.state === 'running';
-    const state = !docker
-      ? 'Docker is unavailable to ComfyUI.'
-      : !info.installed
-        ? 'Build the image to begin.'
-        : !info.policy_ready
-          ? 'Update required: Workbench policy is incompatible.'
-          : !info.authenticated
-            ? 'Sign in to enable generation.'
-            : !info.ready
-              ? 'No supported models available.'
-              : 'Ready';
+    const state =
+      info.error ||
+      (!docker
+        ? 'Docker is unavailable to ComfyUI.'
+        : !info.installed
+          ? 'Build the image to begin.'
+          : !info.policy_ready
+            ? 'Update required: Workbench policy is incompatible.'
+            : !info.authenticated
+              ? 'Sign in to enable generation.'
+              : !info.ready
+                ? 'No supported models available.'
+                : 'Ready');
     const buttons = [
       ['Build Image', 'build', info.installed],
       ['Update CLI', 'update', !info.installed],
-      ['Login', 'login', !info.installed],
-      ['Logout', 'logout', !info.authenticated],
+      ['Login', 'login', !info.installed || info.update_required],
+      ['Logout', 'logout', !info.authenticated || info.update_required],
       ['Remove Completely', 'remove', !info.installed],
     ].map(([label, operationName, disabled]) =>
       el('button', {
@@ -238,7 +240,7 @@ export function openAgentSettings(selected = 'codex', parent = document.body) {
       }),
     );
     const panel = el('section', { id: `arisu-agent-${agent}`, role: 'tabpanel' }, [
-      el('p', { textContent: state + (info.version ? ` · ${info.version}` : '') }),
+      el('p', { role: 'status', className: info.error ? 'error' : '', textContent: state + (info.version ? ` · ${info.version}` : '') }),
       el('div', { className: 'actions' }, buttons),
       el('div', { className: 'fields' }, [
         el('label', {}, [el('span', { textContent: 'Model' }), model]),

@@ -75,7 +75,9 @@ Only low, medium, and high efforts are exposed.
 Docker must already be installed and accessible to the ComfyUI server process.
 If unavailable, the left column is disabled and Finalized prompt stays editable.
 Images use `python:3.13-slim-trixie` and official standalone CLI distributions.
-Updates preserve login; failed updates retain the usable image. Confirmed complete removal deletes only that provider’s owned images, containers, and login volume.
+If Workbench reports an outdated image, open **Agents**, select the named provider, and click **Update CLI** to resume generation.
+Images built before this check require one update per installed provider. After that, a change to shared agent code requires both images to be updated. A provider-specific change requires an update for that provider alone. Edits to mounted writing skills take effect on the next generation.
+Updates preserve login. A failed update keeps the previously installed image. Confirmed complete removal deletes only that provider’s owned images, containers, and login volume.
 
 Agent accounts are shared by trusted users of this ComfyUI installation.
 The existing ComfyUI access boundary is trusted; this feature adds no login.
@@ -109,12 +111,9 @@ explicitly applied finalized text, travel with workflow copies.
 Only the current operation is retained until the next operation or server shutdown.
 There is no separate Docker log container. Output is paged without message clipping;
 exceeding the 16 MiB operation output budget stops the operation with an error.
-Use **Update CLI** for both installed providers to enable structured activity records in existing
-images, and whenever an image reports an incompatible Workbench policy. Updated Codex and
-Grok images show specific failure messages and expandable result details in Activity.
+Codex and Grok show specific failure messages and expandable result details in Activity.
 When Codex reconnects or switches to HTTPS, Activity shows its progress and the same
-generation continues. Older images support plain-text logs with less reliable grouping
-of multiline tool output.
+generation continues.
 
 Selected media and motion stills are cached beneath ComfyUI temp, bounded to 2 GiB and expired
 after 30 idle minutes. Closing/removing the workflow releases its interests.

@@ -65,6 +65,7 @@ JSONC supports comments; omit trailing commas.
 - **Agent generation:** install Docker with Linux container support and give the ComfyUI process access to its daemon.
   Open **Settings → Arisu Nodes → Prompt Workbench → Agents** to build an agent image, sign in,
   and select a model and reasoning effort. Docker Desktop must use Linux containers on macOS/Windows. Provider accounts and settings are shared by users of the ComfyUI instance.
+  If either Workbench reports an outdated image, select the named provider in **Agents** and click **Update CLI**. The update preserves your login.
 - **Custom prompt skills:** place each skill folder, including its `SKILL.md` and supporting files, at
   `user/__arisu_nodes/skills/<skill-name>/` under ComfyUI's user directory. The pack creates the `skills`
   directory on startup; administrators manage its contents. Select `custom:<skill-name>` in either Workbench.
@@ -95,7 +96,7 @@ web search, commands, and file editing disabled.
 
 Add **MiniMax H3 Director Workbench** to your graph. Connect its `prompt`, `video_settings`, and `resources` outputs to the matching inputs on **MiniMax H3 Hybrid to Video**. The Director render controls also require the **comfyui-h3-motion-context** pack. See the [Director node guide](web/docs/ArisuMiniMaxH3DirectorWorkbench/en.md) for the render chain.
 
-Open **Film Setup** to write the **Film Requirements** in plain text or Markdown and set the generation length range. Add reference material to the asset library. Use **Plan the film** to draft the whole sequence in one agent task. Review the coverage, timing, bindings and prompts, then apply the plan. The **Sequence** cards summarize each segment; click a card to open its editor, with **Prompt**, **Direction**, **Assets & Skill**, and **Revise Prompt** sections. Edit the film requirements to replan the sequence, or use **Revise Prompt** for a local change. Continuations automatically use verified predecessor tail images when available. Agent generation uses the same Docker and account settings as Prompt Workbench. Update the agent image in **Agents** settings before using Director with an existing installation.
+Open **Film Setup** to write the **Film Requirements** in plain text or Markdown and set the generation length range. Add reference material to the asset library. Use **Plan the film** to draft the whole sequence in one agent task. Review the coverage, timing, bindings and prompts, then apply the plan. The **Sequence** cards summarize each segment; click a card to open its editor, with **Prompt**, **Direction**, **Assets & Skill**, and **Revise Prompt** sections. Edit the film requirements to replan the sequence, or use **Revise Prompt** for a local change. Continuations automatically use verified predecessor tail images when available. Agent generation uses the same Docker and account settings as Prompt Workbench.
 
 Render the current segment to inspect its footage, or render the remaining segments in order. A continuation loads the previous take and trims its overlap from both picture and sound. Save the workflow to retain the plan and render records. Keep each take’s video and latent together under ComfyUI’s output directory for recovery.
 

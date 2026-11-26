@@ -235,21 +235,11 @@ def main():
                     agents.command(["volume", "create", "--label", LABEL + "=" + agents.namespace, volume])
                 print("BUILD " + agent, flush=True)
                 agents.stream(
-                    [
-                        "build",
-                        "--label",
-                        LABEL + "=" + agents.namespace,
-                        "--label",
-                        PROVIDER_LABEL + "=" + agent,
-                        "--build-arg",
-                        "AGENT=" + agent,
-                        "-t",
-                        agents.image(agent),
-                        str(ASSETS),
-                    ],
+                    ["build", *agents.build_args(agent, agents.image(agent))],
                     time.monotonic() + 1800,
                     threading.Event(),
                 )
+                agents.require_current_image(agent)
                 details = agents.invoke(agent, "check", timeout=90)
                 assert details["policy_ready"] and details["policy_revision"] == POLICY_REVISION
                 print(json.dumps(details), flush=True)

@@ -14,6 +14,8 @@ To use a single setting elsewhere, also connect `video_settings` to **MiniMax H3
 
 A film can contain up to 128 segments and 256 library assets. The saved film document is limited to 1 MiB. Each structured agent result is limited to 256 KiB of UTF-8 text, including all prompts and planning fields. The bundled writing skills' 7000-character prompt limit applies separately to each segment, before JSON escaping. The with-ref 350–500-word target applies to each prompt's detailed description. The provider’s context and output limits can be lower.
 
+If Director reports an outdated agent image, open **Agent settings**, select the named provider, and click **Update CLI** before planning or refining a segment.
+
 ## Review a Segment
 
 The **Sequence** cards show each segment’s intent, timing, transition, asset count, and render status. Click a card to select the segment and open its editor, or use **+ Add** to write a segment manually. **Prompt** holds the finalized text and any rendered footage. **Direction** holds the intent, timing, transition, opening and closing states, and sequence order. **Assets & Skill** holds the bound assets and writing skill. Edits are saved as you work. Use the arrow keys to switch focused tabs; close the dialog, choose **Done**, or press Escape to return to the cards. The render controls act on the selected card. Library assets are available to the director during planning. Only the current segment’s bindings are sent to Hybrid. Select a bound thumbnail to override the crop or clip interval for that segment. Video bindings also have a segment soundtrack setting.

@@ -74,6 +74,7 @@ const STYLE = `
 .arisu-workbench button:disabled{opacity:.5;cursor:default;transform:none;}
 .arisu-workbench .status-row{font-size:11px;color:var(--label);min-height:16px;overflow-wrap:anywhere;}
 .arisu-workbench .status{font-size:11px;color:var(--label);min-height:16px;overflow-wrap:anywhere;}
+.arisu-workbench .update-required{color:var(--error-text,#efaaaa);}
 .arisu-workbench .hint{font-size:11px;color:var(--label);padding:4px 0;}
 .arisu-workbench .review{border-color:var(--accent);}.arisu-workbench .footer{margin-top:auto;padding:8px 4px 2px;border-top:1px solid var(--line);}
 @container(max-width:530px){.arisu-workbench .columns{grid-template-columns:1fr;overflow:auto;}.arisu-workbench .generation{overflow:visible;}.arisu-workbench .generation-fields{overflow:visible;flex:none;}
@@ -362,7 +363,12 @@ function render(node) {
   state.activityButton = activityButton;
   const actions = [activityButton, generateButton];
   if (!ready && state.agents?.docker)
-    actions.unshift(el('button', { textContent: 'Setup', onclick: () => openAgentSettings(value(node, 'agent')) }));
+    actions.unshift(
+      el('button', {
+        textContent: provider?.update_required ? 'Agent settings' : 'Setup',
+        onclick: () => openAgentSettings(value(node, 'agent')),
+      }),
+    );
   if (run.running)
     actions.unshift(
       el('button', {
@@ -388,12 +394,16 @@ function render(node) {
     className: `status${run.running ? ' running' : ''}`,
     role: 'status',
     ariaLive: 'polite',
-    textContent: run.status || (ready ? 'Ready' : 'Complete agent setup to generate.'),
+    textContent: run.status || (ready ? 'Ready' : provider?.update_required ? '' : 'Complete agent setup to generate.'),
   });
   state.statusElement = statusElement;
   const time = generationTime(run);
   state.timeElement = el('span', { className: 'generation-time', textContent: time ? ` · ${time}` : '', ariaLive: 'off' });
-  const statusRow = el('div', { className: 'status-row' }, [statusElement, state.timeElement]);
+  const statusRow = el('div', { className: 'status-row' }, [
+    ...(provider?.update_required ? [el('div', { className: 'update-required', role: 'status', textContent: provider.error })] : []),
+    statusElement,
+    state.timeElement,
+  ]);
   state.motionContext = el(
     'details',
     { className: 'context', open: state.motionContext?.open ?? (linked(node, 'context_latent') && linked(node, 'vae')) },

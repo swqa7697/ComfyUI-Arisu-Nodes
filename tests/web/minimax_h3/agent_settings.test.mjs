@@ -19,7 +19,11 @@ test('settings manage shared accounts, supported effort choices, logs and confir
     models: [{ id: 'm1', name: 'Model one', efforts: ['low', 'medium', 'high'] }],
     selection: { model: 'm1', effort: 'medium' },
   };
-  const status = { docker: true, agents: { codex: info, grok: { installed: false } } };
+  const error = 'Codex image is out of date. Choose Update CLI.';
+  const status = {
+    docker: true,
+    agents: { codex: { installed: true, ready: false, update_required: true, error }, grok: { installed: false } },
+  };
   const responses = () =>
     api.responses.push(
       jsonResponse(200, status),
@@ -67,6 +71,17 @@ test('settings manage shared accounts, supported effort choices, logs and confir
   await settle();
   const shortcutDialog = descendants(body).find((item) => item.open);
   assert(shortcutDialog);
+  assert(find(shortcutDialog, error));
+  assert(find(shortcutDialog, 'Login').disabled);
+  assert(!find(shortcutDialog, 'Update CLI').disabled);
+  status.agents.codex = info;
+  api.responses.push(jsonResponse(202, { accepted: true }));
+  responses();
+  find(shortcutDialog, 'Update CLI').onclick();
+  await settle();
+  await settle();
+  assert(!find(shortcutDialog, error));
+  assert.equal(find(shortcutDialog, 'Codex Model').value, 'm1');
   shortcutDialog.close();
   responses();
   const setting = extension.settings[0].type();

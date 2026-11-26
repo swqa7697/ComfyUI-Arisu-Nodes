@@ -249,11 +249,15 @@ class Workbench:
             status = self.agents.status()
             provider = status.get("agents", {}).get(options["agent"], {})
             if not status["docker"] or not provider.get("ready"):
+                if provider.get("update_required"):
+                    raise ValueError(provider["error"])
                 raise ValueError("complete agent setup before generating")
             if not self.agents.guard.acquire(blocking=False):
                 raise AgentBusy("Workbench is busy")
         destination: Optional[Path] = None
         try:
+            # A cached Ready response can outlive the image or its local build inputs.
+            self.agents.require_current_image(options["agent"])
             self.temp.mkdir(parents=True, exist_ok=True)
             if self.temp.is_symlink():
                 raise ValueError("invalid cache destination")

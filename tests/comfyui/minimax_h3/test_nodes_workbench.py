@@ -330,6 +330,7 @@ def test_workbench_stages_crops_refuses_escapes_and_cancellation_retains_guard(t
     monkeypatch.setattr(workbench.subprocess, "Popen", isolated)
     ready = {"docker": True, "agents": {"codex": {"ready": True, "selection": {"model": "test", "effort": "medium"}}}}
     monkeypatch.setattr(owner.agents, "status", lambda: ready)
+    monkeypatch.setattr(owner.agents, "require_current_image", lambda agent: None)
 
     clock = [1000.0]
     monkeypatch.setattr(

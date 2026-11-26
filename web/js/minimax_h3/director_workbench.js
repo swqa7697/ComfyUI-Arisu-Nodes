@@ -699,7 +699,7 @@ function openEditor(ui, title) {
     }
     const planning = title === FILM;
     if (planning || (segmentEditor && tab === REVISION)) {
-      const ready = state.agents?.agents?.[selectedAgent(node)]?.ready;
+      const provider = state.agents?.agents?.[selectedAgent(node)];
       foot.replaceChildren(
         row([
           ui.select(
@@ -723,7 +723,9 @@ function openEditor(ui, title) {
             },
           ),
           ui.button('Agent settings', () => openAgentSettings(selectedAgent(node))),
-          ...(!ready ? [meta('Agent unavailable')] : []),
+          ...(!provider?.ready
+            ? [provider?.update_required ? text('p', provider.error, 'update-required') : meta('Agent unavailable')]
+            : []),
         ]),
         action(
           ui,
@@ -734,7 +736,7 @@ function openEditor(ui, title) {
             dialog.close();
             return generate(ui, planning ? 'plan' : 'refine');
           },
-          !ready || state.run?.running,
+          !provider?.ready || state.run?.running,
         ),
       );
     } else if (segmentEditor)
@@ -902,12 +904,14 @@ function render(node) {
   const library = launcher(ui, LIBRARY);
   library.ariaLabel = LIBRARY;
   library.append(text('span', String(doc.assets.length), 'count'));
-  const ready = state.agents?.agents?.[selectedAgent(node)]?.ready;
+  const provider = state.agents?.agents?.[selectedAgent(node)];
   const message = state.message || ((run.running || run.hasOutput) && run.directorSubmission?.context);
   const feedback = el('div', { className: 'status', role: 'status' }, [
-    ...(!run.status && !state.message
-      ? [label((selectedAgent(node) === 'codex' ? 'Codex' : 'Grok') + (ready ? ' ready' : ' unavailable'))]
-      : []),
+    ...(provider?.update_required
+      ? [text('p', provider.error, 'update-required')]
+      : !run.status && !state.message
+        ? [label((selectedAgent(node) === 'codex' ? 'Codex' : 'Grok') + (provider?.ready ? ' ready' : ' unavailable'))]
+        : []),
     status,
     elapsed,
     ...(message ? [label(' ' + message)] : []),

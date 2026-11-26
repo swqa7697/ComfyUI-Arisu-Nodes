@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Detect outdated Codex and Grok images before Workbench generation and show which provider needs **Update CLI**.
 - Prepare full-length video references in Prompt Workbench when the container and the decoder round the final frame's end time one timestamp tick apart.
 - Show the reported cause of Codex and Grok generation failures in Workbench status and activity, including request limits, service interruptions, and Grok model refusals. Let Codex finish reconnecting or switching to HTTPS during the same generation.
 - Give Workbench agents up to 60 minutes to generate a prompt or film draft after input preparation finishes, and report timeouts separately from cancellation.
