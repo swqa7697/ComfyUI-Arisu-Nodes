@@ -197,6 +197,7 @@ def test_workbench_routes_reject_untrusted_requests_and_queue_only_preparation(t
                 "version": 1,
                 "film": {
                     "brief": "# Find the red box\n\nKeep  **this**  formatting.",
+                    "target_runtime": "2 min",
                     "requirements": ["Open the box"],
                     "triggers": "brass lock",
                     "continuity": "Morning light.",
@@ -270,6 +271,7 @@ def test_workbench_routes_reject_untrusted_requests_and_queue_only_preparation(t
                 catalog = {row["id"]: row for row in task["writing_skills"]}
                 assert all((skill / row["path"]).is_file() for row in catalog.values())
                 if task["task"] == "plan":
+                    assert task["film"]["target_runtime"] == "2 min"
                     assert task["film"]["brief"] == (
                         "# Find the red box\n\nKeep  **this**  formatting.\n\nRequired story elements:\nOpen the box"
                         "\n\nTrigger words:\nbrass lock\n\nContinuity:\nMorning light."
@@ -296,7 +298,9 @@ def test_workbench_routes_reject_untrusted_requests_and_queue_only_preparation(t
                 replacement = {**segments[1], "prompt": "Open <Picture:box> slowly.", "skill": "custom:handwritten"}
                 if task["request"] == "Slow the action":
                     preview = context["keyframes"]["first"]["asset_id"]
-                    replacement.update(bindings=[{"asset_id": preview, "role": "image"}], prompt=f"Open <Picture:{preview}> slowly.")
+                    replacement.update(
+                        seconds=9, bindings=[{"asset_id": preview, "role": "image"}], prompt=f"Open <Picture:{preview}> slowly."
+                    )
                 if task["request"] == "zoom":
                     crop = {"left": 0, "top": 0, "width": 1000, "height": 1000}
                     replacement["bindings"] = [{**replacement["bindings"][0], "crop": crop}]
@@ -356,7 +360,8 @@ def test_workbench_routes_reject_untrusted_requests_and_queue_only_preparation(t
                 result = await director_job("plan", "")
                 assert result["state"] == "complete", result["error"]
                 draft = json.loads(result["draft"])
-                assert len(draft["segments"]) == 2
+                # The same runtime target admits both this short sequence and the longer film below.
+                assert [s["seconds"] for s in draft["segments"]] == [8, 6]
                 assert draft["segments"][1]["prompt"] == segments[1]["prompt"].replace("<Picture 1>", "<Picture:box>")
                 assert draft["segments"][1]["bindings"] == segments[1]["bindings"]
                 assert draft["coverage"] == plan["coverage"] and not document["segments"]
@@ -369,7 +374,8 @@ def test_workbench_routes_reject_untrusted_requests_and_queue_only_preparation(t
                 long_result = await director_job("plan", "")
                 assert long_result["state"] == "complete", long_result["error"]
                 long_draft = json.loads(long_result["draft"])
-                assert len(long_draft["segments"]) == 20 and all(s["prompt"] == long_prompt for s in long_draft["segments"])
+                assert [s["seconds"] for s in long_draft["segments"]] == [8, 6] * 10
+                assert all(s["prompt"] == long_prompt for s in long_draft["segments"])
                 # UTF-8 size, not the sum of prompt character counts, bounds the JSON.
                 # Each prompt remains below 7000 characters, but this film is too large.
                 for segment in plan["segments"]:
@@ -385,7 +391,7 @@ def test_workbench_routes_reject_untrusted_requests_and_queue_only_preparation(t
                 assert result["state"] == "complete", result["error"]
                 assert result["director_tail_frames"] is False
                 replacement = json.loads(result["draft"])["segment"]
-                assert replacement["id"] == "opening" and document["segments"][0] == segments[0]
+                assert replacement["id"] == "opening" and replacement["seconds"] == 9 and document["segments"][0] == segments[0]
                 assert (
                     replacement["bindings"] == [{"asset_id": "box", "role": "image"}]
                     and replacement["prompt"] == "Open <Picture:box> slowly."

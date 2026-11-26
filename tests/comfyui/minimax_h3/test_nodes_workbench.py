@@ -353,6 +353,7 @@ def test_workbench_stages_crops_refuses_escapes_and_cancellation_retains_guard(t
             clock[0] += 59 * 60 - 78
             assert clock[0] < deadline <= clock[0] + 60
         context = json.loads((directory / "context.json").read_text())
+        assert "director" not in context and context["duration_seconds"] == (124 / 24 if index == 0 else None)
         assert context["version"] == 3 and context["keyframes"] == {"first": None, "last": None}
         assert context["motion"]["present"] is False and context["motion"]["stills"] == []
         assert context["motion"]["notes"] == context["motion"]["audio_notes"] == "" and "audio_continuity" not in context["motion"]
