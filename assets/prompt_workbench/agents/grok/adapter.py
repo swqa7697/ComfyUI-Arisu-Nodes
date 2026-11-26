@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 from contract import INPUTS, POLICY_REVISION, contained_file, read_text
-from events import EventValidationError
+from events import EventValidationError, ProviderResultError, failure_reason
 from gate import authorize
 from process import rpc, run
 
@@ -269,6 +269,34 @@ def _partial(value: Dict[str, Any]):
         raise EventValidationError("Grok unsupported partial event")
 
 
+def _result(value: Dict[str, Any]) -> str:
+    """Read the terminal status without treating a partial answer as a successful result."""
+    subtype = value.get("subtype")
+    stop = value.get("stop_reason")
+    failed = value.get("is_error", False)
+    result = value.get("result", "")
+    if not isinstance(failed, bool) or (result is not None and not isinstance(result, str)):
+        raise EventValidationError("Grok malformed generation result")
+    # A turn limit can carry the same stop reason as a cancellation.
+    if subtype == "error_max_turns":
+        raise ProviderResultError("turn_limit")
+    if subtype == "error_max_structured_output_retries":
+        raise ProviderResultError("structured_output")
+    if stop in ("max_tokens", "max_output_tokens"):
+        raise ProviderResultError("token_limit")
+    if stop in ("refusal", "cancelled"):
+        raise ProviderResultError(stop)
+    if not failed and subtype in (None, "success"):
+        if result is None:
+            raise EventValidationError("Grok malformed generation result")
+        return result
+    # Grok puts service errors in errors[], sometimes without the HTTP status.
+    # These strings may quote private inputs. Export only a fixed reason code.
+    errors = value.get("errors")
+    detail = "\n".join(item[:2048] for item in errors[:8] if isinstance(item, str)) if isinstance(errors, list) else ""
+    raise ProviderResultError(failure_reason(value, detail))
+
+
 def event(value: Dict[str, Any]) -> str:
     """Validate recognized events without treating extra metadata as actions."""
     kind = value.get("type")
@@ -286,11 +314,7 @@ def event(value: Dict[str, Any]) -> str:
         _tool_results(_content(value))
         return ""
     if kind == "result":
-        if not isinstance(value.get("is_error", False), bool) or not isinstance(value.get("result", ""), str):
-            raise EventValidationError("Grok malformed generation result")
-        if value.get("is_error") or value.get("subtype") not in (None, "success"):
-            raise EventValidationError("Grok generation failed")
-        return value.get("result", "")
+        return _result(value)
     raise EventValidationError("Grok unsupported event")
 
 

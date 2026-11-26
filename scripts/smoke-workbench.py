@@ -214,10 +214,11 @@ def main():
         agents = SmokeAgents(directory / "user", borrowed)
         original_log = agents.log
 
-        def progress(value: str):
-            original_log(value)
+        def progress(value: str) -> int:
+            size = original_log(value)
             if not str(value).startswith("ARISU_AUDIT"):
                 print(str(value), flush=True)
+            return size
 
         agents.log = progress
         try:

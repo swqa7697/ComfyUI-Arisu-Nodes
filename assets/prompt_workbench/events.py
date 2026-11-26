@@ -5,11 +5,95 @@ from __future__ import annotations
 import json
 import re
 import time
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, NamedTuple, Optional, Set
 
 
 class EventValidationError(ValueError):
     """A provider rejection with a fixed, payload-free reason."""
+
+
+class ProviderResultError(ValueError):
+    """A provider failure carrying only a Workbench-defined reason code."""
+
+
+class ProviderNotice(NamedTuple):
+    """A validated progress message containing only safe display text."""
+
+    text: str
+
+
+def check_policy_hook(message: str):
+    """Reject a failed policy hook on either native diagnostic channel."""
+    text = message.lower()
+    if "hook" in text and any(word in text for word in ("fail", "error", "timeout", "timed out")):
+        raise EventValidationError("agent policy hook failed")
+
+
+def reports_token_limit(event: Dict[str, Any]) -> bool:
+    """Recognize provider limit reports without inspecting the generated answer."""
+    details = json.dumps({key: event.get(key) for key in ("error", "message", "subtype", "stop_reason", "errors")}).lower()
+    return any(
+        marker in details
+        for marker in ("context_length", "context window", "context length", "max_tokens", "max_output_tokens", "token limit")
+    )
+
+
+def failure_reason(event: Dict[str, Any], message: str) -> str:
+    """Classify provider error text without exposing URLs, credentials or private inputs."""
+    detail = message.lower()
+    for reason, markers in (
+        (
+            "auth",
+            (
+                "not signed in",
+                "authentication required",
+                "unauthorized",
+                "invalid api key",
+                "invalid_api_key",
+                "incorrect api key",
+                "status 401",
+                "http 401",
+            ),
+        ),
+        ("usage_limit", ("usage limit", "usage_limit", "insufficient_quota", "exceeded your current quota", "free-usage-exhausted")),
+        (
+            "unavailable",
+            (
+                "temporarily at capacity",
+                "overloaded",
+                "service unavailable",
+                "bad gateway",
+                "internal server error",
+                "status 503",
+                "http 503",
+            ),
+        ),
+        ("rate_limit", ("rate limit", "rate-limit", "rate_limit", "too many requests", "status 429", "http 429")),
+        ("timeout", ("model stopped responding", "timed out", "deadline exceeded", "gateway timeout", "request timeout")),
+        (
+            "connection",
+            (
+                "connection closed",
+                "connection reset",
+                "connection refused",
+                "error sending request",
+                "stream disconnected",
+                "stream closed before",
+                "failed to connect",
+            ),
+        ),
+        ("empty_response", ("empty response from model",)),
+    ):
+        if any(marker in detail for marker in markers):
+            return reason
+    return "token_limit" if reports_token_limit(event) else "execution"
+
+
+def activity_entry(kind: str, text: str, details: str = "") -> str:
+    """Frame a single anonymous status or diagnostic for the host."""
+    return "ARISU_ACTIVITY " + json.dumps(
+        {"version": 1, "entries": [{"id": "", "kind": kind, "text": text, "details": details}]}, ensure_ascii=False
+    )
 
 
 def _scalar(value: Any) -> str:
@@ -30,12 +114,29 @@ def _servers(value: Any) -> Any:
     ]
 
 
-def diagnostic(event: Any, provider: str, version: Any, reason: str) -> str:
+def diagnostic(event: Any, provider: str, version: Any, reason: str, kind: str = "error") -> str:
     """Describe a rejected envelope without rendering its content or tool payloads."""
     summary: Dict[str, Any] = {"provider": _scalar(provider), "cli_version": _scalar(version)}
     if isinstance(event, dict):
-        summary.update({key: _scalar(event[key]) for key in ("type", "subtype") if key in event})
-        if "mcp_servers" in event:
+        keys = ("type",) if provider == "codex" else ("type", "subtype")
+        summary.update({key: _scalar(event[key]) for key in keys if key in event})
+        if provider == "codex" and type(event.get("exit_code")) is int and -255 <= event["exit_code"] <= 255:
+            summary["exit_code"] = event["exit_code"]
+        if provider == "grok" and event.get("type") == "result":
+            if summary.get("subtype") not in (
+                None,
+                "success",
+                "error_during_execution",
+                "error_max_turns",
+                "error_max_structured_output_retries",
+            ):
+                summary["subtype"] = "<unknown>"
+            stop = event.get("stop_reason")
+            if stop in ("end_turn", "max_tokens", "refusal", "cancelled", "stop_sequence"):
+                summary["stop_reason"] = stop
+            if type(event.get("num_turns")) is int and 0 <= event["num_turns"] <= 2**31 - 1:
+                summary["num_turns"] = event["num_turns"]
+        if provider == "grok" and "mcp_servers" in event:
             summary["mcp_servers"] = _servers(event["mcp_servers"])
     else:
         summary["event"] = "<" + type(event).__name__ + ">"
@@ -44,9 +145,7 @@ def diagnostic(event: Any, provider: str, version: Any, reason: str) -> str:
     while len(details.encode("utf-8")) > 4096:
         summary["mcp_servers"].pop()
         details = json.dumps(summary, ensure_ascii=False)
-    return "ARISU_ACTIVITY " + json.dumps(
-        {"version": 1, "entries": [{"id": "", "kind": "error", "text": reason, "details": details}]}, ensure_ascii=False
-    )
+    return activity_entry(kind, reason, details)
 
 
 def _text(content: Any) -> str:

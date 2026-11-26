@@ -110,8 +110,11 @@ Only the current operation is retained until the next operation or server shutdo
 There is no separate Docker log container. Output is paged without message clipping;
 exceeding the 16 MiB operation output budget stops the operation with an error.
 Use **Update CLI** for both installed providers to enable structured activity records in existing
-images, and whenever an image reports an incompatible Workbench policy. Older images retain
-plain-text log support; their multiline tool output has less reliable grouping.
+images, and whenever an image reports an incompatible Workbench policy. Updated Codex and
+Grok images show specific failure messages and expandable result details in Activity.
+When Codex reconnects or switches to HTTPS, Activity shows its progress and the same
+generation continues. Older images support plain-text logs with less reliable grouping
+of multiline tool output.
 
 Selected media and motion stills are cached beneath ComfyUI temp, bounded to 2 GiB and expired
 after 30 idle minutes. Closing/removing the workflow releases its interests.

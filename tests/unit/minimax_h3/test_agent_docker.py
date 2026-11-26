@@ -6,12 +6,14 @@ import base64
 import builtins
 import importlib
 import importlib.util
+import io
 import json
 import shutil
 import subprocess
 import sys
 import threading
 import time
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -19,7 +21,7 @@ import pytest
 from PIL import Image
 
 from src.arisu_nodes.common.paths import CONFIG_TEMPLATE, parse_configuration
-from src.arisu_nodes.minimax_h3.agent_docker import DockerAgents
+from src.arisu_nodes.minimax_h3.agent_docker import AgentExitError, DockerAgents
 from src.arisu_nodes.minimax_h3.core import (
     finalized_markdown,
     motion_samples,
@@ -137,20 +139,36 @@ def test_agent_update_preserves_working_image_and_settings_reject_unavailable_mo
     # Format failures must reach the host as format failures, not budget advice.
     with monkeypatch.context() as generation:
         generation.setattr(agents, "policy_image", lambda agent: True)
-        for marker, expected in (
-            ('ARISU_DIRECTOR_ERROR {"reason":"format"}', "invalid format"),
-            ('ARISU_DIRECTOR_ERROR {"reason":"json"}', "malformed JSON"),
-            ('ARISU_DIRECTOR_ERROR {"reason":"budget"}', "exceeded"),
-            ("ARISU_DIRECTOR_INCOMPLETE", "incomplete or exceeds"),
+        for agent, marker, expected in (
+            ("codex", 'ARISU_DIRECTOR_ERROR {"reason":"format"}', "invalid format"),
+            ("codex", 'ARISU_DIRECTOR_ERROR {"reason":"json"}', "malformed JSON"),
+            ("grok", 'ARISU_DIRECTOR_ERROR {"reason":"budget"}', "exceeded"),
+            ("codex", "ARISU_DIRECTOR_INCOMPLETE", "incomplete or exceeds"),
+            ("codex", "ARISU_CODEX_ERROR auth", "(?i)authenticat|sign in|log in"),
+            ("codex", "ARISU_CODEX_ERROR connection", "(?i)connect"),
+            ("codex", "ARISU_CODEX_ERROR private-unknown", "(?i)execution fail"),
+            ("grok", "ARISU_GROK_ERROR rate_limit", "rate-limited"),
+            ("grok", "ARISU_GROK_ERROR private-unknown", "execution failure"),
         ):
 
             def failed_stream(*args: Any, marker: str = marker):
                 args[-1](marker)
-                raise ValueError("agent operation failed")
+                raise AgentExitError("agent operation failed")
 
             generation.setattr(agents, "stream", failed_stream)
-            with pytest.raises(ValueError, match=expected):
-                agents.generate("codex", tmp_path, tmp_path, {}, agents.stopping, time.monotonic() + 1)
+            with pytest.raises(ValueError, match=expected) as failure:
+                agents.generate(agent, tmp_path, tmp_path, {}, agents.stopping, time.monotonic() + 1)
+            if marker.startswith(("ARISU_CODEX_ERROR", "ARISU_GROK_ERROR")):
+                assert agents.read_logs()["lines"][-1] == "[error] " + str(failure.value)
+                assert "private-" not in str(agents.read_logs())
+
+        def conflicting_stream(*args: Any):
+            args[-1]("ARISU_GROK_ERROR refusal")
+            args[-1]('ARISU_RESULT {"final":"partial draft"}')
+
+        generation.setattr(agents, "stream", conflicting_stream)
+        with pytest.raises(ValueError, match="declined"):
+            agents.generate("grok", tmp_path, tmp_path, {}, agents.stopping, time.monotonic() + 1)
 
     def command(args: List[str], **kwargs: Any) -> str:
         if args[0] == "tag":
@@ -813,37 +831,104 @@ def test_mcp_manifest_images_and_unlisted_or_escaping_assets(
     audit_path.rmdir()
     provider = importlib.import_module("agents.codex.adapter")
     monkeypatch.setattr(provider, "inspect", lambda: {"policy_ready": True, "policy_revision": 7})
+    monkeypatch.setattr(provider, "authorize", lambda name, args: gate.authorize(name, args, root, skill))
     monkeypatch.setattr(runner, "adapter_for", lambda agent: provider)
     monkeypatch.setattr(runner, "context", lambda: {"assets": []})
-    monkeypatch.setattr(
-        runner, "audit", lambda: [{"tool": "get_context", "arguments": {}}, {"tool": "read_skill", "arguments": {"path": "SKILL.md"}}]
-    )
+    reads = [{"tool": "get_context", "arguments": {}}, {"tool": "read_skill", "arguments": {"path": "SKILL.md"}}]
+    audit_path.write_text("".join(json.dumps({**row, "allowed": True}) + "\n" for row in reads))
+    tool_reads = [
+        {
+            "type": "item.completed",
+            "item": {"type": "mcp_tool_call", "id": row["tool"], "server": "workbench", "status": "completed", **row},
+        }
+        for row in reads
+    ]
     assistant = {"type": "item.completed", "item": {"type": "agent_message", "text": "```text\nA quiet dolly shot.\n```"}}
     complete = {"type": "turn.completed"}
+    reconnect = {"type": "error", "message": "Reconnecting... 1/5 (private-network-details: unexpected status 401)"}
+    waiting = {"type": "error", "message": "Reconnecting... waiting for network (private-network-details: token limit)"}
+    warning = {
+        "type": "item.completed",
+        "item": {"id": "notice", "type": "error", "message": "Falling back from WebSockets to HTTPS transport. private-transport-details"},
+    }
+    deprecation = {"type": "item.completed", "item": {"id": "config", "type": "error", "message": "private-old-option is deprecated"}}
+    prohibited = {"type": "item.started", "item": {"type": "command_execution", "command": "touch /tmp/forbidden"}}
+    failed_read = {**tool_reads[0], "item": {**tool_reads[0]["item"], "status": "failed"}}
+
+    def codex_stream(events: List[Dict[str, Any]], exit_code: int = 0):
+        wire = "\n".join(json.dumps(event) for event in events)
+        script = "import sys; print(sys.argv[1]); sys.exit(int(sys.argv[2]))"
+        monkeypatch.setattr(provider, "command", lambda *args: [sys.executable, "-c", script, wire, str(exit_code)])
+
     for events, accepted in (
-        ([assistant, complete], True),
+        ([reconnect, waiting, warning, deprecation, *tool_reads, assistant, complete], True),
         (
             [{"type": "item.completed", "item": {"type": "agent_message", "text": '```json\n{"prompt":"A quiet room."}\n```'}}, complete],
             False,
         ),
         ([assistant], False),
+        ([assistant, reconnect], False),
         ([assistant, complete, assistant], False),
-        ([{"type": "item.started", "item": {"type": "command_execution", "command": "touch /tmp/forbidden"}}], False),
+        ([reconnect, prohibited, assistant, complete], False),
+        ([reconnect, failed_read, assistant, complete], False),
+        ([{**warning, "item": {**warning["item"], "message": "PreToolUse hook timed out"}}, assistant, complete], False),
+        ([{**reconnect, "message": "Reconnecting... 1/5 failed permanently: private-message"}, assistant, complete], False),
+        ([{**warning, "item": {**warning["item"], "message": {"details": "private-warning"}}}, assistant, complete], False),
         ([{"type": "control_request"}], False),
         ([{"type": "item.completed", "item": {"type": "image_view", "path": "/inputs/image.webp"}}], False),
         ([{"type": "item.completed", "item": {"type": "agent_message", "text": "ARISU_POLICY_REFUSAL"}}, complete], False),
     ):
-        wire = "".join(json.dumps(event) + "\n" for event in events)
-        monkeypatch.setattr(
-            provider, "command", lambda *args, wire=wire: [sys.executable, "-c", "import sys; sys.stdout.write(" + repr(wire) + ")"]
-        )
+        codex_stream(events)
         if accepted:
             runner.generate("codex", {"model": "test"})
-            assert "ARISU_RESULT " in capsys.readouterr().out
+            output = capsys.readouterr().out
+            assert "private-" not in output
+            lines = output.splitlines()
+            assert json.loads(lines[-1].removeprefix("ARISU_RESULT ")) == {"final": assistant["item"]["text"]}
+            assert json.loads(lines[-2].removeprefix("ARISU_AUDIT ")) == runner.audit()
+            entries = [entry for line in lines[:-2] for entry in json.loads(line.removeprefix("ARISU_ACTIVITY "))["entries"]]
+            progress = [entry["text"].lower() for entry in entries if entry["kind"] == "progress"]
+            assert any("connect" in text or "retry" in text for text in progress)
+            assert any("warn" in entry["text"].lower() or "notice" in entry["text"].lower() for entry in entries)
+            assert all(entry["kind"] != "error" for entry in entries)
         else:
             with pytest.raises(ValueError):
                 runner.generate("codex", {"model": "test"})
-            assert "ARISU_RESULT " not in capsys.readouterr().out
+            output = capsys.readouterr().out
+            assert "private-" not in output and "ARISU_RESULT " not in output
+
+    # A terminal failure invalidates even a fenced draft. The native CLI can
+    # report a stream error first and send the provider's reason in turn.failed.
+    unknown = {"type": "error", "message": "private-unknown-error"}
+
+    def failed_turn(message: str) -> Dict[str, Any]:
+        return {"type": "turn.failed", "error": {"message": message}}
+
+    with monkeypatch.context() as cli:
+        cli.setattr(runner, "Runtime", nullcontext)
+        cli.setattr(runner.signal, "signal", lambda *args: None)
+        cli.setattr(sys, "argv", ["runner.py", "codex", "generate"])
+        rate_limit = {"type": "error", "message": "unexpected status 429 Too Many Requests: private-team"}
+        for events, exit_code, code in (
+            ([assistant, unknown, failed_turn("unexpected status 401 Unauthorized: private-body")], 1, "auth"),
+            ([rate_limit], 1, "rate_limit"),
+            ([rate_limit, failed_turn("private-unknown-error")], 1, "rate_limit"),
+            ([failed_turn("You've hit your usage limit. private-account")], 1, "usage_limit"),
+            ([assistant, failed_turn("request deadline exceeded: private-cause")], 1, "timeout"),
+            ([assistant, reconnect, failed_turn("stream disconnected before completion: private-cause")], 1, "connection"),
+            ([assistant, failed_turn("Your input exceeds the context window of this model. private-prompt")], 1, "token_limit"),
+            ([unknown], 1, "execution"),
+            ([assistant, unknown, complete], 0, "execution"),
+            ([assistant, reconnect], 0, "incomplete"),
+            ([assistant, complete], 1, "execution"),
+        ):
+            codex_stream(events, exit_code)
+            cli.setattr(sys, "stdin", io.TextIOWrapper(io.BytesIO(b'{"model":"test"}')))
+            with pytest.raises(SystemExit) as stopped:
+                runner.main()
+            output, errors = capsys.readouterr()
+            assert stopped.value.code == 1 and output.splitlines()[-1] == "ARISU_CODEX_ERROR " + code, events
+            assert "ARISU_RESULT " not in output and "private-" not in output + errors and "Traceback" not in errors
 
     # Grok can emit init before MCP connects; required reads still gate final output.
     monkeypatch.setattr(grok_provider, "inspect", lambda: {"policy_ready": True, "policy_revision": 7})
@@ -855,7 +940,6 @@ def test_mcp_manifest_images_and_unlisted_or_escaping_assets(
         "tools": ["search_tool", "use_tool"],
         "mcp_servers": [{"name": "workbench", "status": "pending"}],
     }
-    reads = [{"tool": "get_context", "arguments": {}}, {"tool": "read_skill", "arguments": {"path": "SKILL.md"}}]
     result = {"type": "result", "subtype": "success", "result": "```text\nA quiet dolly shot.\n```"}
     for status in ("pending", "connected", "failed", "disabled", "needs-auth", "unknown", None):
         startup = {**init, "mcp_servers": [{"name": "workbench", "status": status}], "extra": {"future": True}}
@@ -892,6 +976,50 @@ def test_mcp_manifest_images_and_unlisted_or_escaping_assets(
                 runner.generate("grok", {"model": "test"})
             assert "ARISU_RESULT " not in capsys.readouterr().out
 
+    # Real Grok terminal errors omit result and can follow a complete-looking
+    # assistant draft. Only the classified cause and safe metadata leave the runner.
+    failure = {"type": "result", "subtype": "error_during_execution", "is_error": True, "stop_reason": None, "num_turns": 2}
+    draft = {"type": "assistant", "message": {"content": [{"type": "text", "text": result["result"]}]}}
+    for fields, expected in (
+        ({"subtype": "error_max_turns", "stop_reason": "cancelled"}, "turn_limit"),
+        ({"subtype": "error_max_structured_output_retries"}, "structured_output"),
+        ({"stop_reason": "refusal"}, "refusal"),
+        ({"stop_reason": "cancelled"}, "cancelled"),
+        ({**result, "is_error": False, "stop_reason": "max_tokens"}, "token_limit"),
+        ({"errors": ["context_length_exceeded"]}, "token_limit"),
+        ({"error": {"code": "max_output_tokens"}}, "token_limit"),
+        ({"errors": ["Not signed in. To authenticate without a browser, run:\n  grok login --device-code"]}, "auth"),
+        ({"errors": ["You have reached your free Grok Build usage limit"]}, "usage_limit"),
+        ({"errors": ["Too many requests for team private-team. Per-minute token limit reached."]}, "rate_limit"),
+        ({"errors": ["The service is temporarily at capacity. Please retry your request shortly."]}, "unavailable"),
+        ({"errors": ["The model stopped responding after 180s."]}, "timeout"),
+        ({"errors": ["Connection closed unexpectedly"]}, "connection"),
+        ({"errors": ["empty response from model (no content)"]}, "empty_response"),
+        (
+            {"subtype": "private-subtype", "stop_reason": "private-stop", "errors": ["private-prompt"], "result": "private-response"},
+            "execution",
+        ),
+    ):
+        wire = "\n".join(json.dumps(item) for item in (init, draft, {**failure, **fields}))
+        monkeypatch.setattr(grok_provider, "command", lambda *args, wire=wire: [sys.executable, "-c", "print(" + repr(wire) + ")"])
+        with pytest.raises(runner.ProviderResultError) as rejected:
+            runner.generate("grok", {"model": "test"})
+        output = capsys.readouterr().out
+        assert str(rejected.value) == expected, fields
+        assert "private-" not in output and "ARISU_RESULT " not in output
+        entry = json.loads(output.splitlines()[-1].removeprefix("ARISU_ACTIVITY "))["entries"][0]
+        assert entry["kind"] == "details" and json.loads(entry["details"])["num_turns"] == 2
+
+    with monkeypatch.context() as cli:
+        cli.setattr(runner, "Runtime", nullcontext)
+        cli.setattr(runner.signal, "signal", lambda *args: None)
+        cli.setattr(sys, "argv", ["runner.py", "grok", "generate"])
+        cli.setattr(sys, "stdin", io.TextIOWrapper(io.BytesIO(b'{"model":"test"}')))
+        with pytest.raises(SystemExit) as stopped:
+            runner.main()
+        assert stopped.value.code == 1
+        assert capsys.readouterr().out.splitlines()[-1] == "ARISU_GROK_ERROR execution"
+
     # A Director task shares one audited writing-skill read across a film whose
     # combined prompts exceed both 7000 characters and the single-prompt output cap.
     with monkeypatch.context() as director:
@@ -917,7 +1045,7 @@ def test_mcp_manifest_images_and_unlisted_or_escaping_assets(
                 events = (
                     [init, {**result, "result": response}]
                     if agent == "grok"
-                    else [{"type": "item.completed", "item": {"type": "agent_message", "text": response}}, complete]
+                    else [waiting, {"type": "item.completed", "item": {"type": "agent_message", "text": response}}, complete]
                 )
                 wire = "\n".join(json.dumps(event) for event in events)
                 director.setattr(selected, "command", lambda *args, wire=wire: [sys.executable, "-c", "print(" + repr(wire) + ")"])

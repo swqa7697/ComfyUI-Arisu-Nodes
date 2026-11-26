@@ -24,10 +24,30 @@ LABEL = "org.arisu.workbench.instance"
 PROVIDER_LABEL = "org.arisu.workbench.provider"
 POLICY_REVISION = 7
 MAX_OUTPUT = 2 * 1024 * 1024
+PROVIDER_FAILURES = {
+    "turn_limit": "{provider} reached its limit on the number of turns for this request.",
+    "structured_output": "{provider} exhausted its attempts to produce structured output.",
+    "token_limit": "{provider} reached its context or output token limit. Shorten the request or reduce the requested output.",
+    "refusal": "{provider} declined to complete this request.",
+    "cancelled": "{provider} reported that generation was cancelled.",
+    "auth": "{provider} requires authentication. Use Login in {provider} agent settings.",
+    "usage_limit": "{provider} reported that the account has reached its usage limit.",
+    "rate_limit": "{provider} rate-limited the request. Try again later.",
+    "unavailable": "The {provider} service is temporarily unavailable. Try again later.",
+    "timeout": "The {provider} request timed out. Try generating again.",
+    "connection": "The connection to {provider} failed. Check connectivity and try again.",
+    "empty_response": "{provider} returned an empty response. Try generating again.",
+    "incomplete": "{provider} stopped before confirming that generation completed. See Generation Activity for details.",
+    "execution": "{provider} reported an execution failure. See {provider} result details in Generation Activity.",
+}
 
 
 class AgentBusy(ValueError):
     """An agent operation already owns the service."""
+
+
+class AgentExitError(ValueError):
+    """The supervised process exited with a nonzero status."""
 
 
 class DockerAgents:
@@ -337,7 +357,7 @@ class DockerAgents:
                         raise ValueError("operation log exceeds limit")
                     if receive:
                         receive(line)
-                    if not line.startswith(("ARISU_RESULT ", "ARISU_AUDIT ")):
+                    if not line.startswith(("ARISU_RESULT ", "ARISU_AUDIT ", "ARISU_GROK_ERROR ", "ARISU_CODEX_ERROR ")):
                         size = self.log(line.rstrip("\r\n"))
                     # Count new log content, not repeated full-text activity
                     # snapshots. Audits and final results retain their raw bound.
@@ -366,7 +386,7 @@ class DockerAgents:
                     raise ValueError("operation log exceeds limit; stopped without truncating earlier output") from None
                 raise ValueError("operation output could not be read")
             if process.returncode:
-                raise ValueError("agent operation failed; open logs for details")
+                raise AgentExitError("agent operation failed; open logs for details")
         finally:
             if name and self.owned("container", name):
                 # Give the runner time to reap the CLI and persist credential rotation.
@@ -484,9 +504,14 @@ class DockerAgents:
         result: List[str] = []
         incomplete = False
         response_error = ""
+        error_marker = "ARISU_" + agent.upper() + "_ERROR "
 
         def receive(line: str):
             nonlocal incomplete, response_error
+            if line.startswith(error_marker):
+                reason = line.removeprefix(error_marker).strip()
+                response_error = PROVIDER_FAILURES.get(reason, PROVIDER_FAILURES["execution"]).format(provider=agent.capitalize())
+                self.log("[error] " + response_error)
             if line.rstrip() == "ARISU_DIRECTOR_INCOMPLETE":
                 incomplete = True
             if line.startswith("ARISU_DIRECTOR_ERROR "):
@@ -518,14 +543,15 @@ class DockerAgents:
                 json.dumps(selection),
                 receive,
             )
-        except ValueError:
-            if response_error:
-                raise ValueError(response_error) from None
-            if incomplete:
-                raise ValueError(
-                    "The Director response is incomplete or exceeds the single-task context or output budget. Shorten the brief or target runtime and try again."
-                ) from None
-            raise
+        except AgentExitError:
+            if not (response_error or incomplete):
+                raise
+        if response_error:
+            raise ValueError(response_error)
+        if incomplete:
+            raise ValueError(
+                "The Director response is incomplete or exceeds the single-task context or output budget. Shorten the brief or target runtime and try again."
+            )
         if len(result) != 1:
             raise ValueError("agent did not return one final response")
         return result[0]

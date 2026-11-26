@@ -13,7 +13,16 @@ import tempfile
 from typing import Any, Dict, Iterator, List, Tuple
 
 from contract import POLICY_REVISION, DirectorBudgetError, DirectorResponseError, context, final_response, read_text
-from events import ActivityStream, EventValidationError, diagnostic
+from events import (
+    ActivityStream,
+    EventValidationError,
+    ProviderNotice,
+    ProviderResultError,
+    activity_entry,
+    check_policy_hook,
+    diagnostic,
+    reports_token_limit,
+)
 from gate import AUDIT
 from runtime import Runtime, stop_on_signal
 
@@ -108,6 +117,8 @@ def generate(agent: str, options: Dict[str, Any]):
         )
     display = ActivityStream()
     lines = pipe_lines(process)
+    pending_failure = ""
+    event = None
     try:
         for source, line in lines:
             if not source:
@@ -116,10 +127,10 @@ def generate(agent: str, options: Dict[str, Any]):
                     print(rendered, flush=True)
                 continue
             if source == "stderr":
-                print("[cli] " + line.rstrip(), flush=True)
+                # A carriage return from the CLI must stay inside its prefixed line.
+                print("[cli] " + line.rstrip().replace("\r", " "), flush=True)
                 adapter.check_stderr(line)
-                if "hook" in line.lower() and any(word in line.lower() for word in ("fail", "error", "timeout", "timed out")):
-                    raise ValueError("agent policy hook failed")
+                check_policy_hook(line)
                 continue
             event = None
             try:
@@ -128,22 +139,23 @@ def generate(agent: str, options: Dict[str, Any]):
                     raise EventValidationError("Agent emitted events after completion")
                 if not isinstance(event, dict):
                     raise EventValidationError("Malformed agent event envelope")
-                if director and event.get("type") in ("error", "turn.failed", "result"):
-                    details_text = json.dumps({k: event.get(k) for k in ("error", "message", "subtype", "stop_reason", "errors")}).lower()
-                    if any(
-                        marker in details_text
-                        for marker in (
-                            "context_length",
-                            "context window",
-                            "context length",
-                            "max_tokens",
-                            "max_output_tokens",
-                            "token limit",
-                        )
-                    ):
-                        raise DirectorBudgetError("Director task exceeded the provider context or output budget")
+                if director and agent == "grok" and event.get("type") in ("error", "turn.failed") and reports_token_limit(event):
+                    raise DirectorBudgetError("Director task exceeded the provider context or output budget")
                 value = adapter.event(event)
+                if isinstance(value, ProviderNotice):
+                    print(activity_entry("progress", value.text), flush=True)
+                    continue
                 rendered = display.render(event, agent)
+            except ProviderResultError as error:
+                # Codex may supply a more specific cause in turn.failed. Retain
+                # a standalone error if the stream ends without that final frame.
+                if agent == "codex" and event["type"] == "error":
+                    if not pending_failure or str(error) != "execution":
+                        pending_failure = str(error)
+                    continue
+                if pending_failure and str(error) == "execution":
+                    raise ProviderResultError(pending_failure) from None
+                raise
             except DirectorBudgetError:
                 raise
             except (ValueError, TypeError, AttributeError, KeyError) as error:
@@ -155,7 +167,14 @@ def generate(agent: str, options: Dict[str, Any]):
             completed = adapter.is_complete(event)
             if value:
                 final = value
-        if process.wait() != 0 or not completed:
+        status = process.wait()
+        if pending_failure:
+            event = {"type": "error"}
+            raise ProviderResultError(pending_failure)
+        if status or not completed:
+            if agent == "codex":
+                event = {"exit_code": status}
+                raise ProviderResultError("execution" if completed else "incomplete")
             raise ValueError("agent execution failed")
         final_response(final, director=bool(director))
         records = audit()
@@ -180,6 +199,9 @@ def generate(agent: str, options: Dict[str, Any]):
                 raise ValueError("Director did not read each selected writing skill.")
         print("ARISU_AUDIT " + json.dumps(records), flush=True)
         print("ARISU_RESULT " + json.dumps({"final": final}, ensure_ascii=False), flush=True)
+    except ProviderResultError:
+        print(diagnostic(event, agent, details.get("version"), agent.capitalize() + " result details", kind="details"), flush=True)
+        raise
     finally:
         lines.close()
         if process.poll() is None:
@@ -211,6 +233,9 @@ def main():
         elif action == "generate":
             try:
                 generate(agent, json.loads(sys.stdin.buffer.read(65536)))
+            except ProviderResultError as error:
+                print("ARISU_" + agent.upper() + "_ERROR " + str(error), flush=True)
+                raise SystemExit(1) from None
             except DirectorBudgetError:
                 print('ARISU_DIRECTOR_ERROR {"reason": "budget"}', flush=True)
                 raise
