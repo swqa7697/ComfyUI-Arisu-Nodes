@@ -96,7 +96,6 @@ dialog.arisu-director-dialog[open]{display:flex;flex-direction:column}
 .arisu-director-dialog .asset-action{display:inline-grid;place-items:center;width:28px;height:30px;min-height:0;padding:0;background:transparent;border-color:transparent}
 .arisu-director-dialog .asset-action .pi{font-size:14px}
 .arisu-director-dialog .dialog-head .asset-action{width:32px;border-color:var(--line);background:var(--well)}
-.arisu-director-dialog .asset-action:hover:enabled{background:var(--well);border-color:var(--line)}
 .arisu-director-dialog .asset-action:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
 .arisu-director-dialog .asset-handle{width:20px;cursor:grab;font-size:18px;color:var(--muted)}
 .arisu-director-dialog .asset-handle:active{cursor:grabbing}
