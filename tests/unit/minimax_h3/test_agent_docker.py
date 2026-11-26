@@ -960,6 +960,13 @@ def test_mcp_manifest_images_and_unlisted_or_escaping_assets(
             [{"type": "item.completed", "item": {"type": "agent_message", "text": '```json\n{"prompt":"A quiet room."}\n```'}}, complete],
             False,
         ),
+        (
+            [
+                {"type": "item.completed", "item": {"type": "agent_message", "text": "Here is the prompt.\n" + assistant["item"]["text"]}},
+                complete,
+            ],
+            False,
+        ),
         ([assistant], False),
         ([assistant, reconnect], False),
         ([assistant, complete, assistant], False),
@@ -1144,12 +1151,16 @@ def test_mcp_manifest_images_and_unlisted_or_escaping_assets(
         with pytest.raises(ValueError, match="writing skill"):
             runner.generate("grok", {"model": "test"})
         director.setattr(runner, "audit", lambda: [*reads, {"tool": "read_skill", "arguments": {"path": path}}])
-        # Director accepts JSON fences from both providers and preserves legacy
-        # text wrappers. Ordinary Prompt Workbench still requires prompt text.
+        # The host receives the complete JSON even when the provider adds commentary.
         for agent, selected in (("grok", grok_provider), ("codex", provider)):
             director.setattr(runner, "adapter_for", lambda agent, selected=selected: selected)
-            for label in ("json", "text", "markdown", ""):
-                response = "```" + label + " \t\r\n" + payload + "\r\n```"
+            for label, before, after in (
+                ("json", "I have the Director brief and library IDs.\n\n", ""),
+                ("text", "", "\nThat completes the plan."),
+                ("markdown", "分镜草稿如下。\r\n", "\r\n请审阅。"),
+                ("", "", ""),
+            ):
+                response = before + "```" + label + " \t\r\n" + payload + "\r\n```" + after
                 events = (
                     [init, {**result, "result": response}]
                     if agent == "grok"
@@ -1161,7 +1172,7 @@ def test_mcp_manifest_images_and_unlisted_or_escaping_assets(
                 output = next(
                     line.removeprefix("ARISU_RESULT ") for line in capsys.readouterr().out.split("\n") if line.startswith("ARISU_RESULT ")
                 )
-                assert json.loads(output)["final"] == response
+                assert json.loads(output)["final"] == "```json\n" + payload + "\n```"
         director.setattr(runner, "adapter_for", lambda agent: grok_provider)
         # Wrong labels, incomplete fences and invalid JSON remain distinct from
         # actual budget exhaustion. Never salvage or truncate an invalid result.
@@ -1169,7 +1180,9 @@ def test_mcp_manifest_images_and_unlisted_or_escaping_assets(
             ("```python\n" + payload + "\n```", runner.DirectorResponseError, "format"),
             ("```json\n" + payload, runner.DirectorResponseError, "format"),
             ("```json\n\n```", runner.DirectorResponseError, "format"),
-            ('```json\n{"segments":\n```', runner.DirectorResponseError, "json"),
+            ("First draft:\n```json\n{}\n```\nRevised draft:\n" + message["result"], runner.DirectorResponseError, "format"),
+            ("ARISU_POLICY_REFUSAL\n" + message["result"], ValueError, "refused"),
+            ('Draft:\n```json\n{"segments":\n```', runner.DirectorResponseError, "json"),
             ("```json\n" + "雪" * (256 * 1024 // 3 + 1) + "\n```", runner.DirectorBudgetError, "UTF-8 bytes"),
         ):
             # Use a fixture file so a size-limit case cannot hit the OS argv limit.

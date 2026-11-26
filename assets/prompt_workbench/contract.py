@@ -141,14 +141,17 @@ def final_response(value: str, director: bool = False) -> str:
     """Validate stream output and return the contents of its single fence verbatim."""
     if not isinstance(value, str) or REFUSAL in value:
         raise ValueError("request refused by the prompt-only policy")
-    labels = "json|markdown|text" if director else "markdown|text"
-    match = re.fullmatch(r"\s*```(?:" + labels + r")?[ \t]*\r?\n([\s\S]*?)\r?\n```\s*", value)
     if director:
-        if not match or not match[1].strip() or "```" in match[1]:
+        if value.count("```") != 2:
+            raise DirectorResponseError("format")
+        match = re.search(r"^[ \t]*```(?:json|markdown|text)?[ \t]*\r?\n([\s\S]*?)\r?\n[ \t]*```[ \t]*\r?$", value, re.MULTILINE)
+        if not match or not match[1].strip():
             raise DirectorResponseError("format")
         size = len(match[1].encode("utf-8"))
         if size > 256 * 1024:
             raise DirectorBudgetError(f"Director response is {size} UTF-8 bytes; the output limit is 262144 bytes.")
-    if not match or not match[1].strip() or "```" in match[1] or (not director and len(match[1]) > 65536):
+        return match[1]
+    match = re.fullmatch(r"\s*```(?:markdown|text)?[ \t]*\r?\n([\s\S]*?)\r?\n```\s*", value)
+    if not match or not match[1].strip() or "```" in match[1] or len(match[1]) > 65536:
         raise ValueError("agent must return one nonempty markdown or plain-text fence")
     return match[1]

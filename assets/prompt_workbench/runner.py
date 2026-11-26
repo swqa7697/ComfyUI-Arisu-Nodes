@@ -206,6 +206,8 @@ def generate(agent: str, options: Dict[str, Any]):
             read = {r["arguments"].get("path") for r in records if r["tool"] == "read_skill"}
             if any(paths.get(s.get("skill")) not in read for s in segments):
                 raise ValueError("Director did not read each selected writing skill.")
+            # Keep surrounding commentary out of the host's draft validator.
+            final = "```json\n" + content + "\n```"
         print("ARISU_AUDIT " + json.dumps(records), flush=True)
         print("ARISU_RESULT " + json.dumps({"final": final}, ensure_ascii=False), flush=True)
     except ProviderResultError:
