@@ -228,4 +228,57 @@ test('Director renders through either saver into the legacy or project layout an
   output = chain({ class_type: 'SaveVideo', inputs: { video: ['9', 0], filename_prefix: 'elsewhere' } });
   await assert.rejects(render('a'));
   assert.deepEqual(saverCandidates(director), [], 'a stale choice list does not outlive the chain it came from');
+
+  // The Sampling subgraph can return SelfLift directly or run Join Match first.
+  // Save the very same switched result that both picture and sound decode.
+  output = chain(arisuSaver('film'));
+  const motion = '12:4';
+  const sampler = '12:5';
+  const match = '12:6';
+  const toggle = '12:7';
+  output[motion] = output[4];
+  delete output[4];
+  delete output[5];
+  output[9].inputs.trim_frames = [motion, 1];
+  output[sampler] = {
+    class_type: 'ArisuMiniMaxH3SelfLiftProgressiveSampler',
+    inputs: { conditioning: [motion, 0], latent_image: ['2', 1] },
+  };
+  output[match] = {
+    class_type: 'MiniMaxH3JoinMatch',
+    inputs: { samples: [sampler, 0], context_length: [motion, 1], context_latent: ['3', 0] },
+  };
+  output[toggle] = { class_type: 'ComfySwitchNode', inputs: { switch: false, on_false: [sampler, 0], on_true: [match, 0] } };
+  output[6].inputs.latent = output[7].inputs.samples = output[8].inputs.samples = [toggle, 0];
+  await render('a');
+  const cut = renderTake(director, 'a');
+  output[toggle].inputs.switch = true;
+  await render('b');
+  const continuation = last().prompt;
+  assert.equal(continuation[3].inputs.latent_path, `${cut.latent.subfolder}/${LATENT}`);
+  assert.equal(continuation[motion].inputs.context_length, '22');
+  assert.deepEqual(continuation[toggle], output[toggle]);
+  assert.deepEqual(
+    [continuation[6].inputs.latent, continuation[7].inputs.samples, continuation[8].inputs.samples],
+    Array(3).fill([toggle, 0]),
+  );
+
+  const beforeInvalid = server.prompts.length;
+  output[8].inputs.samples = [sampler, 0];
+  await assert.rejects(render('a'));
+  output[8].inputs.samples = [toggle, 0];
+  output[sampler].inputs.latent_image = ['2', 0];
+  await assert.rejects(render('a'));
+  output[sampler].inputs.latent_image = ['2', 1];
+  output[match].inputs.samples = [toggle, 0];
+  await assert.rejects(render('a'));
+  output[match].inputs.samples = [sampler, 0];
+  output[toggle].inputs.switch = ['13', 0];
+  output[13] = { class_type: 'PrimitiveBoolean', inputs: { value: false } };
+  output[toggle].inputs.on_false = ['3', 0];
+  await assert.rejects(render('a'));
+  assert.equal(server.prompts.length, beforeInvalid);
+  output[toggle].inputs.on_false = [sampler, 0];
+  await render('a');
+  assert.deepEqual(last().prompt[toggle], output[toggle], 'the linked switch stays under workflow control');
 });

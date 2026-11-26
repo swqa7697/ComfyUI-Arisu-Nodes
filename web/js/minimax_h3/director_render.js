@@ -209,17 +209,42 @@ function chain(graph, director, node) {
   wire(video, 'audio', trim, 1);
   const samples = graph[saveLatent].inputs.latent;
   if (!Array.isArray(samples)) throw new Error('Connect the sampled latent to Motion Context Save Latent.');
-  const sampler = String(samples[0]);
-  wire(sampler, 'positive', motion, 0);
-  wire(sampler, 'latent_image', hybrid, 1);
+  // Save and decode the same final latent, including any join correction that the switch selected.
   for (const [type, name] of [
     ['VAEDecode', 'images'],
     ['VAEDecodeAudio', 'audio'],
   ]) {
     const decode = unique(type);
     wire(trim, name, decode, 0);
-    wire(decode, 'samples', sampler, samples[1]);
+    wire(decode, 'samples', String(samples[0]), samples[1]);
   }
+  const checked = new Map();
+  function checkSamplePath(link) {
+    const id = Array.isArray(link) ? String(link[0]) : '';
+    const item = graph[id];
+    if (!item) throw new Error('Connect the sampled latent through every selected Director render branch.');
+    const { class_type: type, inputs } = item;
+    if (type !== 'ComfySwitchNode' && type !== 'MiniMaxH3JoinMatch') {
+      if (type === 'ArisuMiniMaxH3SelfLiftProgressiveSampler') wire(id, 'conditioning', motion, 0);
+      else if ('positive' in inputs || 'latent_image' in inputs) wire(id, 'positive', motion, 0);
+      else throw new Error(`Cannot trace the Director render latent through ${type} (#${id}).`);
+      wire(id, 'latent_image', hybrid, 1);
+      return;
+    }
+    if (link[1] !== 0) throw new Error(`Use the latent output of ${type} (#${id}).`);
+    if (checked.get(id) === false) throw new Error('The Director render latent contains a connection cycle.');
+    if (checked.has(id)) return;
+    checked.set(id, false);
+    if (type === 'MiniMaxH3JoinMatch') checkSamplePath(inputs.samples);
+    else if (typeof inputs.switch === 'boolean') checkSamplePath(inputs.switch ? inputs.on_true : inputs.on_false);
+    else {
+      // A linked switch is decided during execution. Either branch must produce a Director take.
+      checkSamplePath(inputs.on_false);
+      checkSamplePath(inputs.on_true);
+    }
+    checked.set(id, true);
+  }
+  checkSamplePath(samples);
   return { motion, loader, saveLatent, saveVideo, saver: graph[saveVideo].class_type };
 }
 
