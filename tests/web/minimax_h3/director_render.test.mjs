@@ -8,9 +8,9 @@ import {
   renderSegments,
   renderStatus,
   renderTake,
+  revisionFootage,
   saverCandidates,
   takeLocation,
-  verifiedPredecessor,
 } from '../../../web/js/minimax_h3/director_render.js';
 import { api, jsonResponse, resetApi } from '../support/api.mjs';
 import { app, resetApp } from '../support/app.mjs';
@@ -168,7 +168,18 @@ test('Director renders through either saver into the legacy or project layout an
   server.removed.video.add(second.id);
   await refresh();
   assert.deepEqual([renderStatus(director, 'a', FILM), renderStatus(director, 'b', FILM)], ['Latent removed', 'Output unavailable']);
-  await assert.rejects(verifiedPredecessor(director, FILM, 'b'));
+  await assert.rejects(render('b'));
+  assert.deepEqual(await revisionFootage(director, FILM, 1), {
+    project: 'motion_context/fixed',
+    take: first.id,
+    video: first.video.filename,
+    revision: first.files.video,
+    segment: 'a',
+  });
+  const edited = structuredClone(FILM);
+  edited.segments[0].prompt = 'A different opening shot.';
+  assert.equal(await revisionFootage(director, edited, 1), null, 'an edited predecessor no longer matches its take');
+  assert.equal(await revisionFootage(director, FILM, 0), null, 'a cut starts from the film plan');
   server.removed.latent.clear();
   server.removed.video.clear();
 

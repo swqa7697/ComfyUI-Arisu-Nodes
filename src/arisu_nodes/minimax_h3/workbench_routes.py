@@ -124,9 +124,8 @@ def register_routes(server: Any, owner: Workbench):
             director = None
             if "director" in value:
                 skills = await asyncio.to_thread(skill_catalog, owner.directory)
-                director, graph = await asyncio.to_thread(
-                    DirectorTask.capture, value["director"], value.get("prompt"), node_id, options, skills
-                )
+                director = await asyncio.to_thread(DirectorTask.capture, value["director"], value.get("prompt"), node_id, skills)
+                graph = {}
                 # Director owns the film brief, local request and library notes. Only the
                 # verified tail images contribute observed motion to a revision.
                 options.update(
@@ -140,7 +139,7 @@ def register_routes(server: Any, owner: Workbench):
             job.context_graph = graph
             job.roots = image_roots(folder_paths.get_input_directory(), folder_paths.get_output_directory())
             prompt_id = None
-            if "context_latent" in graph[node_id]["inputs"]:
+            if not director and "context_latent" in graph[node_id]["inputs"]:
                 motion_root = {
                     **graph[node_id],
                     "inputs": {k: v for k, v in graph[node_id]["inputs"].items() if k not in ("resources", "video_settings")},

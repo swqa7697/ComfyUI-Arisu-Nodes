@@ -130,8 +130,7 @@ export function takeLocation(take) {
   return { project, dir };
 }
 
-async function inspect(take) {
-  const location = takeLocation(take);
+async function inspect(take, location = takeLocation(take)) {
   if (!location) throw new Error('Saved outputs do not belong to this take.');
   const query = new URLSearchParams({ take: take.id, video: take.video.filename });
   if (location.project) query.set('project', location.project);
@@ -164,7 +163,7 @@ export async function refreshRenderTakes(node, doc, onChange = () => {}) {
   onChange();
 }
 
-export async function verifiedPredecessor(node, doc, segmentId) {
+async function verifiedPredecessor(node, doc, segmentId) {
   const index = doc.segments.findIndex((segment) => segment.id === segmentId);
   if (index <= 0 || doc.segments[index].transition !== 'continuation') throw new Error('Select a continuation with a predecessor.');
   const previous = currentTake(node, doc, index - 1);
@@ -173,6 +172,27 @@ export async function verifiedPredecessor(node, doc, segmentId) {
       `Render predecessor “${doc.segments[index - 1].id}” before “${segmentId}”. Its current take is missing or has changed.`,
     );
   return `${previous.latent.subfolder}/${previous.latent.filename}`;
+}
+
+/** A revision uses stills from the preceding delivered video, including after its latent has been removed. */
+export async function revisionFootage(node, doc, index) {
+  if (index <= 0 || doc.segments[index]?.transition !== 'continuation') return null;
+  const previous = currentTake(node, doc, index - 1);
+  const location = takeLocation(previous);
+  if (!location || !previous.files?.video) return null;
+  const receipt = {
+    project: location.project,
+    take: previous.id,
+    video: previous.video.filename,
+    revision: previous.files.video,
+    segment: previous.segment,
+  };
+  try {
+    return (await inspect(previous, location)).video === receipt.revision ? receipt : null;
+  } catch {
+    // Revision can still use the film plan when the saved video is unavailable.
+    return null;
+  }
 }
 
 function chain(graph, director, node) {

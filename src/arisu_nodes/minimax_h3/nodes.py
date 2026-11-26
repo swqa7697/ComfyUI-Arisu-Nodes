@@ -1402,21 +1402,12 @@ class ArisuMiniMaxH3DirectorWorkbench(io.ComfyNode):
             node_id="ArisuMiniMaxH3DirectorWorkbench",
             display_name="MiniMax H3 Director Workbench",
             category="Arisu Nodes/MiniMax H3",
-            inputs=[
-                io.String.Input("film_json", default=EMPTY_FILM, socketless=True),
-                io.Latent.Input("context_latent", optional=True, lazy=True),
-                io.Vae.Input("vae", optional=True, lazy=True),
-            ],
+            inputs=[io.String.Input("film_json", default=EMPTY_FILM, socketless=True)],
             outputs=[io.String.Output("prompt"), _settings_bundle_output(), io.Custom("ARISU_MINIMAX_H3_RESOURCES").Output("resources")],
         )
 
     @classmethod
-    def check_lazy_status(cls, **kwargs: Any) -> List[str]:
-        """Writing uses the one-shot Workbench preparation path. Ordinary execution needs no motion inputs."""
-        return []
-
-    @classmethod
-    def execute(cls, film_json: str, context_latent: Optional[Dict[str, Any]] = None, vae: Optional[comfy.sd.VAE] = None) -> io.NodeOutput:
+    def execute(cls, film_json: str) -> io.NodeOutput:
         """Resolve the selected finalized segment from the current authorized roots."""
         return io.NodeOutput(*render_outputs(film_json, _resource_roots()))
 
@@ -1562,15 +1553,7 @@ class ArisuMiniMaxH3PromptWorkbench(io.ComfyNode):
             if not job.cpu_context:
                 job.settings, job.resources, job.roots = video_settings, resources, _resource_roots()
             if context_latent is not None:
-                try:
-                    _prepare_workbench_motion(owner, job, context_latent, vae)
-                except MotionFootageError:
-                    if not job.director or job.director.task != "refine":
-                        raise
-                    # Every recoverable error occurs before writing any observations. Cache,
-                    # model-identity and execution failures follow the usual preparation error path.
-                    owner.preparation(job.id, job.node_id)
-                    _LOGGER.warning("Director revision will use the film plan because its tail frames are unavailable", exc_info=True)
+                _prepare_workbench_motion(owner, job, context_latent, vae)
             owner.enforce_budget()
         except comfy.model_management.InterruptProcessingException:
             job.cancelled.set()

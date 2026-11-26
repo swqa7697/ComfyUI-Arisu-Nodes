@@ -537,7 +537,7 @@ class FixtureServer:
             completed = {"state": "complete", "draft": self.draft(), "generation_elapsed_ms": 78000}
             generation = self.generation_requests[-1]
             if generation.get("director", {}).get("task") == "refine":
-                completed["director_tail_frames"] = generation["options"]["motion_enabled"]
+                completed["director_tail_frames"] = "predecessor" in generation["director"]
             return web.json_response(completed)
         if path in ("/arisu/workbench/release", "/arisu/workbench/cancel", "/arisu/workbench/action") and method == "POST":
             return web.json_response({"accepted": True})

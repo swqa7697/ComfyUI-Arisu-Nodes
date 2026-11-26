@@ -2264,29 +2264,11 @@
             "multiline": false
           }
         ]
-      },
-      "optional": {
-        "context_latent": [
-          "LATENT",
-          {
-            "lazy": true
-          }
-        ],
-        "vae": [
-          "VAE",
-          {
-            "lazy": true
-          }
-        ]
       }
     },
     "input_order": {
       "required": [
         "film_json"
-      ],
-      "optional": [
-        "context_latent",
-        "vae"
       ]
     },
     "is_input_list": false,

@@ -7,10 +7,8 @@ import json
 import logging
 import mimetypes
 import os
-import re
 import stat
 import threading
-import uuid
 from dataclasses import replace
 from typing import Any, Awaitable, Callable, Dict, Optional
 
@@ -21,6 +19,7 @@ from ..common.core import PREVIEW_CONTENT_TYPE, browse_directory, contained_path
 from ..common.media import StaleResource, UnsupportedMedia, revision_for, source_path
 from ..common.paths import image_roots, select_root
 from .core import Resource, media_kind
+from .director_media import director_video_path
 from .media import metadata, poster
 from .proxies import ProxyBusy, ProxyJob, ProxyManager
 
@@ -129,9 +128,7 @@ def director_take(output_root: str, take: str, video: str, project: str = "") ->
     A project selects ``<project>/director/<take>``; without one the original ``arisu_director/<take>`` is read.
     The video alone keeps a take available for assembly, so a removed latent still reports the video.
     """
-    if str(uuid.UUID(take)) != take or not re.fullmatch(r"clip_[0-9]{5,}_\.(?:mp4|webm|mov|mkv)", video):
-        raise ValueError("invalid Director take")
-    directory = f"{relative_path(project)}/director/{take}" if project else f"arisu_director/{take}"
+    directory = os.path.dirname(director_video_path(take, video, project))
     revisions: Dict[str, str] = {}
     for kind, filename in (("video", video), ("latent", "clip_00001.safetensors")):
         path = contained_path(output_root, f"{directory}/{filename}")

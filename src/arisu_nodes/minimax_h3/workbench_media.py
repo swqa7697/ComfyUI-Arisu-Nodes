@@ -13,8 +13,9 @@ import av
 from PIL import Image, ImageOps
 
 from ..common.core import open_raster_image
-from ..common.media import open_media, origin_for, source_file, streams
-from .core import Resource
+from ..common.media import MediaRef, open_media, origin_for, source_file, streams
+from .core import MotionFootageError, Resource
+from .director_media import read_director_tail
 from .media import upright, validate_workbench_source
 from .workbench_images import encode_image
 
@@ -26,7 +27,7 @@ def stage(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
     assets: List[Dict[str, Any]] = []
     remaining = payload["max_bytes"]
 
-    def picture(image: Image.Image, item: Resource, role: str, **metadata: Any):
+    def picture(image: Image.Image, resource_id: str, role: str, **metadata: Any):
         nonlocal remaining
         identifier = uuid.uuid4().hex
         path = directory / (identifier + ".webp")
@@ -38,9 +39,8 @@ def stage(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
                 "id": identifier,
                 "file": path.name,
                 "mime": "image/webp",
-                "resource_id": item.id,
+                "resource_id": resource_id,
                 "role": role,
-                "name": Path(item.path).name,
                 **dimensions,
                 **metadata,
             }
@@ -58,7 +58,7 @@ def stage(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
                 if item.crop:
                     left, top, width, height = item.crop
                     image = image.crop((left, top, left + width, top + height))
-                picture(image, item, role)
+                picture(image, item.id, role, name=Path(item.path).name)
         elif item.kind == "video":
             start, end = item.clip
             targets = [start + (end - start) * index / 7 for index in range(8)]
@@ -95,8 +95,9 @@ def stage(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
                     if selected:
                         picture(
                             upright(frame),
-                            item,
+                            item.id,
                             "reference_video_frame",
+                            name=Path(item.path).name,
                             sequence_index=sequence,
                             timestamp=max(0.0, left - start),
                         )
@@ -125,6 +126,17 @@ def stage(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
                     raise ValueError("selected video has incomplete coverage")
         # Audio remains metadata/notes only, including video soundtracks.
         validate_workbench_source(roots, item)
+    if payload.get("predecessor"):
+        # A disappearing or unreadable take still permits a film-plan revision.
+        start = len(assets)
+        try:
+            frames = read_director_tail(roots, MediaRef(**payload["predecessor"]))
+            for index, (image, timestamp) in enumerate(frames):
+                picture(image, "motion", "motion", sequence_index=index, timestamp=timestamp)
+        except MotionFootageError:
+            for asset in assets[start:]:
+                (directory / asset["file"]).unlink()
+            del assets[start:]
     return assets
 
 

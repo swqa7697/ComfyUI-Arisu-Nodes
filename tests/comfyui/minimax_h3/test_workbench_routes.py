@@ -9,17 +9,18 @@ import threading
 from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 from PIL import Image
 
+from src.arisu_nodes.common.media import revision_for
 from src.arisu_nodes.common.paths import CONFIG_NAME, CONFIG_TEMPLATE, read_configuration
 from src.arisu_nodes.minimax_h3 import workbench_routes
 from src.arisu_nodes.minimax_h3.agent_docker import IMAGE_SOURCE_LABEL, POLICY_REVISION, image_source_digest
-from src.arisu_nodes.minimax_h3.workbench import Generation, Workbench
+from src.arisu_nodes.minimax_h3.workbench import Workbench
 from tests.support.media import make_audio, make_video
 
 pytestmark = pytest.mark.comfyui
@@ -189,6 +190,19 @@ def test_workbench_routes_reject_untrusted_requests_and_queue_only_preparation(t
             Image.new("RGB", (20, 16), "red").save(root / "prop.png")
             make_audio(root / "sound.wav")
             make_video(root / "pan.mkv")
+            # A delivered take remains valid visual context after its latent has been removed.
+            output = tmp_path / "output"
+            take = "5aa49518-a24e-4a09-9ba4-a05a34837303"
+            footage = output / "film" / "director" / take / "clip_00002_.mkv"
+            footage.parent.mkdir(parents=True)
+            make_video(footage)
+            receipt = {
+                "project": "film",
+                "take": take,
+                "video": footage.name,
+                "revision": revision_for(footage.stat()),
+                "segment": "arrival",
+            }
             video_id = "57ee5edb-dac7-4290-aeea-22c86896dbdd"
             custom = owner.directory / "skills" / "handwritten"
             custom.mkdir(parents=True)
@@ -297,7 +311,16 @@ def test_workbench_routes_reject_untrusted_requests_and_queue_only_preparation(t
                 assert task["selected"] == "opening" and task["segments"][0]["id"] == "arrival"
                 assert task["film"]["brief"] == document["film"]["brief"] and task["coverage"] == plan["coverage"]
                 assert set(catalog) == {"custom:handwritten"}
-                assert context["motion"]["present"] == (task["request"] == "bind the tail")
+                assert context["motion"]["present"] == (task["request"] in ("use the footage", "bind the tail"))
+                if context["motion"]["present"]:
+                    stills = context["motion"]["stills"]
+                    assert [s["timestamp"] for s in stills] == pytest.approx([0, 0.5], abs=0.002)
+                    by_id = {a["id"]: a for a in context["assets"]}
+                    for still, red in zip(stills, (11, 23), strict=True):
+                        asset = by_id[still["asset_id"]]
+                        assert asset["role"] == "motion"
+                        with Image.open(directory / asset["file"]) as frame:
+                            assert frame.getpixel((0, 0)) == (red, 0, 0)
                 if task["request"] == "more":
                     return "x" * (256 * 1024 + 33)
                 replacement = {**segments[1], "prompt": "Open <Picture:box> slowly.", "skill": "custom:handwritten"}
@@ -328,16 +351,22 @@ def test_workbench_routes_reject_untrusted_requests_and_queue_only_preparation(t
                     (root / "replacement.png").replace(root / "prop.png")
                 return "```json\n" + json.dumps({"version": 1, "segment": replacement, "suggestions": ["Hold on the desk."]}) + "\n```"
 
-            async def director_job(task: str, note: str) -> Dict[str, Any]:
+            async def director_job(
+                task: str, note: str, predecessor: Optional[Dict[str, str]] = None, expected_status: int = 202
+            ) -> Dict[str, Any]:
                 value = {
                     "node_id": "d",
                     "workflow": "director",
                     "director": {"task": task, "request": note},
-                    "options": {"motion_enabled": note == "bind the tail", "requirements": "Stale Prompt Workbench input"},
+                    "options": {"requirements": "Stale Prompt Workbench input"},
                     "prompt": {"d": {"class_type": "ArisuMiniMaxH3DirectorWorkbench", "inputs": {"film_json": json.dumps(document)}}},
                 }
+                if predecessor is not None:
+                    value["director"]["predecessor"] = predecessor
                 accepted = await client.post("/arisu/workbench/generate", json=value)
-                assert accepted.status == 202, await accepted.text()
+                assert accepted.status == expected_status, await accepted.text()
+                if expected_status != 202:
+                    return await accepted.json()
                 pending = await accepted.json()
                 assert pending["prompt_id"] is None
                 for _ in range(250):
@@ -348,15 +377,8 @@ def test_workbench_routes_reject_untrusted_requests_and_queue_only_preparation(t
                 raise AssertionError("Director task did not finish")
 
             with monkeypatch.context() as local:
-
-                def execute_with_prepared_tail(job: Generation):
-                    if job.director.request == "bind the tail":
-                        # Supply the decoded predecessor frames at the preparation boundary.
-                        owner.cache_motion(job, "test-tail", [Image.new("RGB", (16, 12), "blue")])
-                    real_execute(job)
-
-                local.setattr(owner, "execute", execute_with_prepared_tail)
-                local.setattr(workbench_routes, "image_roots", lambda *args: {"input": str(root)})
+                local.setattr(owner, "execute", real_execute)
+                local.setattr(workbench_routes, "image_roots", lambda *args: {"input": str(root), "output": str(output)})
                 local.setattr(owner.agents, "generate", generate_director)
                 plan["coverage"]["Keep the morning light"] = ["missing"]
                 invalid = await director_job("plan", "")
@@ -395,6 +417,17 @@ def test_workbench_routes_reject_untrusted_requests_and_queue_only_preparation(t
                 result = await director_job("refine", "Slow the action")
                 assert result["state"] == "complete", result["error"]
                 assert result["director_tail_frames"] is False
+                with_footage = await director_job("refine", "use the footage", receipt)
+                assert with_footage["state"] == "complete" and with_footage["director_tail_frames"] is True, with_footage
+                stale = await director_job("refine", "use the plan", {**receipt, "revision": "0" * 64})
+                assert stale["state"] == "complete" and stale["director_tail_frames"] is False, stale
+                for task, wrong in (
+                    ("plan", receipt),
+                    ("refine", {**receipt, "segment": "opening"}),
+                    ("refine", {**receipt, "project": "../outside"}),
+                    ("refine", {**receipt, "video": "../clip_00001_.mp4"}),
+                ):
+                    assert "error" in await director_job(task, "inspect" if task == "refine" else "", wrong, expected_status=400)
                 replacement = json.loads(result["draft"])["segment"]
                 assert replacement["id"] == "opening" and replacement["seconds"] == 9 and document["segments"][0] == segments[0]
                 assert (
@@ -419,7 +452,7 @@ def test_workbench_routes_reject_untrusted_requests_and_queue_only_preparation(t
                     ("repeat the video", "more than once"),
                     ("ambiguous video", "ambiguous"),
                 ):
-                    result = await director_job("refine", refused)
+                    result = await director_job("refine", refused, receipt if refused == "bind the tail" else None)
                     assert (
                         result["state"] == "failed"
                         and "Segment opening" in result["error"]
@@ -434,7 +467,7 @@ def test_workbench_routes_reject_untrusted_requests_and_queue_only_preparation(t
                 result = await director_job("refine", "replace source")
                 assert result["state"] == "failed" and "asset box" in result["error"] and not result["draft"]
                 assert document == submitted
-                assert calls == ["plan"] * 4 + ["refine"] * 10 and not queued
+                assert calls == ["plan"] * 4 + ["refine"] * 12 and not queued
             # Real operations still refuse concurrent generation immediately.
             owner.agents.guard.acquire()
             try:

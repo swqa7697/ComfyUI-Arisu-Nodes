@@ -25,6 +25,7 @@ from .core import (
     FPS,
     MOTION_SAMPLE_LIMIT,
     MOTION_SAMPLE_STRIDE,
+    MotionFootageError,
     ResourceBundle,
     VideoSettings,
     finalized_markdown,
@@ -32,6 +33,7 @@ from .core import (
     workbench_options,
 )
 from .director import segment_frames
+from .director_media import verify_director_video
 from .director_task import DIRECTOR_SKILL, DirectorTask
 from .media import validate_workbench_source
 from .workbench_context import context_inputs
@@ -269,7 +271,8 @@ class Workbench:
             destination = self.temp / identifier
             destination.mkdir(mode=0o700)
             job = Generation(identifier, node_id, workflow, options, provider["selection"].copy(), destination, graph, director=director)
-            graph[node_id]["inputs"]["prepare_job"] = identifier
+            if not director:
+                graph[node_id]["inputs"]["prepare_job"] = identifier
             with self.lock:
                 if workflow in self.released:
                     raise ValueError("workflow was closed during preparation")
@@ -453,18 +456,19 @@ class Workbench:
                     if item:
                         validate_workbench_source(job.roots, item)
                         sources.append({"role": role, "item": asdict(item)})
-            used = self.used_bytes()
-            # Account for both each pending motion still and its cache link.
-            motion_reserve = 2 * MOTION_SAMPLE_LIMIT * IMAGE_LIMIT if job.queue_finished and not job.prepared.is_set() else 0
-            payload = {
-                "directory": str(job.directory),
-                "roots": job.roots,
-                "resources": sources,
-                "max_bytes": max(0, CACHE_LIMIT - used - motion_reserve),
-            }
             media_key = hashlib.sha256(json.dumps([sources, PROCESSING], sort_keys=True).encode()).hexdigest()
             assets = self.restore_assets(job, media_key)
-            if assets is None:
+            predecessor = job.director.predecessor if job.director else None
+            if assets is None or predecessor:
+                # Account for both each pending GPU motion still and its cache link.
+                motion_reserve = 2 * MOTION_SAMPLE_LIMIT * IMAGE_LIMIT if job.queue_finished and not job.prepared.is_set() else 0
+                payload = {
+                    "directory": str(job.directory),
+                    "roots": job.roots,
+                    "resources": sources if assets is None else [],
+                    "predecessor": asdict(predecessor) if predecessor else None,
+                    "max_bytes": max(0, CACHE_LIMIT - self.used_bytes() - motion_reserve),
+                }
                 process = subprocess.Popen(
                     worker_command("workbench"),
                     cwd=ASSETS.parents[1],
@@ -486,14 +490,17 @@ class Workbench:
                 if process.returncode:
                     logger.warning("Workbench media worker: %s", stderr[-4000:])
                     raise ValueError("selected media could not be prepared")
-                assets = json.loads(stdout)
-                self.store_assets(job, media_key, assets)
+                staged = json.loads(stdout)
+                if predecessor:
+                    job.motion = [asset for asset in staged if asset["role"] == "motion"]
+                if assets is None:
+                    assets = [asset for asset in staged if asset["role"] != "motion"]
+                    self.store_assets(job, media_key, assets)
             job.wait_for_preparation()
-            manifest = job_context(job, assets + job.motion, resources)
             skills = skill_catalog(self.directory)
             staged_skill = job.directory / "skill"
             if job.director:
-                manifest["director"] = job.director.stage(staged_skill, skills, max(0, CACHE_LIMIT - self.used_bytes()))
+                director_context = job.director.stage(staged_skill, skills, max(0, CACHE_LIMIT - self.used_bytes()))
             else:
                 skill = skills.get(job.options["skill"])
                 if skill is None:
@@ -501,6 +508,16 @@ class Workbench:
                 if sum(p.stat().st_size for p in skill.rglob("*") if p.is_file()) + self.used_bytes() > CACHE_LIMIT:
                     raise ValueError("Workbench media cache capacity exceeded")
                 shutil.copytree(skill, staged_skill)
+            if predecessor and job.motion:
+                try:
+                    verify_director_video(job.roots, predecessor)
+                except MotionFootageError:
+                    for asset in job.motion:
+                        (job.directory / asset["file"]).unlink()
+                    job.motion.clear()
+            manifest = job_context(job, assets + job.motion, resources)
+            if job.director:
+                manifest["director"] = director_context
             metadata = json.dumps(manifest, ensure_ascii=False).encode()
             if len(metadata) > 1024 * 1024:
                 raise ValueError("The prepared context exceeds the single-task 1 MiB budget. Shorten notes or reduce the asset library.")

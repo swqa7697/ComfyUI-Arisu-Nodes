@@ -1012,7 +1012,7 @@ class PreparationError(ValueError):
 
 
 class MotionFootageError(PreparationError):
-    """A selected latent or its decoded pixels cannot supply usable tail observations."""
+    """The selected latent or saved video cannot supply usable tail images."""
 
 
 def motion_tail(total_steps: int) -> Tuple[int, int]:

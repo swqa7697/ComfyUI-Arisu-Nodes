@@ -208,29 +208,42 @@ def inspect_render_recovery(page: Page, director_id: str, server: FixtureServer)
             [director_id, save],
         )
         assert len(normal_runs) == 1 and normal_runs[0]["latent_path"] == jobs[2]["previous"]["latent_path"]
-        # Use the same predecessor receipt for the revision. The agent may see its actual tail only with valid wiring.
-        edit_segment(page, "Revise Prompt")
-        revision = page.get_by_role("dialog", name="Edit Segment", exact=True)
-        unavailable = revision.get_by_text("Using the film plan. Previous tail frames are unavailable.", exact=True)
-        expect(unavailable).to_be_visible()
-        page.keyboard.press("Escape")
+        # Reopen a legacy graph with both old motion wires. Only those Director inputs should disappear.
         page.evaluate(
-            """id => {
-                const graph = window.comfyAPI.app.app.graph, target = graph.getNodeById(id);
-                for (const [type, port] of [['MiniMaxH3MotionContextLoadLatent','context_latent'], ['VAELoader','vae']]) {
-                    const slot = target.inputs.findIndex(input => input.name === port);
-                    class Source extends LGraphNode {
-                        constructor() { super(); this.comfyClass = type; this.addOutput(port, target.inputs[slot].type); }
+            """async id => {
+                const app = window.comfyAPI.app.app, graph = app.graph, director = graph.getNodeById(id);
+                class LegacyMotion extends LGraphNode {
+                    constructor() {
+                        super();
+                        this.addOutput('latent', 'LATENT'); this.addOutput('vae', 'VAE');
+                        this.addInput('samples', 'LATENT'); this.addInput('prompt', 'STRING');
                     }
-                    const fixture = 'FixtureDirector' + type;
-                    LiteGraph.registerNodeType(fixture, Source);
-                    const source = LiteGraph.createNode(fixture);
-                    source.pos = [-1000, -1000]; graph.add(source); source.connect(0, target, slot);
                 }
+                LiteGraph.registerNodeType('FixtureDirectorLegacyMotion', LegacyMotion);
+                const add = () => {
+                    const n = LiteGraph.createNode('FixtureDirectorLegacyMotion');
+                    n.pos = [-1000, -1000]; graph.add(n); return n;
+                };
+                const source = add(), sink = add();
+                director.addInput('context_latent', 'LATENT'); director.addInput('vae', 'VAE');
+                source.connect(0, director, director.findInputSlot('context_latent'));
+                source.connect(1, director, director.findInputSlot('vae'));
+                source.connect(0, sink, 0); director.connect(0, sink, 1);
+                const saved = graph.serialize();
+                await app.loadGraphData(saved, true, true, app.extensionManager.workflow.activeWorkflow);
+                const reopened = app.graph.getNodeById(id), kept = app.graph.getNodeById(sink.id);
+                if (reopened.inputs.some(i => ['context_latent', 'vae'].includes(i.name)) ||
+                    kept.getInputNode(0)?.id !== source.id || kept.getInputNode(1)?.id !== reopened.id ||
+                    app.graph.getNodeById(source.id).outputs.some((o, i) => (o.links?.length ?? 0) !== (i ? 0 : 1)))
+                    throw Error('Legacy motion wires were not removed cleanly');
             }""",
             director_id,
         )
+        # The delivered video is sufficient to revise the continuation after its latent is removed.
+        files[saved].pop("latent")
         edit_segment(page, "Revise Prompt")
+        revision = page.get_by_role("dialog", name="Edit Segment", exact=True)
+        unavailable = revision.get_by_text("Using the film plan. Previous tail frames are unavailable.", exact=True)
         expect(revision.get_by_text("Tail frames from segment 1 are available for this revision.", exact=True)).to_be_visible()
         instructions = revision.get_by_label("What should change in segment 2?", exact=True)
         instructions.fill("Match the bow position in the preceding take.")
@@ -239,11 +252,15 @@ def inspect_render_recovery(page: Page, director_id: str, server: FixtureServer)
             submit_revision.click()
         expect(status).to_contain_text("Output ready to apply")
         refinement = server.generation_requests[-1]
-        assert refinement["options"]["motion_enabled"] and refinement["options"]["context_length"] == "22"
-        assert not refinement["options"].get("motion_audio_notes") and not refinement["options"].get("motion_notes")
-        graph = refinement["prompt"]
-        source = graph[refinement["node_id"]]["inputs"]["context_latent"][0]
-        assert graph[source]["inputs"]["latent_path"] == jobs[2]["previous"]["latent_path"]
+        assert refinement["director"]["predecessor"] == {
+            "project": "",
+            "take": saved,
+            "video": "clip_00001_.mp4",
+            "revision": "video-revision",
+            "segment": "launch",
+        }
+        assert set(refinement["prompt"]) == {refinement["node_id"]}
+        assert set(refinement["prompt"][refinement["node_id"]]["inputs"]) == {"film_json"}
         edit_segment(page, "Revise Prompt")
         expect(instructions).to_have_value("")
         expect(revision.get_by_text("Tail frames from segment 1 are available for this revision.", exact=True)).to_be_visible()
@@ -254,7 +271,7 @@ def inspect_render_recovery(page: Page, director_id: str, server: FixtureServer)
             submit_revision.click()
         expect(status).to_contain_text("Output ready to apply")
         fallback = server.generation_requests[-1]
-        assert not fallback["options"]["motion_enabled"]
+        assert "predecessor" not in fallback["director"]
         assert set(fallback["prompt"]) == {fallback["node_id"]}
         edit_segment(page, "Revise Prompt")
         expect(unavailable).to_be_visible()

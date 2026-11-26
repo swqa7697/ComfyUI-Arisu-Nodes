@@ -15,14 +15,14 @@ import {
   renderSegments,
   renderStatus,
   renderTake,
+  revisionFootage,
   saverCandidates,
   stopRender,
   takeLocation,
-  verifiedPredecessor,
 } from './director_render.js';
 import { applyDraft, openDirectorReview } from './director_review.js';
 import { DIRECTOR_STYLE } from './director_style.js';
-import { captureWorkbenchPrompt, executionTarget } from './settings_broadcast.js';
+import { executionTarget } from './settings_broadcast.js';
 import { generationTime, workbenchSessions } from './workbench_sessions.js';
 
 const TYPE = 'ArisuMiniMaxH3DirectorWorkbench';
@@ -499,24 +499,6 @@ function promptView(ui, doc, seg) {
   ];
 }
 
-// Capture the preparation graph before file verification yields to other graph edits.
-async function revisionMotion(node, doc, index) {
-  if (index <= 0 || doc.segments[index].transition !== 'continuation' || !renderTake(node, doc.segments[index - 1].id)) return null;
-  try {
-    const prompt = captureWorkbenchPrompt(node);
-    const inputs = prompt.output[prompt.nodeId].inputs;
-    const loader = prompt.output[inputs.context_latent?.[0]];
-    if (loader?.class_type !== 'MiniMaxH3MotionContextLoadLatent' || prompt.output[inputs.vae?.[0]]?.class_type !== 'VAELoader')
-      return null;
-    const path = await verifiedPredecessor(node, doc, doc.segments[index].id);
-    Object.assign(loader.inputs, { latent_path: path, clip_index: 1, folder: 'output', stock_format: false });
-    return prompt;
-  } catch {
-    // A missing receipt or unusable preparation graph still allows a storyboard revision.
-    return null;
-  }
-}
-
 function revisionView(ui, doc, seg) {
   const index = doc.segments.indexOf(seg);
   const requests = ui.state.revisions;
@@ -530,8 +512,8 @@ function revisionView(ui, doc, seg) {
   context.setAttribute('role', 'status');
   if (index > 0 && seg.transition === 'continuation') {
     context.textContent = 'Checking previous tail frames…';
-    void revisionMotion(ui.node, doc, index).then((prompt) => {
-      context.textContent = prompt
+    void revisionFootage(ui.node, doc, index).then((footage) => {
+      context.textContent = footage
         ? `Tail frames from segment ${index} are available for this revision.`
         : 'Using the film plan. Previous tail frames are unavailable.';
     });
@@ -574,18 +556,20 @@ async function generate(ui, task) {
     const target = executionTarget(node);
     if (!target) throw new Error('The Director is absent from this workflow.');
     const agent = selectedAgent(node);
-    const motion = refine && (await revisionMotion(node, doc, index));
-    const prompt = motion || { nodeId: target.id, output: { [target.id]: { class_type: TYPE, inputs: {} } } };
-    prompt.output[prompt.nodeId].inputs.film_json = JSON.stringify(doc);
-    if (refine) submitted.context = motion ? `Requested tail frames from segment ${index}.` : 'Using the film plan.';
+    const predecessor = refine && (await revisionFootage(node, doc, index));
+    if (refine) submitted.context = predecessor ? `Requested tail frames from segment ${index}.` : 'Using the film plan.';
     return {
-      node_id: prompt.nodeId,
-      prompt: prompt.output,
-      director: { task, request: draft?.request ?? '', reselect_skill: !!draft?.reselect && !doc.segments[index]?.skill_locked },
+      node_id: target.id,
+      prompt: { [target.id]: { class_type: TYPE, inputs: { film_json: JSON.stringify(doc) } } },
+      director: {
+        task,
+        request: draft?.request ?? '',
+        reselect_skill: !!draft?.reselect && !doc.segments[index]?.skill_locked,
+        ...(predecessor && { predecessor }),
+      },
       options: {
         agent,
         skill: 'bundled:sequence-director',
-        motion_enabled: !!motion,
         context_length: String(doc.segments[index]?.overlap_frames || 22),
       },
     };
@@ -1099,7 +1083,8 @@ app.registerExtension({
       if (!state) return;
       invalidate(this);
       const linked = this.inputs?.some((input) => input.name === 'film_json' && input.link != null);
-      for (let i = (this.inputs?.length ?? 0) - 1; i >= 0; i--) if (this.inputs[i].name === 'film_json') this.removeInput(i);
+      for (let i = (this.inputs?.length ?? 0) - 1; i >= 0; i--)
+        if (['film_json', 'context_latent', 'vae'].includes(this.inputs[i].name)) this.removeInput(i);
       const w = filmWidget(this);
       if (linked || !preservingSelections() || !app.configuringGraph) {
         w.value = clearLocations(w.value);

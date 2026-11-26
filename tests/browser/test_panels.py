@@ -630,7 +630,7 @@ def inspect_director(page: Page, server: FixtureServer, name: str) -> str:
     assert len(server.generation_requests) == before + 1
     planned = server.generation_requests[-1]
     assert planned["options"]["agent"] == "grok"
-    assert not planned["director"].get("request") and not planned["options"]["motion_enabled"]
+    assert not planned["director"].get("request") and "predecessor" not in planned["director"]
     submitted = json.loads(planned["prompt"][planned["node_id"]]["inputs"]["film_json"])["film"]
     assert submitted["brief"] == requirements and submitted["target_runtime"] == "0.2 min"
     assert (submitted["megapixels"], submitted["min_seconds"], submitted["max_seconds"]) == (1.25, 5, 15)
@@ -700,7 +700,7 @@ def inspect_director(page: Page, server: FixtureServer, name: str) -> str:
     submit_revision.click()
     expect(page.locator(".arisu-director .status")).to_contain_text("Output ready to apply")
     revised = server.generation_requests[-1]
-    assert revised["director"]["request"] == "Settle the camera on the boat." and not revised["options"]["motion_enabled"]
+    assert revised["director"]["request"] == "Settle the camera on the boat." and "predecessor" not in revised["director"]
     snapshot = json.loads(revised["prompt"][revised["node_id"]]["inputs"]["film_json"])
     assert snapshot["selected"] == "follow" and snapshot["film"]["brief"] == requirements
     edit_segment(page, "Revise Prompt")

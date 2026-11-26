@@ -8,8 +8,9 @@ import re
 import stat
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional, Tuple
+from typing import Any, Dict, List, Mapping, Optional
 
+from ..common.media import MediaRef
 from . import director
 from .core import (
     CLIP_FRAME_STEP,
@@ -17,12 +18,10 @@ from .core import (
     MIN_CLIP_FRAMES,
     MOTION_WINDOWS,
     RESOURCE_LIMITS,
-    WORKBENCH_ID,
     ResourceBundle,
     h3_json,
-    preparation_graph,
 )
-from .director_media import library_resources, segment_resources, validate_draft_media
+from .director_media import director_video_ref, library_resources, segment_resources, validate_draft_media
 
 ROLES = ("first", "last", "image", "video", "audio")
 DIRECTOR_SKILL = "bundled:sequence-director"
@@ -98,14 +97,17 @@ class DirectorTask:
     request: str
     reselect: bool
     catalog: Dict[str, Dict[str, Any]]
+    predecessor: Optional[MediaRef] = None
     prepared_document: Optional[Dict[str, Any]] = field(default=None, init=False, repr=False)
 
     @classmethod
-    def capture(
-        cls, value: Any, prompt: Any, node_id: str, options: Dict[str, Any], skills: Dict[str, Path]
-    ) -> Tuple[DirectorTask, Dict[str, Any]]:
-        """Capture the Director document and project available continuation footage onto a preparation graph."""
-        if not isinstance(value, dict) or set(value) - {"task", "request", "reselect_skill"} or value.get("task") not in ("plan", "refine"):
+    def capture(cls, value: Any, prompt: Any, node_id: str, skills: Dict[str, Path]) -> DirectorTask:
+        """Capture the film and the optional previous take for a continuation revision."""
+        if (
+            not isinstance(value, dict)
+            or set(value) - {"task", "request", "reselect_skill", "predecessor"}
+            or value.get("task") not in ("plan", "refine")
+        ):
             raise ValueError("Choose a whole-film plan or a segment revision.")
         task = value["task"]
         request, reselect = value.get("request", ""), value.get("reselect_skill", False)
@@ -132,26 +134,21 @@ class DirectorTask:
         missing = [f"{segment}: {skill}" for segment, skill in forced.items() if skill and skill not in catalog]
         if missing:
             raise ValueError("Choose a replacement for the unavailable writing skill (" + ", ".join(missing) + ").")
-        # ComfyUI validates every required widget on the projected preparation node.
-        prep = {
-            "agent": options["agent"],
-            "skill": DIRECTOR_SKILL,
-            "finalized_prompt": "",
-            "context_length": str(options["context_length"]),
-            "audio_context_length": options["audio_context_length"],
-            "motion_notes": "",
-            "trigger_words": "",
-            "reference_notes": "{}",
-            "requirements": "",
-        }
-        if (
-            task == "refine"
-            and options["motion_enabled"]
-            and any(s["id"] == document["selected"] and s["transition"] == "continuation" for s in document["segments"][1:])
-        ):
-            prep.update({key: inputs[key] for key in ("vae", "context_latent") if key in inputs})
-        graph = preparation_graph({**prompt, node_id: {"class_type": WORKBENCH_ID, "inputs": prep}}, node_id)
-        return selected, graph
+        receipt = value.get("predecessor")
+        if receipt is not None:
+            if not isinstance(receipt, dict) or set(receipt) != {"segment", "take", "project", "video", "revision"}:
+                raise ValueError("Invalid Director predecessor receipt.")
+            segments = document["segments"]
+            index = next((i for i, segment in enumerate(segments) if segment["id"] == document["selected"]), -1)
+            if (
+                task != "refine"
+                or index <= 0
+                or segments[index]["transition"] != "continuation"
+                or receipt["segment"] != segments[index - 1]["id"]
+            ):
+                raise ValueError("The predecessor must belong to the segment immediately before the selected continuation.")
+            selected.predecessor = director_video_ref(receipt["take"], receipt["video"], receipt["project"], receipt["revision"])
+        return selected
 
     def prepare_resources(self, roots: Mapping[str, str]) -> ResourceBundle:
         """Freeze the revisions inspected by the agent and each planning reference's effective soundtrack."""
