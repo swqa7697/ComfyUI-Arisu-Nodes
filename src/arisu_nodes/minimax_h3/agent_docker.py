@@ -25,6 +25,8 @@ PROVIDER_LABEL = "org.arisu.workbench.provider"
 IMAGE_SOURCE_LABEL = "org.arisu.workbench.source"
 POLICY_REVISION = 7
 MAX_OUTPUT = 2 * 1024 * 1024
+MAX_LOG_LINE = 1024 * 1024
+MAX_OPERATION_LOG = 16 * 1024 * 1024
 PROVIDER_FAILURES = {
     "turn_limit": "{provider} reached its limit on the number of turns for this request.",
     "structured_output": "{provider} exhausted its attempts to produce structured output.",
@@ -53,6 +55,39 @@ class AgentExitError(ValueError):
 
 class AgentUpdateRequired(ValueError):
     """The installed agent image must be rebuilt for this Workbench."""
+
+
+def _activity_entries(text: str, *, large_grok_results: bool = False) -> List[Dict[str, str]]:
+    """Decode the runner's activity envelope before accepting its text."""
+    record = json.loads(text.removeprefix("ARISU_ACTIVITY "))
+    if (
+        not isinstance(record, dict)
+        or set(record) != {"version", "entries"}
+        or type(record["version"]) is not int
+        or record["version"] != 1
+        or not isinstance(record["entries"], list)
+    ):
+        raise ValueError("invalid activity envelope")
+    for entry in record["entries"]:
+        # Only the host creates append records. Provider messages are
+        # full snapshots, including those from existing Docker images.
+        if (
+            not isinstance(entry, dict)
+            or set(entry) != {"id", "kind", "text", "details"}
+            or not all(isinstance(value, str) for value in entry.values())
+            or entry["kind"] not in ("analysis", "agent", "tool", "details", "progress", "error")
+        ):
+            raise ValueError("invalid activity entry")
+    entries = record["entries"]
+    if large_grok_results:
+        if not entries or any(entry["kind"] != "tool" or entry["text"] != "Tool result" for entry in entries):
+            raise ValueError("expected Grok tool results")
+        # Only serialized tool text can use the larger frame budget. Count the
+        # remaining wire bytes, including IDs, repeated fields and whitespace.
+        details_size = sum(len(json.dumps(entry["details"], ensure_ascii=False).encode("utf-8")) - 2 for entry in entries)
+        if len(text.encode("utf-8")) - details_size > MAX_LOG_LINE:
+            raise ValueError("oversized tool result envelope")
+    return entries
 
 
 def _supports_context_window(agent: str, model: Dict[str, Any], size: Any) -> bool:
@@ -217,26 +252,7 @@ class DockerAgents:
         entries = None
         if text.startswith("ARISU_ACTIVITY "):
             try:
-                record = redact(json.loads(text.removeprefix("ARISU_ACTIVITY ")))
-                if (
-                    not isinstance(record, dict)
-                    or set(record) != {"version", "entries"}
-                    or type(record["version"]) is not int
-                    or record["version"] != 1
-                    or not isinstance(record["entries"], list)
-                ):
-                    raise ValueError("invalid activity envelope")
-                for entry in record["entries"]:
-                    # Only the host creates append records. Provider messages are
-                    # full snapshots, including those from existing Docker images.
-                    if (
-                        not isinstance(entry, dict)
-                        or set(entry) != {"id", "kind", "text", "details"}
-                        or not all(isinstance(value, str) for value in entry.values())
-                        or entry["kind"] not in ("analysis", "agent", "tool", "details", "progress", "error")
-                    ):
-                        raise ValueError("invalid activity entry")
-                entries = record["entries"]
+                entries = redact(_activity_entries(text))
             except (ValueError, RecursionError):
                 text = "[details] Invalid activity record"
         else:
@@ -266,7 +282,7 @@ class DockerAgents:
                     return 0
                 text = "ARISU_ACTIVITY " + json.dumps({"version": 1, "entries": compact}, ensure_ascii=False)
             size = len(text.encode("utf-8")) + 1
-            if self.log_bytes + size > 16 * 1024 * 1024:
+            if self.log_bytes + size > MAX_OPERATION_LOG:
                 raise ValueError("operation log exceeds 16 MiB; stopped without truncating output")
             self.logs.append(text)
             self.log_bytes += size
@@ -411,10 +427,23 @@ class DockerAgents:
         def read():
             try:
                 total = 0
-                while line := process.stdout.readline(1024 * 1024 + 1):
+                while line := process.stdout.readline(MAX_LOG_LINE + 1):
                     size = len(line.encode("utf-8"))
-                    if size > 1024 * 1024:
-                        raise ValueError("operation log exceeds limit")
+                    if size > MAX_LOG_LINE:
+                        # A single Grok user event can contain multiple full MCP
+                        # results, including JSON escaping around each document.
+                        if args[-2:] != ["grok", "generate"] or not line.startswith("ARISU_ACTIVITY "):
+                            raise ValueError("operation log exceeds limit")
+                        if len(line) == MAX_LOG_LINE + 1 and not line.endswith("\n"):
+                            rest = process.stdout.readline(MAX_OPERATION_LOG - size + 1)
+                            size += len(rest.encode("utf-8"))
+                            line += rest
+                        if size > MAX_OPERATION_LOG:
+                            raise ValueError("operation log exceeds limit")
+                        try:
+                            _activity_entries(line, large_grok_results=True)
+                        except (ValueError, RecursionError):
+                            raise ValueError("operation log exceeds limit") from None
                     if receive:
                         receive(line)
                     if not line.startswith(("ARISU_RESULT ", "ARISU_AUDIT ", "ARISU_GROK_ERROR ", "ARISU_CODEX_ERROR ")):
@@ -422,7 +451,7 @@ class DockerAgents:
                     # Count new log content, not repeated full-text activity
                     # snapshots. Audits and final results retain their raw bound.
                     total += size
-                    if total > 16 * 1024 * 1024:
+                    if total > MAX_OPERATION_LOG:
                         raise ValueError("operation log exceeds limit")
             except (ValueError, OSError, KeyError, TypeError) as error:
                 errors.append(error)

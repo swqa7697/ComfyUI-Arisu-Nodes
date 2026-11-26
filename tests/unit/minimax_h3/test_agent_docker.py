@@ -610,6 +610,41 @@ def test_agent_update_preserves_working_image_and_settings_reject_unavailable_mo
     agents.log(framed(replacement))
     assert "append" not in json.loads(agents.logs[0].removeprefix("ARISU_ACTIVITY "))["entries"][0]
 
+    # Grok can return context and skill text together in one user event. Keep
+    # both complete across the Docker pipe, including escaped text near the limit.
+    excerpt = '分镜"\n' * 50000
+    results = [
+        {"type": "tool_result", "tool_use_id": call, "content": "\x01" * 640000 + excerpt + tail}
+        for call, tail in (("context", "Bearer private-token\ncontext end"), ("skill", "skill end"))
+    ]
+    wire_path = tmp_path / "grok-events"
+    script = "from pathlib import Path; import sys; sys.stdout.buffer.write(Path(sys.argv[1]).read_bytes())"
+    with monkeypatch.context() as local:
+        local.setattr(subprocess, "Popen", lambda *args, **kwargs: popen([sys.executable, "-c", script, str(wire_path)], **kwargs))
+        local.setattr(agents, "stream", DockerAgents.stream.__get__(agents))
+        local.setattr(agents, "require_current_image", lambda agent: None)
+        local.setattr(agents, "owned", lambda *args: False)
+        activity = runner.activity({"type": "user", "message": {"content": results}}, "grok")
+        assert len(activity.encode("utf-8")) > 8 * 1024 * 1024
+        wire_path.write_text(activity + '\nARISU_RESULT {"final":"complete"}\n', encoding="utf-8")
+        agents.begin_logs("grok", "generate", "full-read")
+        assert agents.generate("grok", tmp_path, tmp_path, {}, agents.stopping, time.monotonic() + 10) == "complete"
+        logged = json.loads(agents.read_logs()["lines"][-1].removeprefix("ARISU_ACTIVITY "))["entries"]
+        assert [item["details"] for item in logged] == [excerpt + "Bearer [redacted]\ncontext end", excerpt + "skill end"]
+
+        for args, oversized in (
+            (["grok", "login"], activity),
+            (["codex", "generate"], activity),
+            (["grok", "generate"], framed(tool, {**entry, "text": excerpt * 3})),
+            (["grok", "generate"], framed({**tool, "text": "Tool result", "details": excerpt * 3, "append": True})),
+            (["grok", "generate"], framed({**tool, "text": "Tool result", "id": excerpt * 3})),
+            (["grok", "generate"], framed({**tool, "text": "Tool result", "details": "x" * (16 * 1024 * 1024)})),
+            (["grok", "generate"], excerpt * 3),
+        ):
+            wire_path.write_text(oversized.replace("\n", "\\n") + "\n", encoding="utf-8")
+            with pytest.raises(ValueError, match="without truncating"):
+                agents.stream(args, time.monotonic() + 10, agents.stopping)
+
     # Native diagnostics, hidden audit/result records, and large physical lines
     # still stop and reap the process instead of silently truncating output.
     for prefix, character, length, repeats in (("plain ", "x", 65536, 257), ("ARISU_AUDIT ", "x", 65536, 257), ("", "雪", 350000, 1)):
@@ -1087,6 +1122,47 @@ def test_mcp_manifest_images_and_unlisted_or_escaping_assets(
             assert "ARISU_RESULT " in capsys.readouterr().out
         else:
             with pytest.raises(ValueError):
+                runner.generate("grok", {"model": "test"})
+            assert "ARISU_RESULT " not in capsys.readouterr().out
+
+    # Grok's inline MCP limit applies to the decoded text. Its streaming event
+    # can be much larger after the result is serialized inside another JSON string.
+    brief = "画面描述" * 5100 + "End of brief."
+    (root / "context.json").write_text(json.dumps({**manifest, "requirements": brief}, ensure_ascii=False), encoding="utf-8")
+    text = "\t" * (contract.MAX_TEXT - 3) + "雪"
+    (skill / "SKILL.md").write_text(text, encoding="utf-8")
+    with monkeypatch.context() as native:
+        native.setenv("GROK_MAX_MCP_OUTPUT_BYTES", "20000")
+        native.setattr(runner, "audit", lambda: reads)
+        script = (
+            "import json, os, sys\nfrom pathlib import Path\n"
+            f"sys.path.insert(0, {str(assets)!r})\nfrom mcp_server import call\n"
+            f"print(json.dumps({init!r}))\n"
+            "for name, args in [('get_context', {}), ('read_skill', {'path': 'SKILL.md'})]:\n"
+            f"    value = call(name, args, Path({str(root)!r}), Path({str(skill)!r}))['content'][0]['text']\n"
+            "    value = value.encode()[:int(os.environ['GROK_MAX_MCP_OUTPUT_BYTES'])].decode()\n"
+            "    reply = {'type': 'MCP', 'server_name': 'workbench', 'tool_name': name, 'output': {'OkayOutput': value}}\n"
+            "    block = {'type': 'tool_result', 'tool_use_id': name, 'content': json.dumps(reply, ensure_ascii=False)}\n"
+            "    print(json.dumps({'type': 'user', 'message': {'content': [block]}}, ensure_ascii=False))\n"
+            f"print(json.dumps({result!r}))"
+        )
+        native.setattr(grok_provider, "command", lambda *args: [sys.executable, "-c", script])
+        runner.generate("grok", {"model": "test"})
+        output = capsys.readouterr().out
+        replies = [
+            json.loads(entry["details"])["output"]["OkayOutput"]
+            for line in output.splitlines()
+            if line.startswith("ARISU_ACTIVITY ")
+            for entry in json.loads(line.removeprefix("ARISU_ACTIVITY "))["entries"]
+            if entry["text"] == "Tool result"
+        ]
+        assert json.loads(replies[0])["requirements"] == brief and replies[1] == text and "ARISU_RESULT " in output
+
+        # The larger allowance belongs to result text alone, including when
+        # an otherwise valid tool result comes with oversized unrelated metadata.
+        for event in (init, {"type": "user", "message": {"content": [{"type": "tool_result", "content": "small"}]}}):
+            script = f"import json; print(json.dumps(dict({event!r}, extra='x' * {contract.MAX_TEXT})))"
+            with pytest.raises(ValueError, match="agent event exceeds limit"):
                 runner.generate("grok", {"model": "test"})
             assert "ARISU_RESULT " not in capsys.readouterr().out
 

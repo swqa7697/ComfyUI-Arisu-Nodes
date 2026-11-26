@@ -244,6 +244,27 @@ def _tool_results(content: List[Dict[str, Any]]):
             raise EventValidationError("Grok malformed tool result content")
 
 
+def check_large_tool_result(event: Dict[str, Any], wire_bytes: int, envelope_limit: int):
+    """Allow extra wire bytes only for the text of a successful tool result."""
+    if event.get("type") != "user":
+        raise EventValidationError("agent event exceeds limit")
+    content = _content(event)
+    _tool_results(content)
+    for block in content:
+        result = block.get("content")
+        if isinstance(result, str):
+            texts = [result]
+        elif isinstance(result, list) and all(item["type"] == "text" for item in result):
+            texts = [item["text"] for item in result]
+        else:
+            raise EventValidationError("agent event exceeds limit")
+        # Grok emits UTF-8 JSON. Exclude just the escaped string contents,
+        # leaving the quotes, metadata and whitespace under the ordinary limit.
+        wire_bytes -= sum(len(json.dumps(text, ensure_ascii=False).encode("utf-8")) - 2 for text in texts)
+    if wire_bytes > envelope_limit:
+        raise EventValidationError("agent event exceeds limit")
+
+
 def _partial(value: Dict[str, Any]):
     """Validate display deltas; completed messages still authorize every tool call."""
     partial = value.get("event")

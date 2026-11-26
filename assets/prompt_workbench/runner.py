@@ -12,7 +12,7 @@ import sys
 import tempfile
 from typing import Any, Dict, Iterator, List, Tuple
 
-from contract import POLICY_REVISION, DirectorBudgetError, DirectorResponseError, context, final_response, read_text
+from contract import MAX_TEXT, POLICY_REVISION, DirectorBudgetError, DirectorResponseError, context, final_response, read_text
 from events import (
     ActivityStream,
     EventValidationError,
@@ -28,6 +28,8 @@ from runtime import Runtime, stop_on_signal
 
 BASIC = ("low", "medium", "high")
 PROMPT = "Read the selected skill and all video generation context through Workbench MCP, use the attached images and their matching notes, and return the MiniMax H3 prompt."
+EVENT_LIMIT = 1024 * 1024
+STREAM_LIMIT = 16 * 1024 * 1024
 
 
 def adapter_for(agent: str) -> Any:
@@ -50,10 +52,10 @@ def audit() -> List[Dict[str, Any]]:
     return records
 
 
-def pipe_lines(process: subprocess.Popen) -> Iterator[Tuple[str, str]]:
+def pipe_lines(process: subprocess.Popen, agent: str) -> Iterator[Tuple[str, bytes]]:
     """Drain ready pipe bytes without TextIO read-ahead or blocking on partial lines."""
     selector = selectors.DefaultSelector()
-    buffers: Dict[str, bytes] = {"stdout": b"", "stderr": b""}
+    buffers = {"stdout": bytearray(), "stderr": bytearray()}
     total = 0
     try:
         selector.register(process.stdout, selectors.EVENT_READ, "stdout")
@@ -62,24 +64,23 @@ def pipe_lines(process: subprocess.Popen) -> Iterator[Tuple[str, str]]:
             for key, _mask in selector.select(timeout=0.2):
                 chunk = os.read(key.fd, 65536)
                 total += len(chunk)
-                if total > 16 * 1024 * 1024:
+                if total > STREAM_LIMIT:
                     raise ValueError("agent event exceeds limit")
-                data = buffers[key.data] + chunk
-                lines = data.split(b"\n")
-                buffers[key.data] = lines.pop()
                 if not chunk:
                     selector.unregister(key.fileobj)
-                    if buffers[key.data]:
-                        lines.append(buffers[key.data])
-                    buffers[key.data] = b""
-                for line in lines:
-                    if len(line) > 1024 * 1024:
+                buffer = buffers[key.data]
+                # A Grok event can wrap multiple full, JSON-escaped MCP results.
+                limit = STREAM_LIMIT if agent == "grok" and key.data == "stdout" else EVENT_LIMIT
+                parts = chunk.split(b"\n")
+                for index, part in enumerate(parts):
+                    buffer.extend(part)
+                    if len(buffer) > limit:
                         raise ValueError("agent event exceeds limit")
-                    yield key.data, line.decode("utf-8")
-                if len(buffers[key.data]) > 1024 * 1024:
-                    raise ValueError("agent event exceeds limit")
+                    if index < len(parts) - 1 or (not chunk and buffer):
+                        yield key.data, bytes(buffer)
+                        buffer.clear()
             # Keep policy audits running even when both pipes are idle.
-            yield "", ""
+            yield "", b""
     finally:
         selector.close()
 
@@ -121,20 +122,23 @@ def generate(agent: str, options: Dict[str, Any]):
             stdin=prompt_input,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
+            # Grok otherwise spills MCP replies above 20,000 bytes to a session file.
+            env={**os.environ, "GROK_MAX_MCP_OUTPUT_BYTES": str(MAX_TEXT)} if agent == "grok" else None,
             text=True,
             start_new_session=True,
         )
     display = ActivityStream()
-    lines = pipe_lines(process)
+    lines = pipe_lines(process, agent)
     pending_failure = ""
     event = None
     try:
-        for source, line in lines:
+        for source, raw in lines:
             if not source:
                 audit()
                 for rendered in display.flush(agent):
                     print(rendered, flush=True)
                 continue
+            line = raw.decode("utf-8")
             if source == "stderr":
                 # A carriage return from the CLI must stay inside its prefixed line.
                 print("[cli] " + line.rstrip().replace("\r", " "), flush=True)
@@ -148,6 +152,9 @@ def generate(agent: str, options: Dict[str, Any]):
                     raise EventValidationError("Agent emitted events after completion")
                 if not isinstance(event, dict):
                     raise EventValidationError("Malformed agent event envelope")
+                if len(raw) > EVENT_LIMIT:
+                    # Only Grok stdout can pass the pipe's ordinary frame limit.
+                    adapter.check_large_tool_result(event, len(raw), EVENT_LIMIT)
                 if director and agent == "grok" and event.get("type") in ("error", "turn.failed") and reports_token_limit(event):
                     raise DirectorBudgetError("Director task exceeded the provider context or output budget")
                 value = adapter.event(event)
