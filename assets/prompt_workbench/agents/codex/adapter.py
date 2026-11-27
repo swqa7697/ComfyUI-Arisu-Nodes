@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
-from typing import Any, Dict, List, Union
+from typing import Any, Dict, List, Optional, Union
 
 from contract import POLICY_REVISION, read_text
 from events import EventValidationError, ProviderNotice, ProviderResultError, check_policy_hook, failure_reason
@@ -102,7 +102,7 @@ def _message(envelope: Any) -> str:
     return message
 
 
-def event(value: Dict[str, Any]) -> Union[str, ProviderNotice]:
+def event(value: Dict[str, Any]) -> Optional[Union[str, ProviderNotice]]:
     """Validate the event and return completed assistant text or a safe progress notice."""
     kind = value.get("type")
     if kind in ("error", "turn.failed"):
@@ -117,7 +117,7 @@ def event(value: Dict[str, Any]) -> Union[str, ProviderNotice]:
                 return ProviderNotice(f"Codex is reconnecting (attempt {attempt} of {limit}).")
         raise ProviderResultError(failure_reason(value, message[:4096]))
     if kind in ("thread.started", "turn.started", "turn.completed"):
-        return ""
+        return None
     if kind not in ("item.started", "item.updated", "item.completed"):
         raise ValueError("unsupported Codex event: " + str(kind))
     item = value.get("item", {})
@@ -132,13 +132,21 @@ def event(value: Dict[str, Any]) -> Union[str, ProviderNotice]:
         if message.startswith("Falling back from WebSockets to HTTPS transport."):
             return ProviderNotice("Codex is switching from WebSockets to HTTPS.")
         return ProviderNotice("Codex CLI reported a warning.")
-    if item_type in ("reasoning", "agent_message"):
-        return item.get("text", "") if kind == "item.completed" and item_type == "agent_message" else ""
+    if item_type == "agent_message":
+        if kind != "item.completed":
+            return ""
+        text = item.get("text")
+        if not isinstance(text, str):
+            raise EventValidationError("Codex malformed assistant text")
+        return text
+    if item_type == "reasoning":
+        return None
     if item_type == "mcp_tool_call":
         if item.get("server") != "workbench" or not authorize(item.get("tool", ""), item.get("arguments", {})):
             raise ValueError("Codex attempted a prohibited MCP call")
         if item.get("status") == "failed" or item.get("error") or (item.get("result") or {}).get("isError"):
             raise ValueError("Workbench reader failed")
+        # A tool call continues the turn. Any earlier assistant text preceded its result.
         return ""
     raise ValueError("Codex attempted a prohibited tool: " + str(item_type))
 

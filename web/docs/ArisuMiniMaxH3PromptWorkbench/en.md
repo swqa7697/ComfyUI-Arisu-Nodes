@@ -107,8 +107,10 @@ and login logs. Device-login URLs open directly in your browser.
 analysis directly, with context metadata, tool arguments, and loaded skill files in collapsed
 details. Expand a tool row to inspect its text. Repeated provider updates refresh the same row,
 preserving expanded details. Scroll up to pause following new output, or choose
-**Resume auto-scroll**. The **Output prompt** tab lets you edit the latest result and
-**Apply to Workbench**. You can also use **Apply output** directly on the node.
+**Resume auto-scroll**. The **Output prompt** tab preserves the text and indentation
+inside the agent’s single `markdown`, `text`, or unlabeled code block. Backtick and
+tilde fences are supported. Any introduction or closing remarks stay in Activity.
+Edit the prompt and choose **Apply to Workbench**, or use **Apply output** directly on the node.
 Generation sends a success or failure notification without opening a dialog.
 Starting another generation clears the previous output immediately. Activity and unapplied
 output stay outside the workflow and node data; only the node's saved fields, including

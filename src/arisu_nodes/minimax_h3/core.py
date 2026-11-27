@@ -1036,11 +1036,12 @@ def finalized_markdown(text: str) -> str:
     match = re.fullmatch(r"\s*```(?:markdown|text)?[ \t]*\r?\n([\s\S]*?)\r?\n```\s*", text)
     if "ARISU_POLICY_REFUSAL" in text:
         raise ValueError("request refused by the prompt-only policy")
-    if not match or not match[1].strip() or "```" in match[1]:
+    content = match[1] if match else ""
+    if not content.strip() or "```" in content or re.search(r"(?:^|(?<=\r))[ \t]*~{3,}", content, re.MULTILINE):
         raise ValueError("agent must return one nonempty fenced markdown block")
-    if len(match[1]) > 65536:
+    if len(content) > 65536:
         raise ValueError("agent prompt is too large")
-    return match[1].strip()
+    return content
 
 
 def workbench_options(value: Any) -> Dict[str, Any]:

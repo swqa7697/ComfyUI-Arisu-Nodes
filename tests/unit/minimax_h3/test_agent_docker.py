@@ -95,6 +95,8 @@ def test_generation_contract_prunes_side_effects_and_parses_only_final_markdown(
         "```python\nprint(1)\n```",
         "ARISU_POLICY_REFUSAL",
         "```markdown\nx\n```\n```markdown\ny\n```",
+        "```text\n~~~markdown\nOther draft.\n~~~\n```",
+        "~~~text\nRaw provider fence.\n~~~",
     ):
         with pytest.raises(ValueError):
             finalized_markdown(text)
@@ -149,8 +151,15 @@ def test_agent_update_preserves_working_image_and_settings_reject_unavailable_mo
     with monkeypatch.context() as generation:
         generation.setattr(agents, "require_current_image", lambda agent: None)
         for agent, marker, expected in (
+            ("codex", "ARISU_WORKBENCH_ERROR format", "nonempty fenced prompt"),
+            ("grok", "ARISU_WORKBENCH_ERROR length", "65,536-character limit"),
+            ("grok", "ARISU_WORKBENCH_ERROR refused", "request refused by the prompt-only policy"),
+            ("codex", "ARISU_WORKBENCH_ERROR private-unknown", "Workbench response failed validation"),
             ("codex", 'ARISU_DIRECTOR_ERROR {"reason":"format"}', "invalid format"),
             ("codex", 'ARISU_DIRECTOR_ERROR {"reason":"json"}', "malformed JSON"),
+            ("codex", 'ARISU_DIRECTOR_ERROR {"reason":"structure"}', "segment object"),
+            ("grok", 'ARISU_DIRECTOR_ERROR {"reason":"skill"}', "skill from the catalog"),
+            ("grok", 'ARISU_DIRECTOR_ERROR {"reason":"skill_unread"}', "did not read"),
             ("grok", 'ARISU_DIRECTOR_ERROR {"reason":"budget"}', "exceeded"),
             ("codex", "ARISU_DIRECTOR_INCOMPLETE", "incomplete or exceeds"),
             ("codex", "ARISU_CODEX_ERROR auth", "(?i)authenticat|sign in|log in"),
@@ -167,7 +176,7 @@ def test_agent_update_preserves_working_image_and_settings_reject_unavailable_mo
             generation.setattr(agents, "stream", failed_stream)
             with pytest.raises(ValueError, match=expected) as failure:
                 agents.generate(agent, tmp_path, tmp_path, {}, agents.stopping, time.monotonic() + 1)
-            if marker.startswith(("ARISU_CODEX_ERROR", "ARISU_GROK_ERROR")):
+            if marker.startswith(("ARISU_CODEX_ERROR", "ARISU_GROK_ERROR", "ARISU_WORKBENCH_ERROR")):
                 assert agents.read_logs()["lines"][-1] == "[error] " + str(failure.value)
                 assert "private-" not in str(agents.read_logs())
 
@@ -972,7 +981,11 @@ def test_mcp_manifest_images_and_unlisted_or_escaping_assets(
         }
         for row in reads
     ]
-    assistant = {"type": "item.completed", "item": {"type": "agent_message", "text": "```text\nA quiet dolly shot.\n```"}}
+    prompt_body = "    雪中缓推。\r\n  Hold the shot. 🎬  \r"
+    canonical_prompt = f"```text\n{prompt_body}\r\n```"
+    codex_reply = f"The draft uses ``` below.\r\n\r\n```\r\n{prompt_body}\r\n```\r\n```Ready for review```."
+    assistant = {"type": "item.completed", "item": {"type": "agent_message", "text": codex_reply}}
+    empty_message = {"type": "item.completed", "item": {"type": "agent_message", "text": ""}}
     complete = {"type": "turn.completed"}
     reconnect = {"type": "error", "message": "Reconnecting... 1/5 (private-network-details: unexpected status 401)"}
     waiting = {"type": "error", "message": "Reconnecting... waiting for network (private-network-details: token limit)"}
@@ -990,19 +1003,9 @@ def test_mcp_manifest_images_and_unlisted_or_escaping_assets(
         monkeypatch.setattr(provider, "command", lambda *args: [sys.executable, "-c", script, wire, str(exit_code)])
 
     for events, accepted in (
-        ([reconnect, waiting, warning, deprecation, *tool_reads, assistant, complete], True),
-        (
-            [{"type": "item.completed", "item": {"type": "agent_message", "text": '```json\n{"prompt":"A quiet room."}\n```'}}, complete],
-            False,
-        ),
-        (
-            [
-                {"type": "item.completed", "item": {"type": "agent_message", "text": "Here is the prompt.\n" + assistant["item"]["text"]}},
-                complete,
-            ],
-            False,
-        ),
+        ([reconnect, waiting, warning, deprecation, empty_message, *tool_reads, assistant, complete], True),
         ([assistant], False),
+        ([assistant, {"type": "item.completed", "item": {"type": "agent_message"}}, complete], False),
         ([assistant, reconnect], False),
         ([assistant, complete, assistant], False),
         ([reconnect, prohibited, assistant, complete], False),
@@ -1012,7 +1015,6 @@ def test_mcp_manifest_images_and_unlisted_or_escaping_assets(
         ([{**warning, "item": {**warning["item"], "message": {"details": "private-warning"}}}, assistant, complete], False),
         ([{"type": "control_request"}], False),
         ([{"type": "item.completed", "item": {"type": "image_view", "path": "/inputs/image.webp"}}], False),
-        ([{"type": "item.completed", "item": {"type": "agent_message", "text": "ARISU_POLICY_REFUSAL"}}, complete], False),
     ):
         codex_stream(events)
         if accepted:
@@ -1020,7 +1022,8 @@ def test_mcp_manifest_images_and_unlisted_or_escaping_assets(
             output = capsys.readouterr().out
             assert "private-" not in output
             lines = output.splitlines()
-            assert json.loads(lines[-1].removeprefix("ARISU_RESULT ")) == {"final": assistant["item"]["text"]}
+            final = json.loads(lines[-1].removeprefix("ARISU_RESULT "))["final"]
+            assert final == canonical_prompt and finalized_markdown(final) == prompt_body
             assert json.loads(lines[-2].removeprefix("ARISU_AUDIT ")) == runner.audit()
             entries = [entry for line in lines[:-2] for entry in json.loads(line.removeprefix("ARISU_ACTIVITY "))["entries"]]
             progress = [entry["text"].lower() for entry in entries if entry["kind"] == "progress"]
@@ -1044,8 +1047,26 @@ def test_mcp_manifest_images_and_unlisted_or_escaping_assets(
         cli.setattr(runner, "Runtime", nullcontext)
         cli.setattr(runner.signal, "signal", lambda *args: None)
         cli.setattr(sys, "argv", ["runner.py", "codex", "generate"])
+        for reply, reason in (
+            (prompt_body, "format"),
+            ('```json\n{"prompt":"A quiet room."}\n```', "format"),
+            ("```text\n" + "x" * 65537 + "\n```", "length"),
+            ("ARISU_POLICY_REFUSAL", "refused"),
+            (canonical_prompt + "\nARISU_POLICY_REFUSAL", "refused"),
+        ):
+            codex_stream([{"type": "item.completed", "item": {"type": "agent_message", "text": reply}}, complete])
+            cli.setattr(sys, "stdin", io.TextIOWrapper(io.BytesIO(b'{"model":"test"}')))
+            with pytest.raises(SystemExit) as stopped:
+                runner.main()
+            output = capsys.readouterr().out
+            assert stopped.value.code == 1 and output.splitlines()[-1] == "ARISU_WORKBENCH_ERROR " + reason
+            assert "ARISU_RESULT " not in output
         rate_limit = {"type": "error", "message": "unexpected status 429 Too Many Requests: private-team"}
         for events, exit_code, code in (
+            ([assistant, empty_message, complete], 0, "empty_response"),
+            ([assistant, {**empty_message, "type": "item.started"}, complete], 0, "empty_response"),
+            ([assistant, *tool_reads, complete], 0, "empty_response"),
+            ([empty_message, failed_turn("unexpected status 401 Unauthorized: private-body")], 1, "auth"),
             ([assistant, unknown, failed_turn("unexpected status 401 Unauthorized: private-body")], 1, "auth"),
             ([rate_limit], 1, "rate_limit"),
             ([rate_limit, failed_turn("private-unknown-error")], 1, "rate_limit"),
@@ -1088,11 +1109,12 @@ def test_mcp_manifest_images_and_unlisted_or_escaping_assets(
         "tools": ["search_tool", "use_tool"],
         "mcp_servers": [{"name": "workbench", "status": "pending"}],
     }
-    result = {"type": "result", "subtype": "success", "result": "```text\nA quiet dolly shot.\n```"}
+    result = {"type": "result", "subtype": "success", "result": f"草稿如下。\r~~~~ markdown\r{prompt_body}\r~~~~~\r完成。"}
+    interim = {"type": "assistant", "message": {"content": [{"type": "text", "text": "```text\nA preliminary draft.\n```"}]}}
     for status in ("pending", "connected", "failed", "disabled", "needs-auth", "unknown", None):
         startup = {**init, "mcp_servers": [{"name": "workbench", "status": status}], "extra": {"future": True}}
         if status in ("pending", "connected"):
-            assert grok_provider.event(startup) == ""
+            assert grok_provider.event(startup) is None
         else:
             with pytest.raises(ValueError, match="Grok .*MCP"):
                 grok_provider.event(startup)
@@ -1100,7 +1122,10 @@ def test_mcp_manifest_images_and_unlisted_or_escaping_assets(
         with pytest.raises(ValueError, match="Grok .*MCP"):
             grok_provider.event({**init, "mcp_servers": servers})
     for events, records, accepted in (
-        ([init, result], reads, True),
+        ([init, interim, result], reads, True),
+        ([init, interim, {"type": "result", "text": result["result"]}], reads, True),
+        ([init, interim, {**result, "result": "", "text": result["result"]}], reads, False),
+        ([init, interim, {"type": "result", "subtype": "success"}], reads, False),
         ([init], reads, False),
         ([init, result, result], reads, False),
         ([init, result], [], False),
@@ -1119,11 +1144,34 @@ def test_mcp_manifest_images_and_unlisted_or_escaping_assets(
         if accepted:
             runner.generate("grok", {"model": "test", "context_window": 500000})
             assert grok_command.call_args.kwargs == {"context_window": 500000}
-            assert "ARISU_RESULT " in capsys.readouterr().out
+            final = json.loads(capsys.readouterr().out.splitlines()[-1].removeprefix("ARISU_RESULT "))["final"]
+            assert final == canonical_prompt and finalized_markdown(final) == prompt_body
         else:
             with pytest.raises(ValueError):
                 runner.generate("grok", {"model": "test"})
             assert "ARISU_RESULT " not in capsys.readouterr().out
+
+    # Both adapters use the same extraction contract. The limit counts prompt
+    # characters, and the policy refusal applies to the entire provider response.
+    largest_prompt = "雪" * 65536
+    assert contract.final_response(f"Here it is.\n```text\n{largest_prompt}\n```\nDone.") == largest_prompt
+    for rejected in (
+        "```text\n" + largest_prompt + "雪\n```",
+        "Here is the prompt:\n```text\n \t\n```",
+        "Here is the prompt:\n```text\nNo closing fence.",
+        "```text\nFirst draft.\n```\nRevised:\n```markdown\nSecond draft.\n```",
+        "```text\nStart.\n```markdown\nInner block.\n```\nEnd.\n```",
+        "```text\nA literal ``` in the prompt.\n```",
+        f"~~~markdown\n{canonical_prompt}\n~~~",
+        f"{canonical_prompt}\n~~~text\nAnother draft.\n~~~",
+        "~~~~text\nToo short.\n~~~",
+        "~~~text\nMismatched delimiters.\n```",
+    ):
+        with pytest.raises(ValueError):
+            contract.final_response(rejected)
+    for refused in ("ARISU_POLICY_REFUSAL\n" + canonical_prompt, canonical_prompt + "\nARISU_POLICY_REFUSAL"):
+        with pytest.raises(ValueError, match="refused"):
+            contract.final_response(refused)
 
     # Grok's inline MCP limit applies to the decoded text. Its streaming event
     # can be much larger after the result is serialized inside another JSON string.
@@ -1224,14 +1272,38 @@ def test_mcp_manifest_images_and_unlisted_or_escaping_assets(
         wire = json.dumps(init) + "\n" + json.dumps(message)
         director.setattr(grok_provider, "command", lambda *args: [sys.executable, "-c", "print(" + repr(wire) + ")"])
         director.setattr(runner, "audit", lambda: reads)
-        with pytest.raises(ValueError, match="writing skill"):
+        with pytest.raises(runner.DirectorResponseError) as unread:
             runner.generate("grok", {"model": "test"})
+        assert unread.value.reason == "skill_unread" and "ARISU_RESULT " not in capsys.readouterr().out
         director.setattr(runner, "audit", lambda: [*reads, {"tool": "read_skill", "arguments": {"path": path}}])
+        with director.context() as invalid:
+            invalid.setattr(runner, "Runtime", nullcontext)
+            invalid.setattr(runner.signal, "signal", lambda *args: None)
+            invalid.setattr(sys, "argv", ["runner.py", "grok", "generate"])
+            for task, draft, reason in (
+                ("plan", [], "structure"),
+                ("plan", {"segments": []}, "structure"),
+                ("refine", {"segment": []}, "structure"),
+                ("plan", {"segments": [{"skill": []}]}, "skill"),
+                ("refine", {"segment": {"skill": {"id": "base"}}}, "skill"),
+                ("plan", {"segments": [{"skill": ""}]}, "skill"),
+                ("refine", {"segment": {"skill": "unknown"}}, "skill"),
+            ):
+                task_context = {"assets": [], "director": {"task": task, "writing_skills": [{"id": "base", "path": path}]}}
+                invalid.setattr(runner, "context", lambda task_context=task_context: task_context)
+                wire = json.dumps({**result, "result": "```json\n" + json.dumps(draft) + "\n```"})
+                invalid.setattr(grok_provider, "command", lambda *args, wire=wire: [sys.executable, "-c", "print(" + repr(wire) + ")"])
+                invalid.setattr(sys, "stdin", io.TextIOWrapper(io.BytesIO(b'{"model":"test"}')))
+                with pytest.raises(runner.DirectorResponseError):
+                    runner.main()
+                output = capsys.readouterr().out
+                assert json.loads(output.splitlines()[-1].removeprefix("ARISU_DIRECTOR_ERROR ")) == {"reason": reason}, draft
+                assert "ARISU_RESULT " not in output
         # The host receives the complete JSON even when the provider adds commentary.
         for agent, selected in (("grok", grok_provider), ("codex", provider)):
             director.setattr(runner, "adapter_for", lambda agent, selected=selected: selected)
             for label, before, after in (
-                ("json", "I have the Director brief and library IDs.\n\n", ""),
+                ("json", "I used ``` for the plan below.\n\n", "\n```Done```."),
                 ("text", "", "\nThat completes the plan."),
                 ("markdown", "分镜草稿如下。\r\n", "\r\n请审阅。"),
                 ("", "", ""),
@@ -1361,7 +1433,7 @@ def test_mcp_manifest_images_and_unlisted_or_escaping_assets(
         partial("content_block_stop", index=1),
         message_stop,
     ):
-        assert grok_provider.event(item) == ""
+        assert grok_provider.event(item) is None
         assert display.render(item, "grok") is None
     with pytest.raises(runner.EventValidationError):
         grok_provider.event(

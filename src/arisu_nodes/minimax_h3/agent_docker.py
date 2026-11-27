@@ -446,7 +446,9 @@ class DockerAgents:
                             raise ValueError("operation log exceeds limit") from None
                     if receive:
                         receive(line)
-                    if not line.startswith(("ARISU_RESULT ", "ARISU_AUDIT ", "ARISU_GROK_ERROR ", "ARISU_CODEX_ERROR ")):
+                    if not line.startswith(
+                        ("ARISU_RESULT ", "ARISU_AUDIT ", "ARISU_GROK_ERROR ", "ARISU_CODEX_ERROR ", "ARISU_WORKBENCH_ERROR ")
+                    ):
                         size = self.log(line.rstrip("\r\n"))
                     # Count new log content, not repeated full-text activity
                     # snapshots. Audits and final results retain their raw bound.
@@ -589,6 +591,14 @@ class DockerAgents:
                 reason = line.removeprefix(error_marker).strip()
                 response_error = PROVIDER_FAILURES.get(reason, PROVIDER_FAILURES["execution"]).format(provider=agent.capitalize())
                 self.log("[error] " + response_error)
+            if line.startswith("ARISU_WORKBENCH_ERROR "):
+                reason = line.removeprefix("ARISU_WORKBENCH_ERROR ").strip()
+                response_error = {
+                    "format": "Expected one nonempty fenced prompt. Use a text, markdown, or unlabeled fence. See the agent response in Generation Activity.",
+                    "length": "The generated prompt exceeds the 65,536-character limit.",
+                    "refused": "Workbench request refused by the prompt-only policy.",
+                }.get(reason, "The Workbench response failed validation. See Generation Activity.")
+                self.log("[error] " + response_error)
             if line.rstrip() == "ARISU_DIRECTOR_INCOMPLETE":
                 incomplete = True
             if line.startswith("ARISU_DIRECTOR_ERROR "):
@@ -596,6 +606,9 @@ class DockerAgents:
                 response_error = {
                     "format": "The Director response has an invalid format. Expected one JSON fence; text, markdown, or unlabeled fences are also accepted. See the agent response in the logs.",
                     "json": "The Director response contains incomplete or malformed JSON. See the agent response in the logs; a token limit has not been confirmed.",
+                    "structure": "The Director response must contain a nonempty list of segment objects for a plan, or a segment object for a revision.",
+                    "skill": "Each Director segment must name a writing skill from the catalog for this task.",
+                    "skill_unread": "The Director agent did not read every writing skill selected in the draft.",
                     "budget": "The Director task exceeded the provider context/output limit or the host's 256 KiB response limit. See the logs for the reported limit.",
                 }.get(reason, "The Director response failed validation. See the logs.")
             if line.startswith("ARISU_RESULT "):

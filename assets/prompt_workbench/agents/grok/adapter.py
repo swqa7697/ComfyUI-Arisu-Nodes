@@ -206,7 +206,7 @@ def _content(value: Dict[str, Any]) -> List[Dict[str, Any]]:
     return content
 
 
-def _assistant(content: List[Dict[str, Any]]) -> str:
+def _assistant(content: List[Dict[str, Any]]):
     for block in content:
         kind = block["type"]
         if kind == "tool_use":
@@ -221,7 +221,6 @@ def _assistant(content: List[Dict[str, Any]]) -> str:
                 raise EventValidationError("Grok malformed assistant text")
         else:
             raise EventValidationError("Grok unsupported assistant content")
-    return "\n".join(block["text"] for block in content if block["type"] == "text")
 
 
 def _tool_results(content: List[Dict[str, Any]]):
@@ -326,7 +325,10 @@ def _result(value: Dict[str, Any]) -> str:
     if stop in ("refusal", "cancelled"):
         raise ProviderResultError(stop)
     if not failed and subtype in (None, "success"):
-        if result is None:
+        # Older success frames carried the final answer in text. An explicit
+        # result, including an empty string, takes precedence.
+        result = value.get("result", value.get("text", ""))
+        if not isinstance(result, str):
             raise EventValidationError("Grok malformed generation result")
         return result
     # Grok puts service errors in errors[], sometimes without the HTTP status.
@@ -336,22 +338,23 @@ def _result(value: Dict[str, Any]) -> str:
     raise ProviderResultError(failure_reason(value, detail))
 
 
-def event(value: Dict[str, Any]) -> str:
-    """Validate recognized events without treating extra metadata as actions."""
+def event(value: Dict[str, Any]) -> Optional[str]:
+    """Validate streamed activity and take the answer from the terminal result."""
     kind = value.get("type")
     if not isinstance(kind, str):
         raise EventValidationError("Grok malformed event type")
     if kind == "system" and value.get("subtype") == "init":
         _startup(value)
-        return ""
+        return None
     if kind == "stream_event":
         _partial(value)
-        return ""
+        return None
     if kind == "assistant":
-        return _assistant(_content(value))
+        _assistant(_content(value))
+        return None
     if kind == "user":
         _tool_results(_content(value))
-        return ""
+        return None
     if kind == "result":
         return _result(value)
     raise EventValidationError("Grok unsupported event")

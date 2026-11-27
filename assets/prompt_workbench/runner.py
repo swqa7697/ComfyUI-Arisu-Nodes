@@ -12,7 +12,16 @@ import sys
 import tempfile
 from typing import Any, Dict, Iterator, List, Tuple
 
-from contract import MAX_TEXT, POLICY_REVISION, DirectorBudgetError, DirectorResponseError, context, final_response, read_text
+from contract import (
+    MAX_TEXT,
+    POLICY_REVISION,
+    DirectorBudgetError,
+    DirectorResponseError,
+    WorkbenchResponseError,
+    context,
+    final_response,
+    read_text,
+)
 from events import (
     ActivityStream,
     EventValidationError,
@@ -27,7 +36,10 @@ from gate import AUDIT
 from runtime import Runtime, stop_on_signal
 
 BASIC = ("low", "medium", "high")
-PROMPT = "Read the selected skill and all video generation context through Workbench MCP, use the attached images and their matching notes, and return the MiniMax H3 prompt."
+PROMPT = (
+    "Read the selected skill and all video generation context through Workbench MCP, use the attached images and their matching notes, "
+    "and return the finished MiniMax H3 prompt in one text fence."
+)
 EVENT_LIMIT = 1024 * 1024
 STREAM_LIMIT = 16 * 1024 * 1024
 
@@ -181,7 +193,7 @@ def generate(agent: str, options: Dict[str, Any]):
             if rendered is not None:
                 print(rendered, flush=True)
             completed = adapter.is_complete(event)
-            if value:
+            if value is not None:
                 final = value
         status = process.wait()
         if pending_failure:
@@ -192,6 +204,8 @@ def generate(agent: str, options: Dict[str, Any]):
                 event = {"exit_code": status}
                 raise ProviderResultError("execution" if completed else "incomplete")
             raise ValueError("agent execution failed")
+        if not final.strip():
+            raise ProviderResultError("empty_response")
         content = final_response(final, director=bool(director))
         records = audit()
         if not any(r["tool"] == "get_context" for r in records) or not any(
@@ -205,16 +219,24 @@ def generate(agent: str, options: Dict[str, Any]):
             except (ValueError, RecursionError):
                 raise DirectorResponseError("json") from None
             if not isinstance(payload, dict):
-                raise ValueError("Director response must be a structured plan or replacement.")
+                raise DirectorResponseError("structure")
             segments = payload.get("segments") if director["task"] == "plan" else [payload.get("segment")]
             if not isinstance(segments, list) or not segments or not all(isinstance(s, dict) for s in segments):
-                raise ValueError("Director response is incomplete.")
+                raise DirectorResponseError("structure")
             paths = {row["id"]: row["path"] for row in director["writing_skills"]}
+            required_paths = set()
+            for segment in segments:
+                skill = segment.get("skill")
+                if not isinstance(skill, str) or skill not in paths:
+                    raise DirectorResponseError("skill")
+                required_paths.add(paths[skill])
             read = {r["arguments"].get("path") for r in records if r["tool"] == "read_skill"}
-            if any(paths.get(s.get("skill")) not in read for s in segments):
-                raise ValueError("Director did not read each selected writing skill.")
-            # Keep surrounding commentary out of the host's draft validator.
-            final = "```json\n" + content + "\n```"
+            if not required_paths.issubset(read):
+                raise DirectorResponseError("skill_unread")
+        label = "json" if director else "text"
+        # Keep a trailing CR in the draft distinct from the closing line break.
+        newline = "\r\n" if content.endswith("\r") else "\n"
+        final = f"```{label}\n{content}{newline}```"
         print("ARISU_AUDIT " + json.dumps(records), flush=True)
         print("ARISU_RESULT " + json.dumps({"final": final}, ensure_ascii=False), flush=True)
     except ProviderResultError:
@@ -253,6 +275,9 @@ def main():
                 generate(agent, json.loads(sys.stdin.buffer.read(65536)))
             except ProviderResultError as error:
                 print("ARISU_" + agent.upper() + "_ERROR " + str(error), flush=True)
+                raise SystemExit(1) from None
+            except WorkbenchResponseError as error:
+                print("ARISU_WORKBENCH_ERROR " + str(error), flush=True)
                 raise SystemExit(1) from None
             except DirectorBudgetError:
                 print('ARISU_DIRECTOR_ERROR {"reason": "budget"}', flush=True)

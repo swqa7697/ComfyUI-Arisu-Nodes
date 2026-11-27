@@ -7,7 +7,7 @@ import os
 import re
 import stat
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Optional, Tuple
 
 POLICY_REVISION = 7
 REFUSAL = "ARISU_POLICY_REFUSAL"
@@ -15,6 +15,13 @@ INPUTS = Path("/inputs")
 SKILL = Path("/skill")
 TOOLS = ("get_context", "read_skill")
 MAX_TEXT = 1024 * 1024
+# Keep match offsets in the original string. Unicode line separators can be
+# part of the draft itself, including inside JSON strings.
+FENCE_LINE = re.compile(r"(?:^|(?<=\r))[ \t]*(`{3,}|~{3,})([^\r\n]*)(?:\r\n?|\n|\Z)", re.MULTILINE)
+
+
+class WorkbenchResponseError(ValueError):
+    """Report a fixed prompt validation or Workbench policy error code to the host."""
 
 
 class DirectorBudgetError(ValueError):
@@ -137,21 +144,36 @@ def skill_text(relative: str, root: Path = SKILL) -> str:
     return read_text(path)
 
 
+def _fenced_body(value: str, labels: Tuple[str, ...]) -> Optional[str]:
+    """Read exactly one complete block and exclude only its delimiter lines."""
+    # A backtick in a backtick fence's info string makes it an inline mention.
+    fences = (m for m in FENCE_LINE.finditer(value) if m[1][0] != "`" or "`" not in m[2])
+    opening = next(fences, None)
+    closing = next(fences, None)
+    if opening is None or closing is None or next(fences, None) is not None:
+        return None
+    if opening[2].strip(" \t") not in labels or closing[2].strip(" \t") or not closing[1].startswith(opening[1]):
+        return None
+    body = value[opening.end() : closing.start()].removesuffix("\n").removesuffix("\r")
+    return body if body.strip() and "```" not in body else None
+
+
 def final_response(value: str, director: bool = False) -> str:
-    """Validate stream output and return the contents of its single fence verbatim."""
-    if not isinstance(value, str) or REFUSAL in value:
-        raise ValueError("request refused by the prompt-only policy")
+    """Extract the single draft from provider output, preserving its body verbatim."""
+    if not isinstance(value, str):
+        value = ""
+    if REFUSAL in value:
+        raise WorkbenchResponseError("refused")
+    labels = ("json", "markdown", "text", "") if director else ("markdown", "text", "")
+    content = _fenced_body(value.removeprefix("\ufeff").strip(), labels)
+    if content is None:
+        if director:
+            raise DirectorResponseError("format")
+        raise WorkbenchResponseError("format")
     if director:
-        if value.count("```") != 2:
-            raise DirectorResponseError("format")
-        match = re.search(r"^[ \t]*```(?:json|markdown|text)?[ \t]*\r?\n([\s\S]*?)\r?\n[ \t]*```[ \t]*\r?$", value, re.MULTILINE)
-        if not match or not match[1].strip():
-            raise DirectorResponseError("format")
-        size = len(match[1].encode("utf-8"))
+        size = len(content.encode("utf-8"))
         if size > 256 * 1024:
             raise DirectorBudgetError(f"Director response is {size} UTF-8 bytes; the output limit is 262144 bytes.")
-        return match[1]
-    match = re.fullmatch(r"\s*```(?:markdown|text)?[ \t]*\r?\n([\s\S]*?)\r?\n```\s*", value)
-    if not match or not match[1].strip() or "```" in match[1] or len(match[1]) > 65536:
-        raise ValueError("agent must return one nonempty markdown or plain-text fence")
-    return match[1]
+    elif len(content) > 65536:
+        raise WorkbenchResponseError("length")
+    return content
