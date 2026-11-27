@@ -42,9 +42,14 @@ def description(root: str, path: str, source: Source) -> Dict[str, Any]:
     take = None
     directed = director_take_id(posixpath.dirname(path)) if root == "output" else None
     if record is not None:
-        take = {key: record.get(key) for key in ("take", "origin", "segment", "predecessor", "transition")}
+        take = {key: record.get(key) for key in ("take", "origin", "segment", "predecessor", "transition", "identity", "created")}
+        if not isinstance(take["created"], str) or len(take["created"]) > 40:
+            take["created"] = None
     elif directed:
         take = {"take": directed, "origin": "director", "segment": None, "predecessor": None, "transition": None}
+    if directed and source.recorded_segment and take and take["segment"] in (None, source.recorded_segment["segment"]):
+        take["segment"] = source.recorded_segment["segment"]
+        take["recorded_segment"] = source.recorded_segment
     result.update(
         frames=video.frames,
         fps=[video.fps.numerator, video.fps.denominator],

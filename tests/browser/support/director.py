@@ -346,15 +346,16 @@ def inspect_project_render(page: Page, server: FixtureServer, director_id: str):
         subfolder = f"{project}/director/{key}"
         # The take context locates the video; the latent uses the same project directory.
         assert "filename_prefix" not in graph[save]["inputs"]
-        assert graph[latent]["inputs"]["filename_prefix"] == subfolder + "/clip"
-        assert graph[latent]["inputs"]["clip_index"] == 1 and set(body["partial_execution_targets"]) == {save, latent}
+        assert graph[save]["inputs"]["director_latent"] == graph[latent]["inputs"]["latent"]
+        assert body["partial_execution_targets"] == [save]
         jobs.append({"id": key, "previous": graph[loader]["inputs"], "context": json.loads(graph[save]["inputs"]["take_context"])})
         history[key] = {
             "status": {"status_str": "success", "completed": True},
             "outputs": {
-                # The saver claims its own counter, so the video is not assumed to be number one.
-                save: {"images": [{"type": "output", "subfolder": subfolder, "filename": "clip_00002_.mp4"}]},
-                latent: {"latents": [{"type": "output", "subfolder": subfolder, "filename": "clip_00001.safetensors"}]},
+                save: {
+                    "images": [{"type": "output", "subfolder": subfolder, "filename": "clip.mp4"}],
+                    "latents": [{"type": "output", "subfolder": subfolder + "/clip.arisu", "filename": "latent.safetensors"}],
+                },
             },
         }
         files[key] = {"video": True, "latent": True}
@@ -391,13 +392,18 @@ def inspect_project_render(page: Page, server: FixtureServer, director_id: str):
         expect(second).to_contain_text("Rendered")
         assert len(jobs) == 2
         launch, follow = jobs
+        for order, shot in enumerate(jobs, 1):
+            identity = shot["context"].pop("identity")
+            assert identity["order"] == order and len(identity["uid"]) == 36 and identity["title"]
+            server.video_segments[shot["id"]] = {**shot["context"], "identity": identity, "created": "2026-11-27T12:04:00Z"}
+            server.video_directed.add(f"{project}/director/{shot['id']}/clip.mp4")
         assert launch["context"] == {"take": launch["id"], "segment": "launch", "predecessor": None, "transition": "cut"}
         assert follow["context"] == {"take": follow["id"], "segment": "follow", "predecessor": launch["id"], "transition": "continuation"}
         assert launch["previous"]["latent_path"] == f"{project}/director" and launch["previous"]["clip_index"] == 0
-        assert follow["previous"]["latent_path"] == f"{project}/director/{launch['id']}/clip_00001.safetensors"
+        assert follow["previous"]["latent_path"] == f"{project}/director/{launch['id']}/clip.arisu/latent.safetensors"
         # The file check names the project, and the take context was written only into the submitted copies.
         mine = [query for query in asked if query["take"][0] in files]
-        assert mine and all(query["project"] == [project] and query["video"] == ["clip_00002_.mp4"] for query in mine)
+        assert mine and all(query["project"] == [project] and query["video"] == ["clip.mp4"] for query in mine)
         # Receipts of the earlier stock-saver renders are still checked at their original location.
         legacy = [query for query in asked if query["take"][0] not in files]
         assert legacy and all("project" not in query and query["video"] == ["clip_00001_.mp4"] for query in legacy)

@@ -1,24 +1,44 @@
 // The take picker of Assemble Video: published takes of one project, chosen several at a time or one as a replacement.
 import { listTakes, mediaUrl } from './assembly_api.js';
 import { openDialog } from './assembly_dialogs.js';
-import { audioLabel, fileName, seconds } from './assembly_format.js';
+import { fileName, seconds } from './assembly_format.js';
 import { el } from './dom.js';
+import { posterUrl, VIDEO_ICON } from './resource_browser.js';
+import { takeCatalog } from './take_sources.js';
 
-function label(take) {
-  const segment = take.take?.segment;
-  return `${segment ? `${segment} · ` : ''}${fileName(take.path)}`;
-}
+const stamp = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 
-function detail(take, taken) {
-  const parts = [
-    `${take.frames} f`,
-    seconds(take.duration),
-    `${take.width}×${take.height}`,
-    audioLabel(take.audio),
-    ...(take.take?.origin === 'director' ? ['Director'] : []),
-    ...(taken ? ['In edit'] : []),
-  ];
-  return parts.join(' · ');
+function thumbnail(item, name, player) {
+  const tile = el('button', {
+    className: 'take-thumb',
+    type: 'button',
+    ariaLabel: `Preview ${name}`,
+    title: 'Preview',
+    ariaExpanded: 'false',
+    onclick: () => {
+      const open = player.hidden;
+      player.hidden = !open;
+      tile.ariaExpanded = String(open);
+      if (open) {
+        player.src = mediaUrl(item.root, item.path);
+        player.play()?.catch(() => {});
+      } else {
+        player.pause();
+        player.removeAttribute('src');
+        player.load();
+      }
+    },
+  });
+  tile.innerHTML = VIDEO_ICON;
+  const image = el('img', {
+    alt: '',
+    loading: 'lazy',
+    decoding: 'async',
+    src: posterUrl(item.root, item.path, Math.min(2, item.duration / 3), 256),
+    onerror: (event) => event.currentTarget.remove(),
+  });
+  tile.append(image, el('span', { className: 'play-mark', ariaHidden: 'true', textContent: '▶' }));
+  return tile;
 }
 
 /**
@@ -34,6 +54,8 @@ export function pickTakes({ project, mode = 'add', taken = () => false, current 
     (finish, dialog) => {
       const chosen = new Map();
       let takes = [];
+      let identify = takeCatalog();
+      const label = (take) => identify(take)?.name ?? fileName(take.path);
       let generation = 0;
       const status = el('output', { className: 'hint', ariaLive: 'polite', textContent: 'Loading takes…' });
       const list = el('div', { className: 'list', role: 'list' });
@@ -43,12 +65,16 @@ export function pickTakes({ project, mode = 'add', taken = () => false, current 
         className: 'apply',
         textContent: 'Add Takes',
         disabled: true,
-        onclick: () => finish([...chosen.values()]),
+        onclick: () => finish(takes.filter((take) => chosen.has(key(take)))),
       });
       const key = (take) => `${take.root}|${take.path}`;
       const visible = () => {
         const wanted = filter.value.trim().toLowerCase();
-        return takes.filter((take) => !wanted || `${take.path} ${take.take?.segment ?? ''}`.toLowerCase().includes(wanted));
+        return takes.filter((take) => {
+          if (!wanted) return true;
+          const identity = identify(take);
+          return [identity?.name, identity?.searchTitles, take.path, take.take?.segment].join(' ').toLowerCase().includes(wanted);
+        });
       };
       const count = () => {
         confirm.textContent = chosen.size === 1 ? 'Add 1 Take' : `Add ${chosen.size} Takes`;
@@ -57,31 +83,39 @@ export function pickTakes({ project, mode = 'add', taken = () => false, current 
       function show() {
         const rows = visible().map((take) => {
           const isCurrent = current && current.root === take.root && current.path === take.path;
+          const identity = identify(take);
+          const selected = taken(take.root, take.path);
+          const created = Date.parse(take.take?.created);
+          const detail = [seconds(take.duration), identity && `Take ${identity.short}`, Number.isFinite(created) && stamp.format(created)]
+            .filter(Boolean)
+            .join(' · ');
+          const accessible = identity ? `${label(take)} · Take ${identity.short}` : label(take);
           const pick =
             mode === 'add'
               ? el('input', {
                   type: 'checkbox',
                   checked: chosen.has(key(take)),
-                  ariaLabel: `Select ${label(take)}`,
+                  ariaLabel: `Select ${accessible}`,
                   onchange: (event) => {
                     if (event.target.checked) chosen.set(key(take), take);
                     else chosen.delete(key(take));
                     count();
                   },
                 })
-              : el('button', { textContent: isCurrent ? 'Keep' : 'Use', ariaLabel: `Use ${label(take)}`, onclick: () => finish([take]) });
+              : el('button', { textContent: isCurrent ? 'Keep' : 'Use', ariaLabel: `Use ${accessible}`, onclick: () => finish([take]) });
+          const player = el('video', { controls: true, preload: 'none', hidden: true, ariaLabel: `Video preview of ${accessible}` });
           const row = el('div', { className: 'take', role: 'listitem' }, [
             pick,
-            el('div', {}, [
+            thumbnail(take, accessible, player),
+            el('div', { className: 'take-info' }, [
               el('div', { className: 'name', textContent: label(take), title: take.path }),
-              el('div', { className: 'detail', textContent: detail(take, taken(take.root, take.path)) }),
+              el('div', { className: 'detail', textContent: detail }),
             ]),
-            el('span', { className: 'detail', textContent: isCurrent ? 'Current' : '' }),
-            // Nothing is fetched until the user opens the preview and presses play.
-            el('details', {}, [
-              el('summary', { textContent: 'Preview' }),
-              el('video', { controls: true, preload: 'none', src: mediaUrl(take.root, take.path) }),
+            el('div', { className: 'take-status' }, [
+              ...(identity?.current ? [el('span', { textContent: 'Director choice' })] : []),
+              ...(isCurrent || selected ? [el('span', { textContent: isCurrent ? 'Current' : 'In edit' })] : []),
             ]),
+            player,
           ]);
           if (isCurrent) row.dataset.current = '';
           return row;
@@ -96,6 +130,22 @@ export function pickTakes({ project, mode = 'add', taken = () => false, current 
           const data = await listTakes(project, legacy.checked, signal);
           if (token !== generation || !dialog.open) return;
           takes = data.takes.filter((take) => take.state === 'ok');
+          identify = takeCatalog(takes);
+          takes.sort((a, b) => {
+            const left = identify(a),
+              right = identify(b);
+            if (!left || !right) return Number(!!right) - Number(!!left) || a.path.localeCompare(b.path, undefined, { numeric: true });
+            return (
+              left.order - right.order ||
+              left.group.localeCompare(right.group, undefined, { numeric: true }) ||
+              Number(right.current) - Number(left.current) ||
+              (b.take.created || '').localeCompare(a.take.created || '') ||
+              a.path.localeCompare(b.path)
+            );
+          });
+          const available = new Set(takes.map(key));
+          for (const key of chosen.keys()) if (!available.has(key)) chosen.delete(key);
+          if (chosen.size || confirm.textContent !== 'Add Takes') count();
           show();
         } catch (error) {
           if (token === generation && dialog.open) status.textContent = error.message;

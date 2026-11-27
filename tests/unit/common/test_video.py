@@ -159,12 +159,16 @@ def test_edit_lists_prefixes_and_requests_refuse_hostile_or_ambiguous_input():
     assert parse_take_context("") == {"take": None, "segment": None, "predecessor": None, "transition": None}
     context = {"take": TAKE, "segment": "s", "predecessor": None, "transition": "cut"}
     assert parse_take_context(json.dumps(context)) == context
+    identity = {"uid": TAKE, "film": TAKE, "order": 1, "title": "Approach", "sequence": [TAKE]}
+    assert parse_take_context(json.dumps({**context, "identity": identity}))["identity"] == identity
     for case in (
         "[]",
         '{"segment":"s"}',
         json.dumps({**context, "predecessor": "x"}),
         json.dumps({**context, "transition": "wipe"}),
         json.dumps({**context, "take": "../escape"}),
+        json.dumps({**context, "identity": {**identity, "order": 2}}),
+        json.dumps({**context, "identity": {**identity, "sequence": [TAKE, TAKE]}}),
     ):
         with pytest.raises(ValueError):
             parse_take_context(case)

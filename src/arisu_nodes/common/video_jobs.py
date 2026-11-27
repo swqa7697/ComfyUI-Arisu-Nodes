@@ -17,6 +17,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from fractions import Fraction
+from functools import lru_cache
 from typing import Any, Callable, Deque, Dict, FrozenSet, Iterable, List, Mapping, Optional, OrderedDict, Tuple
 
 import av
@@ -35,6 +36,8 @@ from .video import (
     OutputSpec,
     Probe,
     Source,
+    director_take_id,
+    legacy_segment,
     parse_correction,
     plan_export,
     plan_payload,
@@ -44,6 +47,7 @@ from .video import (
     suggest_correction,
 )
 from .video_ffmpeg import (
+    FILE_INPUT,
     concat_script,
     decode_samples_argv,
     export_argv,
@@ -219,6 +223,20 @@ def count_samples(path: str, channels: int, tools: Tools) -> int:
     return total // (4 * channels)
 
 
+@lru_cache(maxsize=512)
+def _legacy_segment(path: str, revision: str, take: str, ffprobe: Optional[str]) -> Optional[Dict[str, Any]]:
+    """Read only the legacy display snapshot. Cache by file revision and keep an unreadable tag from hiding footage."""
+    try:
+        if ffprobe:
+            argv = [ffprobe, "-v", "error", *FILE_INPUT, "-show_entries", "format_tags=prompt", "-of", "json", path]
+            tags = json.loads(collect(argv, 4 * 1024 * 1024, 8))["format"].get("tags", {})
+            prompt = next((value for key, value in tags.items() if key.lower() == "prompt"), "")
+            return legacy_segment(prompt, take)
+        return worker({"task": "legacy_segment", "path": path, "take": take}, limit=8192, timeout=8).get("segment")
+    except (MediaToolError, OSError, KeyError, TypeError, ValueError):
+        return None
+
+
 def describe_source(roots: Mapping[str, str], root: str, path: str, tools: Tools) -> Source:
     """Measure a contained video and read its take record. The stat fingerprint only keys the probe cache."""
     if not path:
@@ -249,7 +267,13 @@ def describe_source(roots: Mapping[str, str], root: str, path: str, tools: Tools
     if probe.video is None:
         return Source("unusable", absolute)
     record, pcm, lost = take_companion(roots["output"], path) if root == "output" else (None, None, False)
-    return Source("ok", absolute, probe, record, pcm, lost)
+    take = director_take_id(posixpath.dirname(path)) if root == "output" else None
+    snapshot = (
+        _legacy_segment(absolute, current, take, tools.ffprobe)
+        if take and not (record or {}).get("identity") and (tools.ffprobe or not tools.ffmpeg)
+        else None
+    )
+    return Source("ok", absolute, probe, record, pcm, lost, snapshot)
 
 
 def run_supervised(

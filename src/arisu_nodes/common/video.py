@@ -159,10 +159,34 @@ def director_take_id(directory: str) -> Optional[str]:
     return match.group(1) if match else None
 
 
-def parse_take_context(text: Any) -> Dict[str, Optional[str]]:
+def validate_segment_identity(identity: Any):
+    """Validate the segment identity and its display snapshot, independent of the take UUID."""
+    if not isinstance(identity, dict) or set(identity) not in ({"uid", "order", "title"}, {"uid", "order", "title", "film", "sequence"}):
+        raise ValueError("invalid Director segment identity")
+    if not isinstance(identity["uid"], str) or not _UUID.fullmatch(identity["uid"]):
+        raise ValueError("invalid Director segment UUID")
+    if type(identity["order"]) is not int or not 1 <= identity["order"] <= 128:
+        raise ValueError("invalid Director segment position")
+    if not isinstance(identity["title"], str) or len(identity["title"]) > 320:
+        raise ValueError("invalid Director segment title")
+    if "sequence" in identity:
+        sequence = identity["sequence"]
+        if (
+            not isinstance(identity["film"], str)
+            or not _UUID.fullmatch(identity["film"])
+            or not isinstance(sequence, list)
+            or not identity["order"] <= len(sequence) <= 128
+            or any(not isinstance(uid, str) or not _UUID.fullmatch(uid) for uid in sequence)
+            or len(set(sequence)) != len(sequence)
+            or sequence[identity["order"] - 1] != identity["uid"]
+        ):
+            raise ValueError("invalid Director sequence snapshot")
+
+
+def parse_take_context(text: Any) -> Dict[str, Any]:
     """Read the optional provenance a Director render attaches to its saver."""
     empty: Dict[str, Optional[str]] = {"take": None, "segment": None, "predecessor": None, "transition": None}
-    if not isinstance(text, str) or len(text) > 4096:
+    if not isinstance(text, str) or len(text) > 12288:
         raise ValueError("invalid take context")
     if not text.strip():
         return empty
@@ -170,7 +194,7 @@ def parse_take_context(text: Any) -> Dict[str, Optional[str]]:
         value = json.loads(text)
     except json.JSONDecodeError as error:
         raise ValueError("invalid take context") from error
-    if not isinstance(value, dict) or set(value) != set(empty):
+    if not isinstance(value, dict) or set(value) - {"identity"} != set(empty):
         raise ValueError("invalid take context")
     take = value["take"]
     if not isinstance(take, str) or not _UUID.fullmatch(take):
@@ -180,7 +204,46 @@ def parse_take_context(text: Any) -> Dict[str, Optional[str]]:
         raise ValueError("invalid take context")
     if predecessor is not None and (not isinstance(predecessor, str) or not _UUID.fullmatch(predecessor)):
         raise ValueError("invalid take context")
-    return {"take": take, "segment": segment, "predecessor": predecessor, "transition": transition}
+    if "identity" in value:
+        validate_segment_identity(value["identity"])
+    return value
+
+
+def legacy_segment(prompt: str, take: str) -> Optional[Dict[str, Any]]:
+    """Recover display text from a Director prompt that actually targeted this take, without executing its graph."""
+    if not isinstance(prompt, str) or len(prompt) > 2 * 1024 * 1024:
+        return None
+    try:
+        graph = json.loads(prompt)
+        if not isinstance(graph, dict) or len(graph) > 8192:
+            return None
+        documents = []
+        matched = False
+        for node in graph.values():
+            if not isinstance(node, dict) or not isinstance(node.get("inputs"), dict):
+                continue
+            inputs = node["inputs"]
+            if node.get("class_type") == "ArisuMiniMaxH3DirectorWorkbench":
+                documents.append(inputs.get("film_json"))
+            elif node.get("class_type") == "SaveVideo":
+                prefix = inputs.get("filename_prefix")
+                matched |= isinstance(prefix, str) and director_take_id(posixpath.dirname(prefix)) == take
+            elif node.get("class_type") == "ArisuSaveVideoSegment" and isinstance(inputs.get("take_context"), str):
+                matched |= parse_take_context(inputs["take_context"])["take"] == take
+        if not matched or len(documents) != 1:
+            return None
+        film = json.loads(documents[0])
+        selected = film["selected"]
+        segments = film["segments"]
+        if not isinstance(selected, str) or not 0 < len(selected) <= 128 or not isinstance(segments, list) or len(segments) > 128:
+            return None
+        for order, segment in enumerate(segments, 1):
+            if segment["id"] == selected:
+                title = segment.get("intent") or segment.get("prompt") or ""
+                return {"segment": selected, "order": order, "title": title.strip()[:320]} if isinstance(title, str) else None
+    except (TypeError, ValueError, KeyError, RecursionError):
+        pass
+    return None
 
 
 def exact_rate(rate: Any) -> Fraction:
@@ -226,7 +289,7 @@ def take_record(
     take: str,
     created: str,
     project: Optional[str],
-    context: Mapping[str, Optional[str]],
+    context: Mapping[str, Any],
     path: str,
     size: int,
     video: VideoInfo,
@@ -247,6 +310,7 @@ def take_record(
         "segment": context["segment"],
         "predecessor": context["predecessor"],
         "transition": context["transition"],
+        **({"identity": context["identity"]} if "identity" in context else {}),
         "upstream_trim": None,
         "video": {
             "root": "output",
@@ -301,6 +365,8 @@ def read_take_record(text: str) -> Dict[str, Any]:
     for key in ("segment", "predecessor", "transition"):
         if record.get(key) is not None and (not isinstance(record[key], str) or len(record[key]) > 128):
             raise ValueError("invalid take record")
+    if "identity" in record:
+        validate_segment_identity(record["identity"])
     if audio is not None:
         if not isinstance(audio, dict) or not all(_positive(audio.get(key)) for key in ("rate", "channels", "samples")):
             raise ValueError("invalid take record")
@@ -373,6 +439,7 @@ class Entry:
     audio: str
     correction: Optional[Correction]
     fade: int
+    segment_uid: Optional[str] = None
 
     @property
     def source_key(self) -> str:
@@ -439,6 +506,7 @@ class Source:
     record: Optional[Mapping[str, Any]] = None
     pcm: Optional[PcmSource] = None
     pcm_lost: bool = False
+    recorded_segment: Optional[Dict[str, Any]] = None
 
 
 @dataclass(frozen=True)
@@ -532,11 +600,14 @@ def parse_correction(value: Any) -> Optional[Correction]:
 
 
 def _entry(value: Any, previous: Optional[Dict[str, Any]]) -> Entry:
-    if not isinstance(value, dict) or set(value) - {"revision", "predecessor"} != _ENTRY_KEYS:
+    if not isinstance(value, dict) or set(value) - {"revision", "predecessor", "segment_uid"} != _ENTRY_KEYS:
         raise _bad("entry fields")
     texts = {key: value[key] for key in ("id", "source", "take", "segment", "root", "path")}
     if not all(isinstance(text, str) and len(text) <= 1024 and "\x00" not in text for text in texts.values()):
         raise _bad("entry text")
+    uid = value.get("segment_uid")
+    if uid is not None and (not isinstance(uid, str) or not _UUID.fullmatch(uid)):
+        raise _bad("segment UUID")
     predecessor = value.get("predecessor")
     if predecessor is not None and (not isinstance(predecessor, str) or not _UUID.fullmatch(predecessor)):
         raise _bad("predecessor take")
@@ -569,6 +640,7 @@ def _entry(value: Any, previous: Optional[Dict[str, Any]]) -> Entry:
         value["audio"],
         parse_correction(join["correction"]),
         join["fade"],
+        uid,
     )
 
 
@@ -989,6 +1061,7 @@ def sequence_record(
                 "source": entries[item.id].source,
                 "take": entries[item.id].take,
                 "segment": entries[item.id].segment,
+                **({"segment_uid": entries[item.id].segment_uid} if entries[item.id].segment_uid else {}),
                 "root": entries[item.id].root,
                 "path": entries[item.id].path,
                 "range": [item.first, item.last],

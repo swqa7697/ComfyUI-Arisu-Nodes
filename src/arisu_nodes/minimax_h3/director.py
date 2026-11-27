@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import math
 import re
+import uuid
 from dataclasses import replace
 from pathlib import PureWindowsPath
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Set, Tuple
@@ -47,7 +48,9 @@ ID = re.compile(r"[A-Za-z0-9_-]{1,128}")
 UUID_ID = re.compile(r"(?:[0-9a-f]{32}|[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})", re.IGNORECASE | re.ASCII)
 TAG = re.compile(r"<(Picture|Video|Audio)(?:\s+(\d+)|:([^<>\s]+))>")
 BINDING_FIELDS = {"crop", "crop_basis_ratio", "clip", "include_audio"}
+UUID_PATTERN = re.compile(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}")
 SEGMENT_FIELDS = {
+    "uid",
     "id",
     "intent",
     "seconds",
@@ -140,6 +143,8 @@ def asset_resource(asset: Dict[str, Any], binding: Optional[Dict[str, Any]] = No
 
 def _segment_fields(segment: Dict[str, Any], *, draft: bool = False):
     """Validate editable fields and require complete text in a generated draft."""
+    if "uid" in segment and (not isinstance(segment["uid"], str) or not UUID_PATTERN.fullmatch(segment["uid"])):
+        raise ValueError("invalid segment UUID")
     if set(segment) - SEGMENT_FIELDS:
         raise ValueError("unknown segment field")
     for field in ("intent", "opening", "closing", "skill", "skill_reason", "prompt"):
@@ -173,7 +178,9 @@ def _index(items: Sequence[Dict[str, Any]], name: str) -> Dict[str, Dict[str, An
 def parse_document(text: str) -> Dict[str, Any]:
     """Read editable film state. Unfinished segments can coexist with a renderable selected segment."""
     doc = read_json(text, DOCUMENT_LIMIT, "film")
-    if set(doc) - {"version", "film", "assets", "segments", "selected", "outline", "continuity", "coverage"}:
+    if "uid" in doc and (not isinstance(doc["uid"], str) or not UUID_PATTERN.fullmatch(doc["uid"])):
+        raise ValueError("invalid film UUID")
+    if set(doc) - {"version", "uid", "film", "assets", "segments", "selected", "outline", "continuity", "coverage"}:
         raise ValueError("unknown film document field")
     if not isinstance(doc.get("film"), dict) or set(doc["film"]) - FILM_DEFAULTS.keys() - {"requirements", "triggers", "continuity"}:
         raise ValueError("invalid film settings")
@@ -206,6 +213,9 @@ def parse_document(text: str) -> Dict[str, Any]:
         if media_kind(item.path) is None:
             raise ValueError(f"Asset {item.id}: unsupported media extension")
     segments = _index(_list(doc.get("segments"), "segments", MAX_SEGMENTS), "segment")
+    identities = [segment["uid"] for segment in segments.values() if "uid" in segment]
+    if any(not isinstance(uid, str) for uid in identities) or len(set(identities)) != len(identities):
+        raise ValueError("invalid or duplicate segment UUID")
     for segment in segments.values():
         try:
             _segment_fields(segment)
@@ -412,6 +422,8 @@ def validate_draft(
     for seg in changed:
         key = seg["id"]
         prior = old.get(key, {})
+        # Providers may name segments for coverage, but never assign their persistent identities.
+        seg["uid"] = prior.get("uid") or str(uuid.uuid4())
         seg["skill_locked"] = prior.get("skill_locked", False)
         try:
             _segment_fields(seg, draft=True)

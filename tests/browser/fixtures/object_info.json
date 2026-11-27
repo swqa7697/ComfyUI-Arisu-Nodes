@@ -2372,6 +2372,14 @@
         "extra_pnginfo": [
           "EXTRA_PNGINFO"
         ]
+      },
+      "optional": {
+        "director_latent": [
+          "LATENT",
+          {
+            "advanced": true
+          }
+        ]
       }
     },
     "input_order": {
@@ -2386,6 +2394,9 @@
       "hidden": [
         "prompt",
         "extra_pnginfo"
+      ],
+      "optional": [
+        "director_latent"
       ]
     },
     "is_input_list": false,

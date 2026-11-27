@@ -130,7 +130,8 @@ def director_take(output_root: str, take: str, video: str, project: str = "") ->
     """
     directory = os.path.dirname(director_video_path(take, video, project))
     available: Dict[str, bool] = {}
-    for kind, filename in (("video", video), ("latent", "clip_00001.safetensors")):
+    latent = "clip.arisu/latent.safetensors" if video == "clip.mp4" else "clip_00001.safetensors"
+    for kind, filename in (("video", video), ("latent", latent)):
         path = contained_path(output_root, f"{directory}/{filename}")
         try:
             info = os.stat(path)

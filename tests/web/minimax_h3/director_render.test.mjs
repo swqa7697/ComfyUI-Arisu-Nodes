@@ -69,14 +69,20 @@ function serve(server) {
     if (route.startsWith('/history/')) {
       const id = route.slice('/history/'.length);
       const { prompt, partial_execution_targets: targets } = server.prompts.find((body) => body.prompt_id === id);
-      const subfolder = prompt[targets[1]].inputs.filename_prefix.replace(/\/clip$/, '');
+      const combined = targets.length === 1;
+      const project = prompt[targets[0]].inputs.project_prefix;
+      const subfolder = combined
+        ? `${project ? 'motion_context/fixed/director' : 'arisu_director'}/${id}`
+        : prompt[targets[1]].inputs.filename_prefix.replace(/\/clip$/, '');
+      const files = { images: [{ filename: combined ? 'clip.mp4' : 'clip_00002_.mp4', subfolder, type: 'output' }], animated: [true] };
+      if (combined) files.latents = [{ filename: 'latent.safetensors', subfolder: subfolder + '/clip.arisu', type: 'output' }];
       return jsonResponse(200, {
         [id]: {
           status: { status_str: 'success', completed: true },
           outputs: {
             // The latent already took counter 1 in this directory, so a stock saver's video is number 2.
-            [targets[0]]: { images: [{ filename: 'clip_00002_.mp4', subfolder, type: 'output' }], animated: [true] },
-            [targets[1]]: { latents: [{ filename: LATENT, subfolder, type: 'output' }] },
+            [targets[0]]: files,
+            ...(combined ? {} : { [targets[1]]: { latents: [{ filename: LATENT, subfolder, type: 'output' }] } }),
           },
         },
       });
@@ -138,10 +144,12 @@ test('Director renders through either saver into the legacy or project layout an
   assert.notEqual(first.id, legacy.id);
   assert.equal('filename_prefix' in last().prompt[11].inputs, false);
   assert.deepEqual(last().prompt[11].inputs.project_prefix, ['12', 0], 'the project wire stays; the server resolves it again');
-  assert.deepEqual([last().prompt[6].inputs.filename_prefix, last().prompt[6].inputs.clip_index], [`${dir}/clip`, 1]);
+  assert.deepEqual(last().partial_execution_targets, ['11']);
+  assert.deepEqual(last().prompt[11].inputs.director_latent, ['5', 0]);
   assert.equal(last().prompt[3].inputs.latent_path, 'motion_context/fixed/director');
   assert.deepEqual(JSON.parse(last().prompt[11].inputs.take_context), {
     take: first.id,
+    identity: { uid: first.identity.uid, order: 1, title: 'A' },
     segment: 'a',
     predecessor: null,
     transition: 'cut',
@@ -149,14 +157,15 @@ test('Director renders through either saver into the legacy or project layout an
   assert.equal(output[11].inputs.take_context, '', 'only the submitted copy carries a context');
   assert.deepEqual([first.saver, first.project], ['ArisuSaveVideoSegment', 'motion_context/fixed']);
   assert.deepEqual(takeLocation(first), { project: 'motion_context/fixed', dir });
-  assert.deepEqual(server.inspected.at(-1), { take: first.id, video: 'clip_00002_.mp4', project: 'motion_context/fixed' });
+  assert.deepEqual(server.inspected.at(-1), { take: first.id, video: 'clip.mp4', project: 'motion_context/fixed' });
 
   // a continuation loads its predecessor's latent from that take's own directory and names it in the context
   await render('b');
   const second = renderTake(director, 'b');
-  assert.deepEqual([last().prompt[3].inputs.latent_path, last().prompt[3].inputs.clip_index], [`${dir}/${LATENT}`, 1]);
+  assert.deepEqual([last().prompt[3].inputs.latent_path, last().prompt[3].inputs.clip_index], [`${dir}/clip.arisu/latent.safetensors`, 1]);
   assert.deepEqual(JSON.parse(last().prompt[11].inputs.take_context), {
     take: second.id,
+    identity: { uid: second.identity.uid, order: 2, title: 'B' },
     segment: 'b',
     predecessor: first.id,
     transition: 'continuation',
@@ -191,7 +200,7 @@ test('Director renders through either saver into the legacy or project layout an
     'stray latent': { ...first, latent: { ...first.latent, subfolder: `arisu_director/${first.id}` } },
     'other latent slot': { ...first, latent: { ...first.latent, filename: 'clip_00002.safetensors' } },
     'temp video': { ...first, video: { ...first.video, type: 'temp' } },
-    'unnumbered video': { ...first, video: { ...first.video, filename: 'clip.mp4' } },
+    'unrelated video': { ...first, video: { ...first.video, filename: 'another.mp4' } },
   }))
     assert.equal(takeLocation(take), null, `case=${name}`);
 
@@ -210,11 +219,12 @@ test('Director renders through either saver into the legacy or project layout an
   assert.equal('filename_prefix' in last().prompt[11].inputs, false);
   assert.deepEqual(JSON.parse(last().prompt[11].inputs.take_context), {
     take: blank.id,
+    identity: first.identity,
     segment: 'a',
     predecessor: null,
     transition: 'cut',
   });
-  assert.equal(last().prompt[6].inputs.filename_prefix, `arisu_director/${blank.id}/clip`);
+  assert.equal(blank.video.subfolder, `arisu_director/${blank.id}`);
   assert.deepEqual([blank.saver, blank.project], ['ArisuSaveVideoSegment', '']);
 
   // two savers behind Create Video: Director refuses until one is chosen, then renders through that one only
@@ -267,7 +277,7 @@ test('Director renders through either saver into the legacy or project layout an
   output[toggle].inputs.switch = true;
   await render('b');
   const continuation = last().prompt;
-  assert.equal(continuation[3].inputs.latent_path, `${cut.latent.subfolder}/${LATENT}`);
+  assert.equal(continuation[3].inputs.latent_path, `${cut.latent.subfolder}/${cut.latent.filename}`);
   assert.equal(continuation[motion].inputs.context_length, '22');
   assert.deepEqual(continuation[toggle], output[toggle]);
   assert.deepEqual(

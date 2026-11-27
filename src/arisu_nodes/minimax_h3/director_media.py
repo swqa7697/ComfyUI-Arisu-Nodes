@@ -30,7 +30,7 @@ from .core import (
 from .director import asset_resource, parse_document, prompt_tags, segment_bindings, segment_snapshot
 from .media import apply_selection, metadata, stream_duration, upright, validate_source, validate_workbench_source
 
-_TAKE_VIDEO = re.compile(r"clip_[0-9]{5,}_\.(?:mp4|webm|mov|mkv)")
+_TAKE_VIDEO = re.compile(r"(?:clip\.mp4|clip_[0-9]{5,}_\.(?:mp4|webm|mov|mkv))")
 # A seek can land at the beginning of a long GOP. Bound the scan even for a malformed output.
 _MAX_TAKE_FRAMES = frames_for_duration(150)
 

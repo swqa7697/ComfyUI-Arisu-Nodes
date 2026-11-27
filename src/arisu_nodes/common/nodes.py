@@ -819,6 +819,7 @@ class ArisuSaveVideoSegment(io.ComfyNode):
                 io.Combo.Input("codec", options=list(CODECS), default="h264", tooltip=_CODEC_TOOLTIP),
                 io.Int.Input("crf", default=18, min=0, max=63, tooltip=_CRF_TOOLTIP),
                 io.String.Input("take_context", default="", socketless=True, tooltip="Set by Director renders; leave blank."),
+                io.Latent.Input("director_latent", optional=True, advanced=True),
             ],
             outputs=[io.Video.Output("video", tooltip="The input video, unchanged.")],
             hidden=[io.Hidden.prompt, io.Hidden.extra_pnginfo],
@@ -857,7 +858,16 @@ class ArisuSaveVideoSegment(io.ComfyNode):
         return True
 
     @classmethod
-    def execute(cls, video: Input.Video, project_prefix: str, clip_name: str, codec: str, crf: int, take_context: str) -> io.NodeOutput:
+    def execute(
+        cls,
+        video: Input.Video,
+        project_prefix: str,
+        clip_name: str,
+        codec: str,
+        crf: int,
+        take_context: str,
+        director_latent: Optional[Dict[str, Any]] = None,
+    ) -> io.NodeOutput:
         """Encode, measure and publish one take.
 
         Args:
@@ -867,6 +877,7 @@ class ArisuSaveVideoSegment(io.ComfyNode):
             codec: ``h264``, ``h265`` or ``av1``.
             crf: The quality on the selected encoder's scale.
             take_context: Optional Director provenance as JSON.
+            director_latent: Sampled H3 video and audio for the next continuation.
 
         Returns:
             The unchanged video, with the stock video preview and the take summary as ui.
@@ -897,8 +908,30 @@ class ArisuSaveVideoSegment(io.ComfyNode):
         tools = detect_tools()
         encoder = select_encoder(tools, codec)
         target = resolve_take_prefix(project_prefix, clip_name, width, height, datetime.now(), context["take"])
-        reservation = reserve_take(folder_paths.get_output_directory(), target.directory, target.stem)
+        if director_latent is not None and not context["take"]:
+            raise ValueError("a Director latent requires a take")
+        reservation = reserve_take(
+            folder_paths.get_output_directory(),
+            target.directory,
+            target.stem,
+            directed=bool(context.get("identity") or director_latent is not None),
+        )
         try:
+            if director_latent is not None:
+                samples = director_latent["samples"]
+                parts = samples.unbind() if hasattr(samples, "unbind") and not isinstance(samples, torch.Tensor) else samples
+                if (
+                    not isinstance(parts, (list, tuple))
+                    or len(parts) != 2
+                    or not all(isinstance(part, torch.Tensor) for part in parts)
+                    or parts[0].ndim != 5
+                ):
+                    raise ValueError("expected a sampled H3 video/audio latent pair")
+                comfy.utils.save_torch_file(
+                    {key: part.detach().cpu().contiguous() for key, part in zip(("video", "audio"), parts)},
+                    reservation.part("latent.safetensors"),
+                    metadata={"format": "h3_motion_context_av_v1"},
+                )
             audio_part = reservation.part("audio.wav.part")
             if waveform is not None:
                 _write_pcm(audio_part, waveform, rate)
@@ -980,6 +1013,8 @@ class ArisuSaveVideoSegment(io.ComfyNode):
             discard_take(reservation)
             raise
         preview = ui.PreviewVideo([ui.SavedResult(reservation.name + ".mp4", target.directory, io.FolderType.output)]).as_dict()
+        if director_latent is not None:
+            preview["latents"] = [{"filename": "latent.safetensors", "subfolder": target.directory + "/clip.arisu", "type": "output"}]
         preview["arisu_take"] = [take_summary(record)]
         return io.NodeOutput(video, ui=preview)
 
@@ -989,7 +1024,7 @@ class ArisuSaveVideoSegment(io.ComfyNode):
         reservation: Reservation,
         directory: str,
         project: Optional[str],
-        context: Dict[str, Optional[str]],
+        context: Dict[str, Any],
         video: Any,
         encoder: str,
         crf: int,
@@ -1019,7 +1054,7 @@ class ArisuSaveVideoSegment(io.ComfyNode):
             }
         return take_record(
             take=director_take_id(directory) or new_take_id(),
-            created=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            created=datetime.now(timezone.utc).isoformat(timespec="microseconds"),
             project=project,
             context=context,
             path=posixpath.join(directory, reservation.name + ".mp4"),

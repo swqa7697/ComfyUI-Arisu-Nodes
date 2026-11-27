@@ -26,8 +26,10 @@ function changed(node) {
   node.graph?.change?.();
   node.setDirtyCanvas?.(true, true);
 }
-export function renderTake(node, segmentId) {
-  return node.properties?.directorRenders?.takes?.find((take) => take.segment === segmentId);
+export function renderTake(node, segmentId, uid) {
+  return node.properties?.directorRenders?.takes?.find(
+    (take) => take.segment === segmentId && (!uid || !take.identity || take.identity.uid === uid),
+  );
 }
 
 function canonical(value) {
@@ -64,7 +66,7 @@ function currentTake(node, doc, index) {
   while (first > 0 && doc.segments[first].transition === 'continuation') first--;
   for (let i = first; i <= index; i++) {
     const segment = doc.segments[i];
-    const candidate = renderTake(node, segment.id);
+    const candidate = renderTake(node, segment.id, segment.uid);
     if (!candidate || candidate.revision !== revision(doc, segment) || candidate.predecessor !== (take?.id ?? null)) return null;
     take = candidate;
   }
@@ -73,7 +75,7 @@ function currentTake(node, doc, index) {
 
 export function renderStatus(node, segmentId, doc) {
   if (node.properties?.directorRenders?.pending?.segment === segmentId) return 'Awaiting render result';
-  const take = renderTake(node, segmentId);
+  const take = renderTake(node, segmentId, doc?.segments.find((segment) => segment.id === segmentId)?.uid);
   if (!take) return 'Pending';
   const missing = missingTakes.get(node)?.get(take.id);
   if (missing === 'video') return 'Output unavailable';
@@ -118,7 +120,11 @@ async function request(path, init) {
  */
 export function takeLocation(take) {
   const video = take?.video;
-  if (!uuid.test(take?.id ?? '') || video?.type !== 'output' || !/^clip_\d{5,}_\.(mp4|mov|webm|mkv)$/.test(video.filename ?? ''))
+  if (
+    !uuid.test(take?.id ?? '') ||
+    video?.type !== 'output' ||
+    !/^(?:clip\.mp4|clip_\d{5,}_\.(?:mp4|mov|webm|mkv))$/.test(video.filename ?? '')
+  )
     return null;
   const dir = String(video.subfolder ?? '');
   const suffix = `/director/${take.id}`;
@@ -126,7 +132,8 @@ export function takeLocation(take) {
   if (dir === `${LEGACY}/${take.id}`) project = '';
   else if (dir.endsWith(suffix) && dir.length > suffix.length) project = dir.slice(0, -suffix.length);
   else return null;
-  if (take.latent && (take.latent.subfolder !== dir || take.latent.filename !== 'clip_00001.safetensors')) return null;
+  const latentPath = video.filename === 'clip.mp4' ? `${dir}/clip.arisu/latent.safetensors` : `${dir}/clip_00001.safetensors`;
+  if (take.latent && `${take.latent.subfolder}/${take.latent.filename}` !== latentPath) return null;
   return { project, dir };
 }
 
@@ -153,7 +160,7 @@ export async function refreshRenderTakes(node, doc, onChange = () => {}) {
   const missing = new Map();
   missingTakes.set(node, missing);
   for (const segment of doc.segments) {
-    const take = renderTake(node, segment.id);
+    const take = renderTake(node, segment.id, segment.uid);
     if (take) {
       const found = await availability(take);
       if (!found.latent) missing.set(take.id, found.video ? 'latent' : 'video');
@@ -468,20 +475,33 @@ export async function renderSegments(node, document, remaining, onProgress = () 
       if (prior && (remaining || prior.id === recovered?.id) && (await available(prior))) continue;
       const id = resourceId();
       const prefix = joinPath([project ? `${project}/director` : LEGACY, id, 'clip']);
-      const predecessor = previous ? renderTake(node, doc.segments[index - 1].id).id : null;
+      const predecessor = previous ? currentTake(node, doc, index - 1).id : null;
       const snapshotRevision = revision(doc, segment);
       if (snapshotRevision === null) throw new Error(`Segment ${segment.id} needs a generation length within the film limits.`);
       graph[director].inputs.film_json = JSON.stringify({ ...doc, selected: segment.id });
       configureMotion(graph, ids, segment, previous, project ? `${project}/director` : LEGACY);
-      if (ids.saver === ARISU_SAVER)
+      const identity = {
+        uid: segment.uid ?? renderTake(node, segment.id, segment.uid)?.identity?.uid ?? resourceId(),
+        order: index + 1,
+        ...(doc.uid ? { film: doc.uid, sequence: doc.segments.map((item) => item.uid) } : {}),
+        title: Array.from((segment.intent || segment.prompt || '').trim())
+          .slice(0, 320)
+          .join(''),
+      };
+      const combined = ids.saver === ARISU_SAVER;
+      if (combined) {
+        graph[ids.saveVideo].inputs.director_latent = graph[ids.saveLatent].inputs.latent;
         graph[ids.saveVideo].inputs.take_context = JSON.stringify({
           take: id,
           segment: segment.id,
+          identity,
           predecessor,
           transition: segment.transition === 'continuation' ? 'continuation' : 'cut',
         });
-      else graph[ids.saveVideo].inputs.filename_prefix = prefix;
-      Object.assign(graph[ids.saveLatent].inputs, { filename_prefix: prefix, clip_index: 1 });
+      } else {
+        graph[ids.saveVideo].inputs.filename_prefix = prefix;
+        Object.assign(graph[ids.saveLatent].inputs, { filename_prefix: prefix, clip_index: 1 });
+      }
       if (owner.stopped) break;
       setWorkflowWidget(directorMetadata, 'film_json', 0, graph[director].inputs.film_json);
       for (const prepareSeed of seedHandlers) prepareSeed();
@@ -491,7 +511,8 @@ export async function renderSegments(node, document, remaining, onProgress = () 
         revision: snapshotRevision,
         predecessor,
         saveVideo: ids.saveVideo,
-        saveLatent: ids.saveLatent,
+        identity,
+        saveLatent: combined ? ids.saveVideo : ids.saveLatent,
         saver: ids.saver,
         project,
       };
@@ -506,7 +527,7 @@ export async function renderSegments(node, document, remaining, onProgress = () 
             prompt_id: id,
             client_id: api.clientId,
             extra_data: { extra_pnginfo: { workflow } },
-            partial_execution_targets: [ids.saveVideo, ids.saveLatent],
+            partial_execution_targets: combined ? [ids.saveVideo] : [ids.saveVideo, ids.saveLatent],
           }),
         });
         if (response.prompt_id && uuid.test(response.prompt_id) && response.prompt_id !== id) {

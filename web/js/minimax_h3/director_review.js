@@ -4,14 +4,15 @@ import { openAgentActivity } from './agent_activity.js';
 import { bindingKind, orderedTags, secondsLabel, timeline, timing } from './director_document.js';
 import { generationTime } from './workbench_sessions.js';
 
-export function applyDraft(doc, draft, submittedAssets) {
+export function applyDraft(doc, draft, submission) {
   const index = draft.segment ? doc.segments.findIndex((item) => item.id === draft.segment.id) : -1;
-  if (draft.segment && index < 0) throw new Error('This segment was removed. Undo its removal or generate a new draft.');
+  if (draft.segment && (index < 0 || (submission?.uid && doc.segments[index].uid !== submission.uid)))
+    throw new Error('This segment was removed. Undo its removal or generate a new draft.');
   const assets = new Map(doc.assets.map((asset) => [asset.id, asset]));
   for (const segment of draft.segments ?? [draft.segment]) {
     for (const { asset_id, role } of segment.bindings) {
       const asset = assets.get(asset_id);
-      const submitted = submittedAssets?.get(asset_id);
+      const submitted = submission?.assets?.get(asset_id);
       const needed = `Segment ${segment.id} needs ${submitted?.path ?? asset?.path ?? asset_id}.`;
       if (!asset) throw new Error(needed + ' Reselect the missing asset in Asset Library or undo its removal.');
       if (asset.muted) throw new Error(needed + ' Unmute the asset in Asset Library to apply this draft.');
@@ -33,9 +34,11 @@ export function applyDraft(doc, draft, submittedAssets) {
     }
   }
   if (draft.segment) {
-    doc.segments[index] = draft.segment;
+    doc.segments[index] = { ...draft.segment, uid: doc.segments[index].uid ?? draft.segment.uid };
   } else {
-    for (const field of ['outline', 'continuity', 'coverage', 'segments']) doc[field] = draft[field];
+    const existing = new Map(doc.segments.map((segment) => [segment.id, segment.uid]));
+    doc.segments = draft.segments.map((segment) => ({ ...segment, uid: existing.get(segment.id) ?? segment.uid }));
+    for (const field of ['outline', 'continuity', 'coverage']) doc[field] = draft[field];
     if (!doc.segments.some((item) => item.id === doc.selected)) doc.selected = doc.segments[0].id;
   }
 }
@@ -78,7 +81,7 @@ export function openDirectorReview(run, read, apply) {
     if (run.draft) {
       const copy = structuredClone(doc);
       try {
-        applyDraft(copy, JSON.parse(run.draft), run.directorSubmission?.assets);
+        applyDraft(copy, JSON.parse(run.draft), run.directorSubmission);
         applied = JSON.stringify(copy) === JSON.stringify(doc);
       } catch (error) {
         applyError = error.message;

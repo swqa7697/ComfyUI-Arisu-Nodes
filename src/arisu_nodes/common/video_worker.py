@@ -17,7 +17,7 @@ import numpy as np
 from av.video.reformatter import ColorPrimaries, ColorRange, ColorTrc
 
 from .media import UnsupportedMedia, open_media, streams
-from .video import LAYOUTS, AudioInfo, Probe, VideoInfo, probe_json
+from .video import LAYOUTS, AudioInfo, Probe, VideoInfo, legacy_segment, probe_json
 
 _AAC_FRAME = 1024
 _PRIMARIES = {"bt709": ColorPrimaries.BT709, "bt2020": ColorPrimaries.BT2020}
@@ -364,6 +364,10 @@ def run(task: Mapping[str, Any]) -> Dict[str, Any]:
     name = task.get("task")
     if name == "probe":
         return probe_json(probe(task["path"]))
+    if name == "legacy_segment":
+        with open(task["path"], "rb") as handle, open_media(handle) as container:
+            prompt = next((value for key, value in container.metadata.items() if key.lower() == "prompt"), "")
+            return {"segment": legacy_segment(prompt, task["take"])}
     if name == "samples":
         return {"samples": count_samples(task["path"])}
     if name == "means":

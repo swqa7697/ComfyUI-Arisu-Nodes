@@ -35,15 +35,19 @@ An ordinary Run writes no film and passes nothing downstream. Only **Export** pr
 
 ## Building the Edit
 
-- **Add Project Takes** lists the published takes of the project. The takes you add stay selected in the edit.
+- **Add Project Takes** shows a still and duration for each clip. Click the still for playback. Search by segment description, number, filename or take ID.
+  Director takes show the segment number and are grouped in film order. **Director choice** marks the take held by the open Director, and **In edit** marks footage already in the assembly.
+  Each rerender has its own short take ID and, when recorded, a creation time. Multiple selected takes enter the edit in the displayed order.
+  A standalone assembly uses the most recently rendered sequence for each film. Removed segments keep their footage and follow the active sequence.
+  Older takes use available Director receipts or their saved render metadata to identify the segment. When neither identifies a segment, the still and short take ID identify the clip.
 - **Import from Director** adds the rendered takes of a Director Workbench in film order. Segments without a render are
   skipped. Each row keeps the imported take UUID. A later Director render creates a new take.
   Choose **Refresh from Director** to switch imported rows to the current takes.
 - **Add Existing Video** browses for any video under the output directory or a configured root, including videos
   saved before this node existed.
 
-Each row shows a still, the segment and file name, the delivered frame count and duration, the picture size and the
-sound. Files that are **Missing** or **Unusable** can be replaced with **Reselect**. Restoring a take to its
+Each edit row shows a still, the segment number or filename, and the duration. A short ID distinguishes
+Director takes. Rows also show when footage is trimmed, muted or unavailable. Files that are **Missing** or **Unusable** can be replaced with **Reselect**. Restoring a take to its
 recorded location preserves its segment, predecessor and PCM soundtrack. Plain videos use their selected path.
 
 ## Editing

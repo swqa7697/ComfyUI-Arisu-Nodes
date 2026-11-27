@@ -62,12 +62,22 @@ function notify(severity, detail) {
 }
 function change(node, modify, refresh = true) {
   const doc = read(node);
+  // Bind older saved receipts before an edit can remove a segment and free its film-local name.
+  const ledger = node.properties?.directorRenders;
+  const legacy = [...(ledger?.takes ?? []), ledger?.pending]
+    .filter((take) => take && !take.identity)
+    .map((take) => [take, doc.segments.find((segment) => segment.id === take.segment)]);
   modify(doc);
   const value = JSON.stringify(doc);
   const target = filmWidget(node);
   if (value === target.value) return;
   node.graph?.beforeChange?.();
   try {
+    for (const [take, prior] of legacy) {
+      const next = doc.segments.find((segment) => segment.id === take.segment);
+      const uid = prior?.uid ?? (prior && next ? next.uid : resourceId());
+      if (uid) take.identity = { uid };
+    }
     setWidget(node, target, value);
   } finally {
     node.graph?.afterChange?.();
@@ -358,6 +368,7 @@ function addSegment(ui) {
   ui.change((doc) => {
     doc.segments.push({
       id,
+      uid: id,
       intent: 'New Segment',
       seconds: doc.film.min_seconds,
       transition: 'cut',
@@ -529,6 +540,13 @@ async function startRender(ui, remaining) {
   ui.state.rendering = true;
   render(ui.node);
   try {
+    // Assign identities once when an older film is first rendered.
+    const film = ui.read();
+    if (!film.uid || film.segments.some((segment) => !segment.uid))
+      ui.change((doc) => {
+        doc.uid ??= resourceId();
+        for (const segment of doc.segments) segment.uid ??= resourceId();
+      });
     await renderSegments(ui.node, ui.read(), remaining, (message) => {
       ui.state.message = message;
       render(ui.node);
@@ -549,7 +567,7 @@ async function generate(ui, task) {
   await sessions.generate(node, async (_, run) => {
     submittedRun = run;
     const previousSegment = index > 0 && doc.segments[index].transition === 'continuation' ? index : null;
-    const submitted = refine ? { request: draft.request, previousSegment } : { brief: doc.film.brief };
+    const submitted = refine ? { request: draft.request, previousSegment, uid: doc.segments[index].uid } : { brief: doc.film.brief };
     submitted.assets = new Map(doc.assets.map((asset) => [asset.id, asset]));
     run.directorSubmission = submitted;
     state.message = '';
@@ -590,7 +608,7 @@ function review(ui) {
       if (!run.node) return;
       try {
         const draft = JSON.parse(run.draft);
-        change(run.node, (doc) => applyDraft(doc, draft, run.directorSubmission.assets));
+        change(run.node, (doc) => applyDraft(doc, draft, run.directorSubmission));
         if (draft.segments) nodes.get(run.node)?.revisions.clear();
         run.status = 'Draft applied';
         sessions.updateRun(run);
@@ -904,7 +922,7 @@ function renderControls(ui, doc) {
 }
 
 function footageView(node, seg) {
-  const take = renderTake(node, seg.id);
+  const take = renderTake(node, seg.id, seg.uid);
   if (takeLocation(take))
     return [
       el('details', {}, [
@@ -1019,11 +1037,15 @@ registerSelectionOwner(TYPE, { fields: [['film_json', 0, clearLocations]], prope
 registerTakeSource(TYPE, (node) => {
   const doc = read(node);
   return {
+    film: doc.uid,
     label: `Director #${node.id}`,
     segments: doc.segments.map((segment, index) => {
-      const take = renderTake(node, segment.id);
+      const take = renderTake(node, segment.id, segment.uid);
       return {
         segment: segment.id,
+        uid: segment.uid,
+        order: index + 1,
+        title: segment.intent || '',
         label: `${String(index + 1).padStart(2, '0')} · ${segment.intent || 'Untitled Segment'}`,
         transition: segment.transition === 'continuation' ? 'continuation' : 'cut',
         take: takeLocation(take)

@@ -37,7 +37,7 @@ TAKES = {
     "shot_00003_.mp4": "33333333-3333-4333-8333-333333333333",
 }
 OUTPUT_SPEC = {"width": 1280, "height": 720, "fps": [24, 1], "sample_rate": 32000, "channels": 2}
-_DIRECTED = re.compile(r"(?:.+/director|arisu_director)/([0-9a-f-]{36})/clip_\d{5,}_\.mp4")
+_DIRECTED = re.compile(r"(?:.+/director|arisu_director)/([0-9a-f-]{36})/clip(?:_\d{5,}_)?\.mp4")
 
 
 class FixtureServer:
@@ -64,6 +64,7 @@ class FixtureServer:
         # Assemble Video: request bodies in order, deleted videos, Director renders seen, and join preview jobs.
         self.video_requests: List[Tuple[str, Any]] = []
         self.video_deleted: Set[str] = set()
+        self.video_segments: Dict[str, Dict[str, Any]] = {}
         self.video_directed: Set[str] = set()
         self.previews: Dict[str, Dict[str, Any]] = {}
         # Available files of Director takes that stay on a node after its render fixture ends.
@@ -185,6 +186,7 @@ class FixtureServer:
         if directed:
             self.video_directed.add(path)
             take = {"take": directed.group(1), "origin": "director", "segment": None, "predecessor": None, "transition": None}
+            take.update(self.video_segments.get(directed.group(1), {}))
         elif ordinary:
             take = {"take": TAKES[name], "origin": "ordinary", "segment": None, "predecessor": None, "transition": None}
         return {
@@ -210,7 +212,9 @@ class FixtureServer:
             project = request.query.get("project", "")
             listed = [f"{project}/videos/{name}" for name in TAKES] if project == PROJECT else []
             if request.query.get("legacy") == "1" or project == PROJECT:
-                listed += sorted(self.video_directed)
+                listed += sorted(
+                    item for item in self.video_directed if item.startswith(project + "/director/") or request.query.get("legacy") == "1"
+                )
             self.video_requests.append(("takes", dict(request.query)))
             takes = [self.video_description("output", item) for item in listed]
             return web.json_response({"project": project, "takes": [take for take in takes if take["state"] == "ok"]})
@@ -247,7 +251,13 @@ class FixtureServer:
                         files.extend([(f"{directory}/take.json", 1200), (f"{directory}/audio.wav", 512044)])
                     elif origin == "director":
                         directory = entry["path"].rsplit("/", 1)[0]
-                        files.append((f"{directory}/clip_00001.safetensors", 128000))
+                        files.extend(
+                            [
+                                (f"{directory}/clip.arisu/latent.safetensors", 128000),
+                                (f"{directory}/clip.arisu/take.json", 1000),
+                                (f"{directory}/clip.arisu/audio.wav", 512044),
+                            ]
+                        )
                     files.append((entry["path"], 2400000))
                 if allowed and body["confirm"]:
                     self.video_deleted.add(entry["path"])
@@ -602,6 +612,34 @@ class FixtureServer:
                     "size": 160044,
                 }
             )
+        if path == "/arisu/resources/poster" and request.query.get("root") == "output":
+            # Distinct synthetic frames for the paper-boat film and its alternate takes.
+            filename = request.query.get("path", "").split("/")[-1]
+            take_id = request.query.get("path", "").split("/")[-2] if "/" in request.query.get("path", "") else ""
+            launch = self.video_segments.get(take_id, {}).get("segment") == "launch"
+            variant = (
+                (1 if take_id.startswith("e7b6d3f0") else 0 if launch else 2)
+                if take_id in self.video_segments
+                else list(TAKES).index(filename) + 3
+                if filename in TAKES
+                else 3
+            )
+            skies = ["#debba3", "#c1d5d0", "#91b5bd", "#dcc69c", "#9ab1ca", "#bda39b"]
+            still = Image.new("RGB", (256, 144), skies[variant])
+            draw = ImageDraw.Draw(still)
+            draw.ellipse((180 - 18 * variant, 12, 211 - 18 * variant, 43), fill="#fff0c2")
+            draw.polygon(
+                [(0, 70), (44, 45 + 4 * variant), (87, 68), (157, 38 + 5 * variant), (211, 62), (256, 48), (256, 94), (0, 94)],
+                fill="#586d65",
+            )
+            draw.rectangle((0, 83, 256, 144), fill=["#61898e", "#749ba1", "#477273"][variant % 3])
+            x = 46 + 22 * variant
+            draw.polygon([(x - 32, 93), (x + 36, 90), (x + 16, 105), (x - 15, 107)], fill="#eed5b8")
+            draw.polygon([(x - 17, 93), (x + 4, 70), (x + 16, 92)], fill="#fff4dc")
+            draw.line((x - 25, 112, x + 25, 109), fill="#adbbb0", width=2)
+            output = io.BytesIO()
+            still.save(output, format="WEBP")
+            return web.Response(body=output.getvalue(), content_type="image/webp")
         if path in ("/arisu/view", "/arisu/resources/view", "/arisu/resources/poster"):
             audio = request.query.get("path", "").endswith(".wav") and path.endswith("/view")
             if audio:

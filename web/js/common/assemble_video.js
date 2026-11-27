@@ -28,7 +28,7 @@ import {
   verifiedJoin,
 } from './assembly_document.js';
 import { detachExport, exportState, recoverExport, runExport, stopExport } from './assembly_export.js';
-import { audioLabel, fileName, seconds, specLabel } from './assembly_format.js';
+import { fileName, seconds, specLabel } from './assembly_format.js';
 import { previewJoin } from './assembly_join.js';
 import { pickTakes } from './assembly_takes.js';
 import { forwardToCanvas, keepScrollWheel } from './canvas_gestures.js';
@@ -36,7 +36,7 @@ import { el } from './dom.js';
 import { joinPath, promptNodeId, resolveString } from './prompt_paths.js';
 import { browseResources, posterUrl, VIDEO_ICON } from './resource_browser.js';
 import { installSelectionGuards, preservingSelections, registerSelectionOwner } from './selection_context.js';
-import { takeSources } from './take_sources.js';
+import { takeCatalog, takeSources } from './take_sources.js';
 import { installCodecCrf } from './video_encoding.js';
 import { hideWidget, setWidget } from './widgets.js';
 
@@ -122,13 +122,16 @@ function info(entry) {
 /** Current segment takes for explicit refresh and recorded predecessors for join previews. */
 function directorView() {
   const segments = new Map();
+  const legacy = new Map();
   const predecessors = new Map();
   for (const source of takeSources())
     for (const segment of source.segments) {
-      segments.set(segment.segment, segment);
+      // Old edits carry only a film-local ID. Ambiguous IDs must never refresh from another film.
+      legacy.set(segment.segment, legacy.has(segment.segment) ? null : segment);
+      if (segment.uid) segments.set(segment.uid, segment);
       if (segment.take) predecessors.set(segment.take.take, segment.take.predecessor ?? null);
     }
-  return { segments, predecessors };
+  return { find: (entry) => (entry.segment_uid ? segments.get(entry.segment_uid) : legacy.get(entry.segment)), predecessors };
 }
 
 function rowState(entry) {
@@ -335,6 +338,7 @@ async function importDirector(node, source) {
         ready.map((segment, index) => ({
           ...entryFrom(descriptions[index], 'director', segment.segment),
           take: segment.take.take,
+          segment_uid: segment.uid,
           predecessor: segment.take.predecessor ?? undefined,
         })),
       ),
@@ -348,10 +352,10 @@ async function importDirector(node, source) {
 
 /** Follow Director's current takes for rows that were imported from it; every other row is left alone. */
 async function refreshDirector(node) {
-  const { segments } = directorView();
+  const { find } = directorView();
   const doc = read(node);
   const moved = doc.entries.filter((entry) => {
-    const take = entry.source === 'director' ? segments.get(entry.segment)?.take : null;
+    const take = entry.source === 'director' ? find(entry)?.take : null;
     return take && (take.path !== entry.path || take.take !== entry.take);
   });
   const state = nodes.get(node);
@@ -362,17 +366,23 @@ async function refreshDirector(node) {
   const task = begin(node);
   try {
     const descriptions = await describe(
-      moved.map((entry) => segments.get(entry.segment).take),
+      moved.map((entry) => find(entry).take),
       task.signal,
     );
     if (!task.current()) return;
     const next = read(node);
     moved.forEach((entry, index) => {
-      const take = segments.get(entry.segment).take;
+      const segment = find(entry);
+      const take = segment.take;
       rebindEntry(next, entry.id, descriptions[index], 'director');
       Object.assign(
         next.entries.find((item) => item.id === entry.id),
-        { take: take.take, segment: entry.segment, predecessor: take.predecessor ?? undefined },
+        {
+          take: take.take,
+          segment: entry.segment,
+          segment_uid: segment.uid,
+          predecessor: take.predecessor ?? undefined,
+        },
       );
     });
     state.message = `Updated ${moved.length} rows from Director.`;
@@ -716,18 +726,25 @@ function render(node) {
     (state.plan?.entries ?? []).filter((entry) => entry.state !== 'ok' || entry.message).map((entry) => [entry.id, entry]),
   );
   state.rows = new Map();
+  const identify = takeCatalog(doc.entries.map(info).filter(Boolean));
   const rows = doc.entries.flatMap((entry, index) => {
     const description = info(entry);
     const status = rowState(entry);
     const usable = description && description.state !== 'missing' && description.state !== 'unusable';
     const frames = usable ? entryFrames(entry, description) : null;
-    const name = `${entry.segment ? `${entry.segment} · ` : ''}${bound(entry) ? fileName(entry.path) : entry.take || 'Unbound video'}`;
-    const lead = frames
-      ? `${entry.range ? `${frames} of ${description.frames}` : frames} f · ${seconds((frames * description.fps[1]) / description.fps[0])}`
-      : FLAGS[status] || '—';
-    const rest = usable
-      ? ` · ${description.width}×${description.height} · ${entry.audio === 'none' ? 'Silent' : entry.audio === 'embedded' && description.audio ? 'Embedded' : audioLabel(description.audio)}`
-      : '';
+    const identity =
+      entry.source === 'director' && !description?.take
+        ? identify({
+            path: entry.path,
+            take: { origin: 'director', take: entry.take, segment: entry.segment, identity: { uid: entry.segment_uid } },
+          })
+        : description && identify(description);
+    const name = identity?.name ?? (bound(entry) ? fileName(entry.path) : entry.take || 'Unbound video');
+    const lead = frames ? seconds((frames * description.fps[1]) / description.fps[0]) : FLAGS[status] || '—';
+    const rest = [identity && `Take ${identity.short}`, entry.audio === 'none' && 'Muted', entry.range && 'Trimmed']
+      .filter(Boolean)
+      .map((part) => ' · ' + part)
+      .join('');
     const icon = () => {
       const span = el('span', { className: 'thumb', ariaHidden: 'true' });
       span.innerHTML = VIDEO_ICON;

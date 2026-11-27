@@ -1,3 +1,5 @@
+import { resourceId } from '../common/shared.js';
+
 // Film document helpers for editing and review. Execution validates the same contract on the host.
 const DEFAULT_FILM = {
   brief: '',
@@ -73,9 +75,11 @@ export function readDocument(text) {
 export function clearLocations(text) {
   try {
     const doc = readDocument(text);
+    doc.uid = resourceId();
     doc.assets = [];
     // Overrides are tied to the selected source. Require a fresh crop or clip after reselection.
     for (const segment of doc.segments) {
+      segment.uid = resourceId();
       segment.bindings = segment.bindings.map(({ asset_id, role }) => ({ asset_id, role }));
     }
     return JSON.stringify(doc);

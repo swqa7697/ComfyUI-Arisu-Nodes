@@ -46,10 +46,31 @@ def inspect_assembly(page: Page, server: FixtureServer, name: str):
     expect(panel.get_by_role("button", name="Export the film as a new version", exact=True)).to_be_disabled()
     screenshot(page, name, "assembly-empty")
 
+    # An earlier take of the same segment keeps its own footage and record.
+    earlier = "e7b6d3f0-9074-46f7-9676-0cbede38d651"
+    launch = next(item for item in server.video_segments.values() if item["segment"] == "launch")
+    server.video_segments[earlier] = {**launch, "take": earlier, "created": "2026-11-27T11:51:00Z"}
+    server.video_directed.add(f"{PROJECT}/director/{earlier}/clip.mp4")
     # Project takes: several at once, with footage already in the edit marked.
     panel.get_by_role("button", name="Add published takes of the project", exact=True).click()
     picker = page.get_by_role("dialog", name="Takes of " + PROJECT, exact=True)
-    expect(picker.get_by_role("listitem")).to_have_count(3)
+    expect(picker.get_by_role("listitem")).to_have_count(6)
+    expect(picker.locator(".take .name").first).to_have_text("Segment 01")
+    expect(picker.locator(".take .name").nth(2)).to_have_text("Segment 02")
+    expect(picker).not_to_contain_text("Launch the paper boat")
+    picker.get_by_label("Filter takes", exact=True).fill("paper boat")
+    expect(picker.get_by_role("listitem")).to_have_count(2)
+    expect(picker.get_by_role("listitem").first).to_contain_text("Director choice")
+    preview = picker.get_by_role("button", name="Preview Segment 01", exact=False).first
+    preview.focus()
+    page.keyboard.press("Enter")
+    expect(picker.locator("video:visible")).to_have_count(1)
+    preview.click()
+    expect(picker.locator("video:visible")).to_have_count(0)
+    picker.get_by_label("Filter takes", exact=True).fill("")
+    page.wait_for_function(
+        "Array.from(document.querySelectorAll('.take-thumb img')).length === 6 && Array.from(document.querySelectorAll('.take-thumb img')).every(img => img.naturalWidth > 0)"
+    )
     contained(page, "dialog.arisu-assembly-dialog")
     confirm = picker.get_by_role("button", name="Add Takes", exact=True)
     expect(confirm).to_be_disabled()
@@ -91,7 +112,13 @@ def inspect_assembly(page: Page, server: FixtureServer, name: str):
     browser.locator(".arisu-browser-file").click()
     expect(panel.locator(".entry")).to_have_count(5)
     expect(panel.locator(".entry[data-state=ok]")).to_have_count(5)
-    assert names(page) == ["shot_00001_.mp4", "shot_00002_.mp4", "launch · clip_00002_.mp4", "follow · clip_00002_.mp4", "found.webm"]
+    assert names(page) == [
+        "shot_00001_.mp4",
+        "shot_00002_.mp4",
+        "Segment 01",
+        "Segment 02",
+        "found.webm",
+    ]
     assert [row["source"] for row in edit(page, node_id)["entries"]] == ["take", "take", "director", "director", "file"]
     expect(panel.locator(".sum")).to_contain_text("5 of 5 · 240 frames · 10.00 s")
 
@@ -215,7 +242,7 @@ def inspect_assembly(page: Page, server: FixtureServer, name: str):
     screenshot(page, name, "assembly-exported")
 
     # A join between a Director take and its verified predecessor: direct cut first, then the candidate.
-    panel.get_by_role("button", name="Preview the join before follow · clip_00002_.mp4", exact=True).click()
+    panel.get_by_role("button", name="Preview the join before Segment 02", exact=True).click()
     join = page.get_by_role("dialog", name="Preview Join", exact=True)
     expect(join).to_contain_text("Colour signalling matches on both sides.")
     player = join.locator("video")
@@ -258,19 +285,19 @@ def inspect_assembly(page: Page, server: FixtureServer, name: str):
 
     # A plain video and Director footage can share a confirmation. Cancel keeps both files and rows.
     panel.get_by_label("Select found.webm", exact=True).check()
-    panel.get_by_label("Select launch · clip_00002_.mp4", exact=True).check()
+    panel.get_by_label("Select Segment 01", exact=True).check()
     delete.click()
     confirm = page.get_by_role("dialog", name="Delete Files from Disk", exact=True)
-    expect(confirm.get_by_role("button", name="Delete 1 Folder and 3 Files", exact=True)).to_be_enabled()
+    expect(confirm.get_by_role("button", name="Delete 1 Folder and 5 Files", exact=True)).to_be_enabled()
     director_folder = "output:" + imported[0]["path"].rsplit("/", 1)[0] + "/"
     expect(confirm.get_by_text(director_folder, exact=True)).to_be_visible()
-    expect(confirm).to_contain_text(director_folder + "clip_00001.safetensors")
+    expect(confirm).to_contain_text(director_folder + "clip.arisu/latent.safetensors")
     expect(confirm).to_contain_text("output:" + imported[0]["path"])
     expect(confirm).to_contain_text("output:" + edit(page, node_id)["entries"][-1]["path"])
     confirm.get_by_role("button", name="Cancel", exact=True).click()
     expect(panel.locator(".entry")).to_have_count(5)
     assert not server.video_deleted
-    panel.get_by_label("Select launch · clip_00002_.mp4", exact=True).uncheck()
+    panel.get_by_label("Select Segment 01", exact=True).uncheck()
     panel.get_by_label("Select found.webm", exact=True).uncheck()
     panel.get_by_label("Select shot_00002_.mp4", exact=True).check()
     delete.click()

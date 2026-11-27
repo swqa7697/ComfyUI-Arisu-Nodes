@@ -427,7 +427,10 @@ def test_workbench_routes_reject_untrusted_requests_and_queue_only_preparation(t
                 ):
                     assert "error" in await director_job(task, "inspect" if task == "refine" else "", wrong, expected_status=400)
                 replacement = json.loads(result["draft"])["segment"]
-                assert replacement["id"] == "opening" and replacement["seconds"] == 9 and document["segments"][0] == segments[0]
+                stable_uid = document["segments"][0]["uid"]
+                assert replacement["uid"] == document["segments"][1]["uid"] and replacement["uid"] != stable_uid
+                assert replacement["id"] == "opening" and replacement["seconds"] == 9
+                assert document["segments"][0] == {**segments[0], "uid": stable_uid}
                 assert (
                     replacement["bindings"] == [{"asset_id": "box", "role": "image"}]
                     and replacement["prompt"] == "Open <Picture:box> slowly."

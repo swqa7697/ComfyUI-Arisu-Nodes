@@ -104,6 +104,21 @@ def test_save_video_segment_publishes_measured_takes_and_leaves_nothing_on_failu
     unscoped = record(output, save(video, take_context=context))
     assert unscoped["project"] is None and unscoped["video"]["path"] == f"arisu_director/{TAKE}/clip_00001_.mp4"
 
+    # A new Director render publishes one unnumbered, resumable take with its immutable segment identity.
+    identity = {"uid": "adee7502-21a3-474d-8b60-e2952dcb5523", "order": 2, "title": "Cross the bridge"}
+    current = json.dumps({**json.loads(context), "identity": identity})
+    streams = [torch.zeros(1, 4, 2, 2, 2), torch.ones(1, 2, 3)]
+    options = {"project_prefix": "film", "take_context": current, "director_latent": {"samples": streams}}
+    result = save(video, **options)
+    modern = record(output, result)
+    assert modern["identity"] == identity and modern["video"]["path"] == f"film/director/{TAKE}/clip.mp4"
+    latent = result["latents"][0]
+    restored = comfy.utils.load_torch_file(str(output / latent["subfolder"] / latent["filename"]))
+    assert all(torch.equal(restored[name], tensor) for name, tensor in zip(("video", "audio"), streams))
+    with pytest.raises(FileExistsError):
+        save(video, **options)
+    assert record(output, result) == modern
+
     # Each encoder honours its own CRF scale: a lower value keeps more of a noisy picture.
     sizes = {}
     for codec, low, high in (("h264", 14, 40), ("h265", 14, 40), ("av1", 20, 55)):

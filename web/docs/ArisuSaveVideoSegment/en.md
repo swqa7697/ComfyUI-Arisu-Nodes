@@ -58,7 +58,7 @@ output/P/videos/
 - `audio.wav` exists when the segment has sound: the trimmed waveform as floating-point PCM at its own sample rate
   and channel layout.
 
-Every run creates a new take with the next counter. An earlier take is never overwritten, so several candidates of
+Each ordinary save creates a new take with the next counter for its clip name. An earlier take is never overwritten, so several candidates of
 the same segment stay available for comparison.
 
 ## Wiring
@@ -78,6 +78,9 @@ Set **Create Video**'s `codec` to `none` so the frames reach this node unencoded
 - Trim the Motion Context overlap before **Create Video**, from both picture and sound. The saver does not trim: the
   frames it receives are the frames an assembly uses.
 - Director Workbench selects the take directory automatically. With a project it saves each take under
-  `P/director/<take id>/`, together with that take's latent. Without a project it uses `arisu_director/<take id>/`.
+  `P/director/<take UUID>/clip.mp4`. Its `clip.arisu/` directory holds `take.json`, `latent.safetensors` for a continuation,
+  and `audio.wav` when sound is present. A blank project uses `arisu_director/<take UUID>/`.
+  In `take.json`, `identity.uid` identifies the segment across renders and reorders. The separate `take` UUID matches
+  the directory name for this render. The record also captures the film UUID, segment description and film order at render time.
 - A cancelled or failed save leaves no partial take behind.
 - The MP4 carries the prompt and workflow like **Save Video**, unless ComfyUI runs with `--disable-metadata`.

@@ -10,6 +10,7 @@ import threading
 import uuid
 from fractions import Fraction
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Dict, List
 
 import folder_paths
@@ -73,6 +74,13 @@ def test_video_routes_describe_plan_and_delete_confirmed_videos(tmp_path: Path, 
     assert shutil.which("ffmpeg") and shutil.which("ffprobe")
     app = serve(tmp_path, monkeypatch)
     output, external = tmp_path / "output", tmp_path / "external"
+    # A legacy stock Director file can recover its recorded segment without a live workflow or sidecar.
+    old_film = {"selected": "s1", "segments": [{"id": "s1", "intent": "The boat enters the bay"}]}
+    old_graph = {
+        "1": {"class_type": "ArisuMiniMaxH3DirectorWorkbench", "inputs": {"film_json": json.dumps(old_film)}},
+        "2": {"class_type": "SaveVideo", "inputs": {"filename_prefix": f"arisu_director/{TAKE}/clip"}},
+    }
+    monkeypatch.setattr(ArisuSaveVideoSegment, "hidden", SimpleNamespace(prompt=old_graph))
     first, second = take(output), take(output, 30)
     directed = take(output, take_context=json.dumps({"take": TAKE, "segment": "s1", "predecessor": None, "transition": "cut"}))
     # A restored take keeps its metadata and PCM even when the filesystem gives both files new identities.
@@ -112,6 +120,8 @@ def test_video_routes_describe_plan_and_delete_confirmed_videos(tmp_path: Path, 
                 wider["takes"][-1]["path"] == f"arisu_director/{TAKE}/clip_00001_.mp4"
                 and wider["takes"][-1]["take"]["origin"] == "director"
             )
+
+            assert wider["takes"][-1]["take"]["recorded_segment"] == {"segment": "s1", "order": 1, "title": "The boat enters the bay"}
 
             ask = [
                 {"root": "external", "path": "found.mp4"},

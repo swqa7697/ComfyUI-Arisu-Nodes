@@ -59,7 +59,7 @@ class Reservation:
 
     @property
     def name(self) -> str:
-        return f"{self.stem}_{self.counter:05}_"
+        return f"{self.stem}_{self.counter:05}_" if self.counter else self.stem
 
     @property
     def companion(self) -> str:
@@ -94,7 +94,7 @@ def _claim(directory: str, stem: str, counter: int) -> Reservation:
     raise OSError("no free take counter")
 
 
-def reserve_take(output_root: str, directory: str, stem: str) -> Reservation:
+def reserve_take(output_root: str, directory: str, stem: str, *, directed: bool = False) -> Reservation:
     """Create the take directory inside output and claim the next counter with an exclusive ``mkdir``.
 
     Containment is checked before the directory is created and again afterwards. The claim is safe across
@@ -103,6 +103,20 @@ def reserve_take(output_root: str, directory: str, stem: str) -> Reservation:
     if not stem or stem in (".", ".."):
         raise ValueError("video prefix must end in a filename")
     target = contained_path(output_root, directory, allow_empty=True)
+    if directed:
+        # This saver owns both outputs. A previously claimed UUID is never reused, even after a retry.
+        if not director_take_id(directory) or stem != "clip":
+            raise ValueError("invalid Director destination")
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        target = contained_path(output_root, directory)
+        os.mkdir(target)
+        reservation = Reservation(contained_path(output_root, directory), stem, 0)
+        try:
+            os.mkdir(reservation.companion)
+        except OSError:
+            os.rmdir(target)
+            raise
+        return reservation
     os.makedirs(target, exist_ok=True)
     target = contained_path(output_root, directory, allow_empty=True)
     return _claim(target, stem, _next_counter(target, stem))
@@ -115,6 +129,8 @@ def _publish_video(reservation: Reservation):
             # A hard link publishes atomically and fails when the name exists, including as a symlink.
             os.link(source, reservation.video)
         except FileExistsError:
+            if not reservation.counter:
+                raise
             moved = _claim(reservation.directory, reservation.stem, reservation.counter + 1)
             for name in os.listdir(reservation.companion):
                 os.replace(reservation.part(name), moved.part(name))
@@ -154,7 +170,7 @@ def publish_take(reservation: Reservation, has_audio: bool, build: Callable[[str
 
 def discard_take(reservation: Reservation):
     """Remove one unfinished take: only this job's files, and the companion directory only when it is then empty."""
-    for path in (reservation.published, *(reservation.part(name) for name in (*_PARTS, TAKE_AUDIO, TAKE_RECORD))):
+    for path in (reservation.published, *(reservation.part(name) for name in (*_PARTS, TAKE_AUDIO, TAKE_RECORD, "latent.safetensors"))):
         if path:
             try:
                 os.unlink(path)
@@ -162,6 +178,8 @@ def discard_take(reservation: Reservation):
                 pass
     try:
         os.rmdir(reservation.companion)
+        if not reservation.counter:
+            os.rmdir(reservation.directory)
     except OSError:
         pass
 
@@ -227,7 +245,9 @@ def list_takes(output_root: str, project: str, legacy: bool) -> List[str]:
             stem, extension = posixpath.splitext(name)
             if extension[1:] not in VIDEO_SUFFIXES or _regular(os.path.join(absolute, name)) is None:
                 continue
-            if recorded and _regular(os.path.join(absolute, stem + COMPANION, TAKE_RECORD)) is None:
+            if (recorded or name == "clip.mp4" and director_take_id(directory)) and _regular(
+                os.path.join(absolute, stem + COMPANION, TAKE_RECORD)
+            ) is None:
                 continue
             found.append(posixpath.join(directory, name))
 

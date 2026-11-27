@@ -3,7 +3,7 @@
 // a row and deleting its files. The request bodies asserted here are the ones the video routes parse.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { registerTakeSource } from '../../../web/js/common/take_sources.js';
+import { registerTakeSource, takeCatalog } from '../../../web/js/common/take_sources.js';
 import { api, jsonResponse } from '../support/api.mjs';
 import { commands, extensionNamed, resetApp, toastSeverities } from '../support/app.mjs';
 import { button, described, dialog, edit, makeAssembly, panel, row, rows, serve, settle, TYPE } from '../support/assembly.mjs';
@@ -119,6 +119,8 @@ test('Assemble Video builds an edit from takes, Director and files, keeps joins 
       {
         segment: 's1',
         label: '01',
+        order: 1,
+        title: 'Opening shot',
         transition: 'cut',
         status: 'Needs rerender',
         take: { take: ID(4), root: 'output', path: D1.path, revision: 'old Director fingerprint', predecessor: null },
@@ -126,6 +128,8 @@ test('Assemble Video builds an edit from takes, Director and files, keeps joins 
       {
         segment: 's2',
         label: '02',
+        order: 2,
+        title: 'River shot',
         transition: 'continuation',
         status: 'Rendered',
         take: { take: ID(5), root: 'output', path: D2_PATH, revision: 'rev:d2', predecessor: ID(4) },
@@ -135,6 +139,33 @@ test('Assemble Video builds an edit from takes, Director and files, keeps joins 
   };
   registerTakeSource('TestDirector', () => film);
   makeNode({ id: 2, type: 'TestDirector', graph });
+  // A moved or removed segment keeps its take identity. A standalone Assembly uses the latest saved film order.
+  const filmId = ID(8),
+    uid = ID(6),
+    other = ID(7);
+  const prior = {
+    path: 'prior/clip.mp4',
+    take: {
+      take: ID(4),
+      origin: 'director',
+      created: '2026-11-01',
+      identity: { film: filmId, uid, order: 1, title: 'Opening', sequence: [uid, other] },
+    },
+  };
+  const later = {
+    path: 'later/clip.mp4',
+    take: {
+      take: ID(5),
+      origin: 'director',
+      created: '2026-11-02',
+      identity: { film: filmId, uid: other, order: 1, title: 'Ending', sequence: [other, uid] },
+    },
+  };
+  assert.equal(takeCatalog([prior, later])(prior).order, 2);
+  film.film = filmId;
+  film.segments[0].uid = uid;
+  assert.equal(takeCatalog([prior, later])(prior).name, 'Segment 01');
+  assert.equal(takeCatalog([prior, later])(later).name, 'Removed segment');
   const node = makeAssembly(Assembly);
   const select = (id, checked = true) => checkboxes(row(node, id))[0].onchange({ target: { checked } });
   assert.equal(button(panel(node), 'Delete Files…').disabled, true);
@@ -267,7 +298,7 @@ test('Assemble Video builds an edit from takes, Director and files, keeps joins 
   for (const entry of [imported, gone, file]) select(entry.id, false);
 
   // replacing the missing Director take keeps the row's place and identity
-  pending = button(row(node, gone.id), `Reselect s2 · clip_00002_.mp4`).onclick();
+  pending = button(row(node, gone.id), 'Reselect Segment 02').onclick();
   await settle();
   button(dialog(), `Use h3_clip_00009_.mp4`).onclick();
   await pending;
@@ -292,7 +323,7 @@ test('Assemble Video builds an edit from takes, Director and files, keeps joins 
   assert.deepEqual(paths(node), ['h3_clip_00008_.mp4', 'h3_clip_00007_.mp4', 'h3_clip_00009_.mp4', 'clip_00002_.mp4', 'old.mp4']);
 
   // excluding keeps the row and takes it out of the film's running length
-  button(row(node, imported.id), 'Exclude s1 · clip_00002_.mp4').onclick();
+  button(row(node, imported.id), 'Exclude Segment 01').onclick();
   assert.equal(edit(node).entries[3].included, false);
   const sum = () => descendants(panel(node)).find((element) => element.className === 'sum').textContent;
   assert.equal(sum(), `4 of 5 · ${221 + 243 + 204 + 48} frames · 29.83 s`);

@@ -20,13 +20,22 @@ export const DIALOG_STYLE = `
 .arisu-assembly-dialog video{width:100%;max-height:46vh;background:#000;}
 .arisu-assembly-dialog .hint{color:var(--descrip-text,#999);font-size:12px;}
 .arisu-assembly-dialog .list{display:flex;flex-direction:column;gap:4px;}
-.arisu-assembly-dialog .take{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:10px;padding:6px 8px;
+.arisu-assembly-dialog .take{display:grid;grid-template-columns:auto clamp(76px,14vw,122px) minmax(0,1fr) auto;align-items:center;column-gap:12px;row-gap:0;padding:8px 10px;
  border:1px solid var(--border-color,#444);border-radius:4px;background:var(--comfy-input-bg,#2a2a2a);}
 .arisu-assembly-dialog .take[data-current]{border-color:var(--arisu-accent);}
-.arisu-assembly-dialog .take .name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.arisu-assembly-dialog .take:has(input:checked){border-color:var(--arisu-accent);}
+.arisu-assembly-dialog button.take-thumb{padding:0;border:0;position:relative;display:grid;place-items:center;align-self:center;aspect-ratio:16/9;background:var(--comfy-menu-bg,#181818);border-radius:3px;overflow:hidden;}
+.arisu-assembly-dialog .take-thumb svg{width:20px;height:20px;opacity:.55;}
+.arisu-assembly-dialog .take-thumb img{position:absolute;width:100%;height:100%;object-fit:contain;background:var(--comfy-menu-bg,#181818);}
+.arisu-assembly-dialog .take .name{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere;font-weight:600;}
+.arisu-assembly-dialog .take-info .detail{margin-top:4px;}
+.arisu-assembly-dialog .take-status{display:grid;gap:3px;justify-items:end;font-size:11px;}
+.arisu-assembly-dialog .take-status span{padding:1px 5px;border:1px solid var(--border-color,#555);border-radius:4px;}
+.arisu-assembly-dialog .play-mark{position:absolute;bottom:4px;right:4px;padding:1px 5px;border-radius:3px;background:#000b;color:white;font-size:10px;}
+.arisu-assembly-dialog .take video{grid-column:1/-1;margin-top:8px;}
+.arisu-assembly-dialog .take-thumb:focus-visible{outline:2px solid var(--arisu-accent);outline-offset:2px;}
+.arisu-assembly-dialog .hint:empty{display:none;}
 .arisu-assembly-dialog .take .detail{color:var(--descrip-text,#999);font-size:12px;font-variant-numeric:tabular-nums;}
-.arisu-assembly-dialog .take details{grid-column:1/-1;}
-.arisu-assembly-dialog .take summary{cursor:pointer;color:var(--descrip-text,#999);font-size:12px;}
 .arisu-assembly-dialog table{border-collapse:collapse;font-size:12px;}
 .arisu-assembly-dialog :is(td,th){padding:3px 10px 3px 0;text-align:left;font-variant-numeric:tabular-nums;}
 .arisu-assembly-dialog .path{overflow-wrap:anywhere;}
