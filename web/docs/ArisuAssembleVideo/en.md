@@ -35,7 +35,7 @@ An ordinary Run writes no film and passes nothing downstream. Only **Export** pr
 
 ## Building the Edit
 
-- **Add Project Takes** shows a still and duration for each clip. Click the still for playback. Search by segment description, number, filename or take ID.
+- **Add Project Takes** shows a still and duration for each clip. Click a still to play the clip in a separate preview dialog. Close it or press Escape to return to the same place in the list. Search by segment description, number, filename or take ID.
   Director takes show the segment number and are grouped in film order. **Director choice** marks the take held by the open Director, and **In edit** marks footage already in the assembly.
   Each rerender has its own short take ID and, when recorded, a creation time. Multiple selected takes enter the edit in the displayed order.
   A standalone assembly uses the most recently rendered sequence for each film. Removed segments keep their footage and follow the active sequence.
@@ -54,7 +54,7 @@ recorded location preserves its segment, predecessor and PCM soundtrack. Plain v
 
 - Drag the handle, or focus it and press the arrow keys, to reorder. **Move Up** and **Move Down** are also reachable by keyboard.
 - The dot excludes a row from the film without removing it. `×` removes it from the edit.
-- `⇄` replaces the take at that position. Each candidate can be played beside the current take.
+- `⇄` replaces the take at that position. Click a candidate’s thumbnail to preview it before choosing **Use**.
 - Click a row to play it, choose its audio source, or, for a video without a take record, skip frames at its head.
   Use the head skip only for a file that still contains its continuation overlap; sound is cut at the same time.
 - Tick several rows and use **Remove Selected**. Undo and redo work from the panel (`Ctrl+Z`, `Ctrl+Shift+Z`).

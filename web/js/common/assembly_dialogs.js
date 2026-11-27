@@ -32,7 +32,10 @@ export const DIALOG_STYLE = `
 .arisu-assembly-dialog .take-status{display:grid;gap:3px;justify-items:end;font-size:11px;}
 .arisu-assembly-dialog .take-status span{padding:1px 5px;border:1px solid var(--border-color,#555);border-radius:4px;}
 .arisu-assembly-dialog .play-mark{position:absolute;bottom:4px;right:4px;padding:1px 5px;border-radius:3px;background:#000b;color:white;font-size:10px;}
-.arisu-assembly-dialog .take video{grid-column:1/-1;margin-top:8px;}
+.arisu-assembly-dialog.take-preview[open]{width:min(900px,92vw);display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;}
+.arisu-assembly-dialog.take-preview h3{border:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.arisu-assembly-dialog.take-preview button{margin:8px 12px;}
+.arisu-assembly-dialog.take-preview video{grid-column:1/-1;display:block;height:auto;max-height:calc(88vh - 54px);object-fit:contain;}
 .arisu-assembly-dialog .take-thumb:focus-visible{outline:2px solid var(--arisu-accent);outline-offset:2px;}
 .arisu-assembly-dialog .hint:empty{display:none;}
 .arisu-assembly-dialog .take .detail{color:var(--descrip-text,#999);font-size:12px;font-variant-numeric:tabular-nums;}
@@ -47,20 +50,21 @@ export const DIALOG_STYLE = `
  * closes it and resolves the returned promise with that value (null when dismissed), and `closing(fn)`
  * registers work for the moment it closes, however that happens.
  */
-export function openDialog(title, build, { signal } = {}) {
+export function openDialog(title, build, { signal, invoker = document.activeElement } = {}) {
   return new Promise((resolve) => {
     let result = null;
     const cleanups = [];
-    const invoker = document.activeElement;
     const dialog = el('dialog', { className: 'arisu-assembly-dialog', ariaLabel: title });
+    const abort = () => dialog.open && dialog.close();
     const finish = (value = null) => {
       result = value;
       dialog.close();
     };
     dialog.onclose = () => {
+      signal?.removeEventListener('abort', abort);
       for (const cleanup of cleanups) cleanup();
       dialog.remove();
-      invoker?.focus?.();
+      invoker?.focus?.({ preventScroll: true });
       resolve(result);
     };
     const content = build(finish, dialog, (cleanup) => cleanups.push(cleanup));
@@ -69,7 +73,7 @@ export function openDialog(title, build, { signal } = {}) {
     document.body.append(dialog);
     dialog.showModal();
     if (signal?.aborted) dialog.close();
-    else signal?.addEventListener('abort', () => dialog.open && dialog.close(), { once: true });
+    else signal?.addEventListener('abort', abort, { once: true });
   });
 }
 

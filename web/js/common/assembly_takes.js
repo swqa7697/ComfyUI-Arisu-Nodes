@@ -8,26 +8,39 @@ import { takeCatalog } from './take_sources.js';
 
 const stamp = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 
-function thumbnail(item, name, player) {
+function previewTake(item, name, invoker, signal) {
+  return openDialog(
+    name,
+    (finish, dialog, closing) => {
+      dialog.classList.add('take-preview');
+      const player = el('video', {
+        controls: true,
+        autoplay: true,
+        playsInline: true,
+        width: item.width,
+        height: item.height,
+        src: mediaUrl(item.root, item.path),
+        ariaLabel: `Video preview of ${name}`,
+      });
+      closing(() => {
+        player.pause();
+        player.removeAttribute('src');
+        player.load();
+      });
+      return [el('button', { textContent: 'Close', autofocus: true, onclick: () => finish() }), player];
+    },
+    { invoker, signal },
+  );
+}
+
+function thumbnail(item, name, signal) {
   const tile = el('button', {
     className: 'take-thumb',
     type: 'button',
     ariaLabel: `Preview ${name}`,
     title: 'Preview',
-    ariaExpanded: 'false',
-    onclick: () => {
-      const open = player.hidden;
-      player.hidden = !open;
-      tile.ariaExpanded = String(open);
-      if (open) {
-        player.src = mediaUrl(item.root, item.path);
-        player.play()?.catch(() => {});
-      } else {
-        player.pause();
-        player.removeAttribute('src');
-        player.load();
-      }
-    },
+    ariaHasPopup: 'dialog',
+    onclick: () => previewTake(item, name, tile, signal),
   });
   tile.innerHTML = VIDEO_ICON;
   const image = el('img', {
@@ -44,14 +57,16 @@ function thumbnail(item, name, player) {
 /**
  * List the project's takes and resolve the chosen descriptions, or null when dismissed.
  *
- * `mode: 'add'` selects any number; `mode: 'replace'` returns one, with each candidate playable
- * beside the take it would replace. `taken(root, path)` marks footage already in the edit and
+ * `mode: 'add'` selects any number; `mode: 'replace'` returns one. Both open footage in a separate
+ * preview dialog. `taken(root, path)` marks footage already in the edit and
  * `current` is the location being replaced.
  */
 export function pickTakes({ project, mode = 'add', taken = () => false, current = null, signal }) {
   return openDialog(
     mode === 'add' ? `Takes of ${project}` : `Replace with a take of ${project}`,
-    (finish, dialog) => {
+    (finish, dialog, closing) => {
+      const previews = new AbortController();
+      closing(() => previews.abort());
       const chosen = new Map();
       let takes = [];
       let identify = takeCatalog();
@@ -103,10 +118,9 @@ export function pickTakes({ project, mode = 'add', taken = () => false, current 
                   },
                 })
               : el('button', { textContent: isCurrent ? 'Keep' : 'Use', ariaLabel: `Use ${accessible}`, onclick: () => finish([take]) });
-          const player = el('video', { controls: true, preload: 'none', hidden: true, ariaLabel: `Video preview of ${accessible}` });
           const row = el('div', { className: 'take', role: 'listitem' }, [
             pick,
-            thumbnail(take, accessible, player),
+            thumbnail(take, accessible, previews.signal),
             el('div', { className: 'take-info' }, [
               el('div', { className: 'name', textContent: label(take), title: take.path }),
               el('div', { className: 'detail', textContent: detail }),
@@ -115,7 +129,6 @@ export function pickTakes({ project, mode = 'add', taken = () => false, current 
               ...(identity?.current ? [el('span', { textContent: 'Director choice' })] : []),
               ...(isCurrent || selected ? [el('span', { textContent: isCurrent ? 'Current' : 'In edit' })] : []),
             ]),
-            player,
           ]);
           if (isCurrent) row.dataset.current = '';
           return row;
