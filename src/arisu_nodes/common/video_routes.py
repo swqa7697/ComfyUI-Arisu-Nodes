@@ -46,7 +46,6 @@ def description(root: str, path: str, source: Source) -> Dict[str, Any]:
     elif directed:
         take = {"take": directed, "origin": "director", "segment": None, "predecessor": None, "transition": None}
     result.update(
-        revision=source.revision,
         frames=video.frames,
         fps=[video.fps.numerator, video.fps.denominator],
         duration=float(video.duration),
@@ -65,7 +64,7 @@ def _takes(project: str, legacy: bool) -> Dict[str, Any]:
     found = list_takes(allowed["output"], project, legacy)
     return {
         "project": project,
-        "takes": [description("output", path, describe_source(allowed, "output", path, None, tools)) for path in found],
+        "takes": [description("output", path, describe_source(allowed, "output", path, tools)) for path in found],
     }
 
 
@@ -77,11 +76,8 @@ def _describe(entries: Any) -> Dict[str, Any]:
     for entry in entries:
         if not isinstance(entry, dict) or not set(entry) <= {"root", "path", "revision"} or not isinstance(entry.get("root"), str):
             raise ValueError("invalid describe request")
-        expected: Optional[str] = entry.get("revision")
-        if expected is not None and not isinstance(expected, str):
-            raise ValueError("invalid describe request")
         path = relative_path(entry.get("path"))
-        described.append(description(entry["root"], path, describe_source(allowed, entry["root"], path, expected, tools)))
+        described.append(description(entry["root"], path, describe_source(allowed, entry["root"], path, tools)))
     return {"entries": described}
 
 

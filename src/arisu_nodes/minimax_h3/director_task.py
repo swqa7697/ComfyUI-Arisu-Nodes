@@ -136,7 +136,7 @@ class DirectorTask:
             raise ValueError("Choose a replacement for the unavailable writing skill (" + ", ".join(missing) + ").")
         receipt = value.get("predecessor")
         if receipt is not None:
-            if not isinstance(receipt, dict) or set(receipt) != {"segment", "take", "project", "video", "revision"}:
+            if not isinstance(receipt, dict) or set(receipt) - {"revision"} != {"segment", "take", "project", "video"}:
                 raise ValueError("Invalid Director predecessor receipt.")
             segments = document["segments"]
             index = next((i for i, segment in enumerate(segments) if segment["id"] == document["selected"]), -1)
@@ -147,7 +147,7 @@ class DirectorTask:
                 or receipt["segment"] != segments[index - 1]["id"]
             ):
                 raise ValueError("The predecessor must belong to the segment immediately before the selected continuation.")
-            selected.predecessor = director_video_ref(receipt["take"], receipt["video"], receipt["project"], receipt["revision"])
+            selected.predecessor = director_video_ref(receipt["take"], receipt["video"], receipt["project"])
         return selected
 
     def prepare_resources(self, roots: Mapping[str, str]) -> ResourceBundle:

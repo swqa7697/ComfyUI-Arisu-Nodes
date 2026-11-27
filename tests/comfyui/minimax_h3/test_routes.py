@@ -56,10 +56,10 @@ def test_resource_routes_browse_probe_ranges_and_reject_untrusted_inputs(tmp_pat
             assert await (await client.get(endpoint, params=params)).json() == {}
             video = directory / params["video"]
             video.write_bytes(b"render")
-            revisions = await (await client.get(endpoint, params=params)).json()
-            assert set(revisions) == {"video", "latent"}
+            files = await (await client.get(endpoint, params=params)).json()
+            assert files == {"video": True, "latent": True}
             video.write_bytes(b"another take")
-            assert (await (await client.get(endpoint, params=params)).json())["video"] != revisions["video"]
+            assert (await (await client.get(endpoint, params=params)).json()) == files
             # A project keeps its takes under <project>/director/<take>, with whatever counter the saver claimed.
             project = {"take": take, "video": "clip_00002_.mp4", "project": "films/night shoot"}
             staged = tmp_path / "output" / "films" / "night shoot" / "director" / take

@@ -48,7 +48,6 @@ def entry(record: Dict[str, Any]) -> Dict[str, Any]:
         "segment": "",
         "root": "output",
         "path": record["video"]["path"],
-        "revision": record["video"]["revision"],
         "included": True,
         "range": None,
         "audio": "auto",
@@ -76,6 +75,12 @@ def test_video_routes_describe_plan_and_delete_confirmed_videos(tmp_path: Path, 
     output, external = tmp_path / "output", tmp_path / "external"
     first, second = take(output), take(output, 30)
     directed = take(output, take_context=json.dumps({"take": TAKE, "segment": "s1", "predecessor": None, "transition": "cut"}))
+    # A restored take keeps its metadata and PCM even when the filesystem gives both files new identities.
+    for media in (directed["video"], directed["audio"]["pcm"]):
+        location = output / media["path"]
+        restored = location.with_suffix(".restored")
+        shutil.copyfile(location, restored)
+        restored.replace(location)
     (output / PROJECT / "director" / TAKE / "clip_00001.safetensors").write_bytes(b"latent")
     # Footage from before this node: a Director render and a stock save, neither with a record.
     legacy = output / "arisu_director" / TAKE
@@ -118,7 +123,7 @@ def test_video_routes_describe_plan_and_delete_confirmed_videos(tmp_path: Path, 
             response = await client.post("/arisu/video/describe", json={"entries": ask})
             text = await response.text()
             described = json.loads(text)["entries"]
-            assert [item["state"] for item in described] == ["ok", "missing", "unusable", "missing", "changed"]
+            assert [item["state"] for item in described] == ["ok", "missing", "unusable", "missing", "ok"]
             # An existing file without companions is an edit reference with embedded sound.
             assert described[0]["audio"]["source"] == "embedded" and described[0]["take"] is None
             assert str(tmp_path) not in text and response.headers["X-Content-Type-Options"] == "nosniff"
@@ -158,13 +163,13 @@ def test_video_routes_describe_plan_and_delete_confirmed_videos(tmp_path: Path, 
             assert (await client.get("/arisu/video/takes", params={"project": "/abs"})).status == 400
 
             def reference(record: Dict[str, Any]) -> Dict[str, str]:
-                return {"root": "output", "path": record["video"]["path"], "revision": record["video"]["revision"]}
+                return {"root": "output", "path": record["video"]["path"], "revision": "legacy revision"}
 
             stock = f"{PROJECT}/videos/stock_00001_.mp4"
             candidates = [
                 reference(first),
                 reference(directed),
-                {"root": "external", "path": "found.mp4", "revision": described[0]["revision"]},
+                {"root": "external", "path": "found.mp4", "revision": "legacy revision"},
                 {"root": "output", "path": stock, "revision": "any"},
                 {**reference(second), "revision": "an older file"},
             ]
@@ -256,7 +261,7 @@ def test_join_preview_is_bounded_and_suggests_only_a_persistent_step(tmp_path: P
     dark, bright, same = take(output, 36, 0.25), take(output, 36, 0.35), take(output, 36, 0.25)
 
     def side(record: Dict[str, Any]) -> Dict[str, Any]:
-        return {"root": "output", "path": record["video"]["path"], "revision": record["video"]["revision"], "range": None}
+        return {"root": "output", "path": record["video"]["path"], "revision": "legacy revision", "range": None}
 
     async def ready(client: TestClient, handle: str) -> Dict[str, Any]:
         for _ in range(600):
@@ -311,8 +316,8 @@ def test_join_preview_is_bounded_and_suggests_only_a_persistent_step(tmp_path: P
             assert (await client.get(f"/arisu/video/join-preview/{handle}")).status == 404 and not directory.exists()
             assert (await ready(client, other))["suggestion"] == {"stable": False, "correction": None}
 
-            stale = {**direct, "incoming": {**side(bright), "revision": "an older file"}}
-            assert (await client.post("/arisu/video/join-preview", json=stale)).status == 409
+            missing = {**direct, "incoming": {**side(bright), "path": "gone.mp4"}}
+            assert (await client.post("/arisu/video/join-preview", json=missing)).status == 409
             for bad in (
                 {**direct, "join": {"correction": None, "fade": 500}},
                 {**direct, "extra": 1},

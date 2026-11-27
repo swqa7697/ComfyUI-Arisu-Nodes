@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 from PIL import Image
 
-from src.arisu_nodes.common.media import StaleResource, UnsupportedMedia, revision_for
+from src.arisu_nodes.common.media import StaleResource, UnsupportedMedia
 from src.arisu_nodes.minimax_h3.core import MotionFootageError, Resource
 from src.arisu_nodes.minimax_h3.director_media import director_video_ref, read_director_tail
 from src.arisu_nodes.minimax_h3.media import metadata, poster, read_audio, read_video, validate_source
@@ -76,20 +76,18 @@ def test_timestamp_sampling_and_audio_boundaries(tmp_path: Path):
         video = tmp_path / directory / "clip_00002_.mkv"
         video.parent.mkdir(parents=True)
         video.write_bytes((tmp_path / source).read_bytes())
-        ref = director_video_ref(take, video.name, project, revision_for(video.stat()))
+        ref = director_video_ref(take, video.name, project)
         frames = list(read_director_tail(output, ref))
         assert [im.getpixel((0, 0))[0] for im, _ in frames] == expected
         assert [at for _, at in frames] == [i / 2 for i in range(len(expected))]
 
-        # The worker must drop partial observations when the published take changes while it is being read.
+        # Restoring the same footage under the take UUID preserves its tail frames.
         tail = read_director_tail(output, ref)
         next(tail)
         video.rename(video.with_suffix(".old"))
         video.write_bytes((tmp_path / source).read_bytes())
-        with pytest.raises(MotionFootageError):
-            list(tail)
-        with pytest.raises(MotionFootageError):
-            list(read_director_tail(output, ref))
+        assert len(list(tail)) == len(expected) - 1
+        assert len(list(read_director_tail(output, ref))) == len(expected)
 
 
 def test_media_refuses_secondary_sources_and_stale_or_escaping_locations(tmp_path: Path):
@@ -120,12 +118,11 @@ def test_media_refuses_secondary_sources_and_stale_or_escaping_locations(tmp_pat
     assert outside.read_bytes() == original
 
     take = "e4a29777-1fd1-4443-b07e-eaa61700aed3"
-    receipt = (take, "clip_00001_.mp4", "", revision_for(outside.stat()))
+    receipt = (take, "clip_00001_.mp4", "")
     for invalid in (
         ("../take", *receipt[1:]),
         (take, "sound.wav", *receipt[2:]),
-        (take, receipt[1], "../project", receipt[3]),
-        (*receipt[:3], ""),
+        (take, receipt[1], "../project"),
     ):
         with pytest.raises(ValueError):
             director_video_ref(*invalid)
@@ -135,5 +132,5 @@ def test_media_refuses_secondary_sources_and_stale_or_escaping_locations(tmp_pat
     for target in (root / "safe.wav", outside):
         alias.symlink_to(target)
         with pytest.raises(MotionFootageError):
-            list(read_director_tail({"output": str(root)}, replace(ref, revision=revision_for(target.stat()))))
+            list(read_director_tail({"output": str(root)}, ref))
         alias.unlink()

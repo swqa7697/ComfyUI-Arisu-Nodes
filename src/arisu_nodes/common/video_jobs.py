@@ -219,11 +219,8 @@ def count_samples(path: str, channels: int, tools: Tools) -> int:
     return total // (4 * channels)
 
 
-def describe_source(roots: Mapping[str, str], root: str, path: str, expected: Optional[str], tools: Tools) -> Source:
-    """The server's current view of one referenced video: contained, measured, and matched to its take record.
-
-    ``expected`` is the revision the edit list holds; ``None`` accepts the current file, as when a file is first added.
-    """
+def describe_source(roots: Mapping[str, str], root: str, path: str, tools: Tools) -> Source:
+    """Measure a contained video and read its take record. The stat fingerprint only keys the probe cache."""
     if not path:
         return Source("missing")
     try:
@@ -248,11 +245,11 @@ def describe_source(roots: Mapping[str, str], root: str, path: str, expected: Op
             while len(_PROBES) > _PROBE_CACHE:
                 _PROBES.popitem(last=False)
     if probe is None:
-        return Source("unusable", absolute, current)
+        return Source("unusable", absolute)
     if probe.video is None:
-        return Source("unusable", absolute, current)
-    record, pcm, lost = take_companion(roots["output"], path, current) if root == "output" else (None, None, False)
-    return Source("ok" if expected is None or expected == current else "changed", absolute, current, probe, record, pcm, lost)
+        return Source("unusable", absolute)
+    record, pcm, lost = take_companion(roots["output"], path) if root == "output" else (None, None, False)
+    return Source("ok", absolute, probe, record, pcm, lost)
 
 
 def run_supervised(
@@ -406,17 +403,7 @@ class ExportRefused(ValueError):
 
 def describe_entries(roots: Mapping[str, str], document: EditDocument, tools: Tools) -> Dict[str, Source]:
     """Measure every included entry of an edit list."""
-    return {entry.id: describe_source(roots, entry.root, entry.path, entry.revision, tools) for entry in document.entries if entry.included}
-
-
-def _unchanged(expected: Mapping[str, str]):
-    for path, revision in expected.items():
-        try:
-            current = revision_for(os.stat(path))
-        except OSError as error:
-            raise StaleResource("a source disappeared during export") from error
-        if current != revision:
-            raise StaleResource("a source changed during export")
+    return {entry.id: describe_source(roots, entry.root, entry.path, tools) for entry in document.entries if entry.included}
 
 
 def export_film(
@@ -430,8 +417,8 @@ def export_film(
 ) -> Dict[str, Any]:
     """Export one version of a film and return its record; the same job returns its published export.
 
-    The snapshot is the validated document. Sources are rechecked before the media process opens them and
-    after it exits, and the version directory appears only when the film and its record are complete.
+    The snapshot is the validated document. Source locations are checked before the media process opens them.
+    The version directory appears only when the film and its record are complete.
     """
     output_root = roots["output"]
     published = find_export(output_root, request.project, request.name, job)
@@ -443,26 +430,25 @@ def export_film(
         raise ExportRefused(refusal(plan))
     if tools.ffmpeg is None:
         log_fallback("export", plan.codec)
-    expected = {entry.path: sources[entry.id].revision for entry in plan.entries}
+    inputs = {(entry.root, entry.path): sources[entry.id].path for entry in document.entries if entry.included}
+    locations = {}
     for entry in plan.entries:
         if entry.audio == "pcm":
-            expected[entry.audio_path] = sources[entry.id].pcm.revision
+            path = sources[entry.id].record["audio"]["pcm"]["path"]
+            inputs[("output", path)] = entry.audio_path
+            locations[entry.id] = {"path": path}
     try:
         workspace = export_workspace(output_root, request.project, job)
     except FileExistsError as error:
         raise ExportRefused("this export is already running") from error
     try:
         film = os.path.join(workspace, "film.mp4")
-        with reading(sorted(expected)):
-            _unchanged(expected)
+        with reading(sorted(set(inputs.values()))):
+            for (root, path), resolved in inputs.items():
+                if source_path(roots, root, path) != resolved:
+                    raise ExportRefused("a source no longer resolves to its selected location")
             run_export(plan, tools, workspace, film, check, lambda frame: progress(frame, plan.frames))
-            _unchanged(expected)
         validate_export(film, plan, tools)
-        locations = {}
-        for entry in plan.entries:
-            registered = ((sources[entry.id].record or {}).get("audio") or {}).get("pcm") if entry.audio == "pcm" else None
-            if registered:
-                locations[entry.id] = {"path": registered["path"], "revision": registered["revision"]}
 
         def build(counter: int, named: str) -> Dict[str, Any]:
             info = os.stat(named)
@@ -475,7 +461,6 @@ def export_film(
                 film={
                     "root": "output",
                     "path": posixpath.join(request.project, "exports", label, label + ".mp4"),
-                    "revision": revision_for(info),
                     "size": info.st_size,
                 },
                 backend={"name": tools.backend, "version": tools.version, "probe": "ffprobe" if tools.ffprobe else tools.backend},
@@ -542,11 +527,11 @@ class PreviewManager:
         self._sweep()
         sides = []
         for side in (outgoing, incoming):
-            if not isinstance(side, dict) or set(side) != {"root", "path", "revision", "range"}:
+            if not isinstance(side, dict) or set(side) - {"revision"} != {"root", "path", "range"}:
                 raise ValueError("invalid join preview request")
-            source = describe_source(roots, side["root"], side["path"], side["revision"], tools)
+            source = describe_source(roots, side["root"], side["path"], tools)
             if source.state != "ok":
-                raise StaleResource("a join source is missing or changed")
+                raise StaleResource("a join source is missing or unusable")
             sides.append((side, source))
         if (
             not isinstance(join, dict)
@@ -579,7 +564,12 @@ class PreviewManager:
             if not isinstance(applied, dict):
                 raise ValueError("invalid join preview correction")
             # A candidate is held to the same bounds as a stored correction, on the preview's own slice of the join.
-            basis = {"prev_revision": before.revision, "prev_end": ranges[0][1], "revision": after.revision, "start": ranges[1][0]}
+            basis = {
+                "prev_source": f"{left['root']}:{left['path']}",
+                "prev_end": ranges[0][1],
+                "source": f"{right['root']}:{right['path']}",
+                "start": ranges[1][0],
+            }
             applied = parse_correction({**applied, "basis": basis})
 
         def plan(correction: Optional[Correction], fade: int) -> ExportPlan:
@@ -591,7 +581,6 @@ class PreviewManager:
                     "",
                     side["root"],
                     side["path"],
-                    source.revision,
                     True,
                     span,
                     "auto",

@@ -47,7 +47,6 @@ from .core import (
     resolve_image_path,
     tail_start,
 )
-from .media import revision_for
 from .paths import image_roots, select_root
 from .video import (
     AAC_RATES,
@@ -1000,7 +999,7 @@ class ArisuSaveVideoSegment(io.ComfyNode):
         embedded: int,
         audio_path: Optional[str],
     ) -> Dict[str, Any]:
-        """Describe the published files; revisions are read from the final names."""
+        """Describe the published video and its optional PCM soundtrack."""
         info = os.stat(reservation.video)
         audio = None
         if waveform is not None and audio_path is not None:
@@ -1014,7 +1013,6 @@ class ArisuSaveVideoSegment(io.ComfyNode):
                 "pcm": {
                     "root": "output",
                     "path": posixpath.join(directory, reservation.name + ".arisu", TAKE_AUDIO),
-                    "revision": revision_for(pcm),
                     "size": pcm.st_size,
                     "format": "f32le",
                 },
@@ -1025,7 +1023,6 @@ class ArisuSaveVideoSegment(io.ComfyNode):
             project=project,
             context=context,
             path=posixpath.join(directory, reservation.name + ".mp4"),
-            revision=revision_for(info),
             size=info.st_size,
             video=video,
             encoder=encoder,

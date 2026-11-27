@@ -30,7 +30,6 @@ const entry = (id, item, extra = {}) => ({
   segment: '',
   root: 'output',
   path: item.path,
-  revision: item.revision,
   included: true,
   range: null,
   audio: 'auto',
@@ -167,7 +166,8 @@ test('Assemble Video exports one checked job through the queue, recovers it afte
     target.inputs.find((input) => input.name === 'project_prefix').link = 1;
     return target;
   };
-  let node = wire(makeAssembly(Assembly, { values: { edit_json: JSON.stringify(DOCUMENT) } }));
+  const legacyEdit = { ...DOCUMENT, entries: DOCUMENT.entries.map((row) => ({ ...row, revision: 'obsolete fingerprint' })) };
+  let node = wire(makeAssembly(Assembly, { values: { edit_json: JSON.stringify(legacyEdit) } }));
   await settle();
   assert.deepEqual(states(node), ['ok', 'ok', 'ok']);
 
@@ -281,11 +281,11 @@ test('Assemble Video exports one checked job through the queue, recovers it afte
   [node] = await app.loadGraphData({ nodes: [exported] }, true, true, null);
   await settle();
   assert.deepEqual(
-    edit(node).entries.map((item) => [item.id, item.take, item.path, item.revision, item.range]),
+    edit(node).entries.map((item) => [item.id, item.take, item.path, item.range]),
     [
-      [ID(7), ID(1), '', '', null],
-      [ID(8), ID(2), '', '', [0, 200]],
-      [ID(9), '', '', '', null],
+      [ID(7), ID(1), '', null],
+      [ID(8), ID(2), '', [0, 200]],
+      [ID(9), '', '', null],
     ],
   );
   assert.deepEqual(edit(node).output, SPEC);
@@ -298,12 +298,8 @@ test('Assemble Video exports one checked job through the queue, recovers it afte
   await button(panel(node), `Rebind from Project ${PROJECT}`).onclick();
   assert.deepEqual(server.takes, [{ project: PROJECT }]);
   assert.deepEqual(
-    edit(node).entries.map((item) => [item.path, item.revision]),
-    [
-      [A.path, 'rev:replaced'],
-      [B.path, B.revision],
-      ['', ''],
-    ],
+    edit(node).entries.map((item) => item.path),
+    [A.path, B.path, ''],
   );
   assert.deepEqual(states(node), ['ok', 'ok', 'unbound']);
   assert(button(rows(node)[2], 'Reselect Unbound video'));
@@ -317,13 +313,13 @@ test('Assemble Video exports one checked job through the queue, recovers it afte
   Assembly.prototype.onConfigure.call(copy);
   assert.deepEqual([edit(copy).entries.map((item) => item.path), copy.properties.arisuAssembly], [['', '', ''], undefined]);
 
-  // reopening a saved workflow revalidates every file; a different file at the same location is flagged, never accepted
+  // reopening a saved workflow revalidates every file; a readable file at the saved location remains usable
   const kept = edit(node);
   server.files.set(A.path, { ...A, revision: 'rev:other' });
   [node] = await app.loadGraphData({ nodes: [serialized(node)] }, true, true, persisted);
   await settle();
   assert.deepEqual(edit(node), kept);
-  assert.deepEqual(states(node), ['changed', 'ok', 'unbound']);
+  assert.deepEqual(states(node), ['ok', 'ok', 'unbound']);
 
   // A changed location can be reviewed with an unbound row selected. Only the file actually reviewed can be confirmed.
   const selectRow = (index) =>
@@ -341,7 +337,7 @@ test('Assemble Video exports one checked job through the queue, recovers it afte
   const deleting = button(panel(node), 'Delete Files…').onclick();
   await settle();
   assert.deepEqual(JSON.parse(api.calls.at(-1).init.body), {
-    entries: [{ root: A.root, path: A.path, revision: 'rev:replaced' }],
+    entries: [{ root: A.root, path: A.path, revision: '' }],
     confirm: false,
   });
   let finishDeletion;

@@ -51,7 +51,6 @@ def entry(record: Dict[str, Any], **changes: Any) -> Dict[str, Any]:
         "segment": "",
         "root": "output",
         "path": video["path"],
-        "revision": video["revision"],
         "included": True,
         "range": None,
         "audio": "auto",
@@ -144,11 +143,12 @@ def test_assemble_video_exports_the_planned_timeline_and_versions(tmp_path: Path
             export(entries, str(uuid.uuid4()))
     assert listing(output) == before
 
-    # A replaced source asks for reselection instead of exporting different footage.
+    # Restored footage still exports as the saved take and uses its registered PCM.
     replaced = output / records[1]["video"]["path"]
     replaced.write_bytes(replaced.read_bytes())
-    with pytest.raises(ExportRefused, match="entry 2"):
-        export(entries, str(uuid.uuid4()))
+    restored = json.loads(export(entries, str(uuid.uuid4())).args[2])["entries"][1]
+    assert restored["take"] == records[1]["take"] and restored["audio"]["source"] == "pcm"
+    before = listing(output)
     with pytest.raises(ExportRefused):
         export([{**item, "included": False} for item in entries], str(uuid.uuid4()))
     assert listing(output) == before
@@ -169,7 +169,7 @@ def test_assemble_video_conforms_mixed_sources_in_one_encode(tmp_path: Path, mon
     silent = take(output, 24, sound=False, name="silent")
     wide = take(output, 48, rate=48000, name="wide")
     other = take(output, 48, codec="h265", name="other")
-    basis = {"prev_revision": wide["video"]["revision"], "prev_end": 48, "revision": other["video"]["revision"], "start": 0}
+    basis = {"prev_source": "output:" + wide["video"]["path"], "prev_end": 48, "source": "output:" + other["video"]["path"], "start": 0}
     correction = {"luma_gain": 1.0, "luma_offset": 0.05, "cb_offset": 0.0, "cr_offset": 0.0, "taper": 12, "basis": basis}
     entries = [
         entry(first),

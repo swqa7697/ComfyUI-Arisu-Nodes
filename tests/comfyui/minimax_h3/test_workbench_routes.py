@@ -16,7 +16,6 @@ from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 from PIL import Image
 
-from src.arisu_nodes.common.media import revision_for
 from src.arisu_nodes.common.paths import CONFIG_NAME, CONFIG_TEMPLATE, read_configuration
 from src.arisu_nodes.minimax_h3 import workbench_routes
 from src.arisu_nodes.minimax_h3.agent_docker import IMAGE_SOURCE_LABEL, POLICY_REVISION, image_source_digest
@@ -200,7 +199,6 @@ def test_workbench_routes_reject_untrusted_requests_and_queue_only_preparation(t
                 "project": "film",
                 "take": take,
                 "video": footage.name,
-                "revision": revision_for(footage.stat()),
                 "segment": "arrival",
             }
             video_id = "57ee5edb-dac7-4290-aeea-22c86896dbdd"
@@ -419,8 +417,8 @@ def test_workbench_routes_reject_untrusted_requests_and_queue_only_preparation(t
                 assert result["director_tail_frames"] is False
                 with_footage = await director_job("refine", "use the footage", receipt)
                 assert with_footage["state"] == "complete" and with_footage["director_tail_frames"] is True, with_footage
-                stale = await director_job("refine", "use the plan", {**receipt, "revision": "0" * 64})
-                assert stale["state"] == "complete" and stale["director_tail_frames"] is False, stale
+                legacy = await director_job("refine", "use the footage", {**receipt, "revision": "0" * 64})
+                assert legacy["state"] == "complete" and legacy["director_tail_frames"] is True, legacy
                 for task, wrong in (
                     ("plan", receipt),
                     ("refine", {**receipt, "segment": "opening"}),

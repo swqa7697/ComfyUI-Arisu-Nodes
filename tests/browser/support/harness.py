@@ -66,8 +66,8 @@ class FixtureServer:
         self.video_deleted: Set[str] = set()
         self.video_directed: Set[str] = set()
         self.previews: Dict[str, Dict[str, Any]] = {}
-        # File revisions of Director takes that stay on a node after its render fixture ends.
-        self.director_takes: Dict[str, Dict[str, str]] = {}
+        # Available files of Director takes that stay on a node after its render fixture ends.
+        self.director_takes: Dict[str, Dict[str, bool]] = {}
         self.loop = asyncio.new_event_loop()
         self.thread = threading.Thread(target=self.loop.run_forever, daemon=True)
         self.runner: Optional[web.AppRunner] = None
@@ -191,7 +191,6 @@ class FixtureServer:
             "root": root,
             "path": path,
             "state": "ok",
-            "revision": "video-revision" if directed else "revision-" + name,
             "frames": 48,
             "fps": [24, 1],
             "duration": 2.0,
@@ -237,7 +236,7 @@ class FixtureServer:
             results = []
             for entry in body["entries"]:
                 found = self.video_description(entry["root"], entry["path"])
-                revision = "review-" + found["revision"] if found["state"] == "ok" else ""
+                revision = "review-" + found["path"] if found["state"] == "ok" else ""
                 allowed = bool(revision) and (not body["confirm"] or entry["revision"] == revision)
                 files = []
                 directory = None

@@ -58,7 +58,7 @@ MAX_INCLUDED = 100
 MAX_FADE_MS = 50
 EMPTY_EDIT = '{"version":1,"output":null,"entries":[]}'
 _SOURCE_CODECS = {"h264": "h264", "hevc": "h265", "av1": "av1"}
-_ENTRY_KEYS = {"id", "source", "take", "segment", "root", "path", "revision", "included", "range", "audio", "join"}
+_ENTRY_KEYS = {"id", "source", "take", "segment", "root", "path", "included", "range", "audio", "join"}
 _CORRECTION_BOUNDS = {"luma_gain": (0.90, 1.10), "luma_offset": (-0.06, 0.06), "cb_offset": (-0.04, 0.04), "cr_offset": (-0.04, 0.04)}
 
 
@@ -228,7 +228,6 @@ def take_record(
     project: Optional[str],
     context: Mapping[str, Optional[str]],
     path: str,
-    revision: str,
     size: int,
     video: VideoInfo,
     encoder: str,
@@ -252,7 +251,6 @@ def take_record(
         "video": {
             "root": "output",
             "path": path,
-            "revision": revision,
             "size": size,
             "frames": video.frames,
             "fps": _fraction(video.fps),
@@ -294,7 +292,7 @@ def read_take_record(text: str) -> Dict[str, Any]:
     video, audio, take = record.get("video"), record.get("audio"), record.get("take")
     if not isinstance(take, str) or not _UUID.fullmatch(take) or not isinstance(video, dict):
         raise ValueError("invalid take record")
-    if video.get("root") != "output" or not isinstance(video.get("revision"), str):
+    if video.get("root") != "output":
         raise ValueError("invalid take record")
     relative_path(video.get("path"))
     _pair(video.get("fps"))
@@ -308,7 +306,7 @@ def read_take_record(text: str) -> Dict[str, Any]:
             raise ValueError("invalid take record")
         pcm = audio.get("pcm")
         if pcm is not None:
-            if not isinstance(pcm, dict) or pcm.get("root") != "output" or not isinstance(pcm.get("revision"), str):
+            if not isinstance(pcm, dict) or pcm.get("root") != "output":
                 raise ValueError("invalid take record")
             relative_path(pcm.get("path"))
     return record
@@ -323,7 +321,6 @@ def take_summary(record: Mapping[str, Any]) -> Dict[str, Any]:
         "origin": record.get("origin", "ordinary"),
         "root": video["root"],
         "path": video["path"],
-        "revision": video["revision"],
         "frames": video["frames"],
         "fps": video["fps"],
         "duration": float(Fraction(video["frames"]) / fps),
@@ -371,12 +368,15 @@ class Entry:
     segment: str
     root: str
     path: str
-    revision: str
     included: bool
     range: Optional[Tuple[int, int]]
     audio: str
     correction: Optional[Correction]
     fade: int
+
+    @property
+    def source_key(self) -> str:
+        return f"{self.root}:{self.path}"
 
 
 @dataclass(frozen=True)
@@ -427,7 +427,6 @@ class PcmSource:
     rate: int
     channels: int
     samples: int
-    revision: str = ""
 
 
 @dataclass(frozen=True)
@@ -436,7 +435,6 @@ class Source:
 
     state: str
     path: str = ""
-    revision: str = ""
     probe: Optional[Probe] = None
     record: Optional[Mapping[str, Any]] = None
     pcm: Optional[PcmSource] = None
@@ -524,21 +522,24 @@ def parse_correction(value: Any) -> Optional[Correction]:
     basis = value["basis"]
     if type(value["taper"]) is not int or not 1 <= value["taper"] <= 96 or not isinstance(basis, dict):
         raise _bad("colour correction taper")
-    if set(basis) != {"prev_revision", "prev_end", "revision", "start"}:
+    if set(basis) != {"prev_source", "prev_end", "source", "start"}:
         raise _bad("colour correction basis")
-    if not all(isinstance(basis[key], str) for key in ("prev_revision", "revision")) or not all(
+    if not all(isinstance(basis[key], str) for key in ("prev_source", "source")) or not all(
         type(basis[key]) is int for key in ("prev_end", "start")
     ):
         raise _bad("colour correction basis")
-    return Correction(*numbers, value["taper"], (basis["prev_revision"], basis["prev_end"], basis["revision"], basis["start"]))
+    return Correction(*numbers, value["taper"], (basis["prev_source"], basis["prev_end"], basis["source"], basis["start"]))
 
 
-def _entry(value: Any) -> Entry:
-    if not isinstance(value, dict) or set(value) != _ENTRY_KEYS:
+def _entry(value: Any, previous: Optional[Dict[str, Any]]) -> Entry:
+    if not isinstance(value, dict) or set(value) - {"revision", "predecessor"} != _ENTRY_KEYS:
         raise _bad("entry fields")
-    texts = {key: value[key] for key in ("id", "source", "take", "segment", "root", "path", "revision")}
+    texts = {key: value[key] for key in ("id", "source", "take", "segment", "root", "path")}
     if not all(isinstance(text, str) and len(text) <= 1024 and "\x00" not in text for text in texts.values()):
         raise _bad("entry text")
+    predecessor = value.get("predecessor")
+    if predecessor is not None and (not isinstance(predecessor, str) or not _UUID.fullmatch(predecessor)):
+        raise _bad("predecessor take")
     join = value["join"]
     if not _UUID.fullmatch(texts["id"]) or texts["source"] not in ("take", "director", "file") or type(value["included"]) is not bool:
         raise _bad("entry identity")
@@ -548,6 +549,14 @@ def _entry(value: Any) -> Entry:
         raise _bad(f"fade outside 0 to {MAX_FADE_MS} ms")
     # An entry that lost its location on import stays in the list until the user rebinds it.
     path = relative_path(texts["path"]) if texts["path"] else ""
+    # Old edits tied colour corrections to two saved fingerprints. Translate their document-local
+    # references once, without inspecting either file.
+    correction = join["correction"]
+    basis = correction.get("basis") if isinstance(correction, dict) else None
+    if isinstance(basis, dict) and set(basis) == {"prev_revision", "prev_end", "revision", "start"}:
+        for old, new, row in (("prev_revision", "prev_source", previous), ("revision", "source", value)):
+            saved = basis.pop(old)
+            basis[new] = f"{row['root']}:{row['path']}" if row and isinstance(saved, str) and row.get("revision") == saved else ""
     return Entry(
         texts["id"],
         texts["source"],
@@ -555,7 +564,6 @@ def _entry(value: Any) -> Entry:
         texts["segment"],
         texts["root"],
         path,
-        texts["revision"],
         value["included"],
         _frame_pair(value["range"]),
         value["audio"],
@@ -601,12 +609,20 @@ def parse_edit(value: Union[str, Mapping[str, Any]]) -> EditDocument:
         raise _bad("unsupported version")
     if not isinstance(data["entries"], list) or len(data["entries"]) > MAX_ENTRIES:
         raise _bad(f"more than {MAX_ENTRIES} entries")
-    entries = tuple(_entry(item) for item in data["entries"])
+    entries = []
+    previous = None
+    for item in data["entries"]:
+        entry = _entry(item, previous)
+        entries.append(entry)
+        if entry.included:
+            previous = item
+    for item in data["entries"]:
+        item.pop("revision", None)
     if len({entry.id for entry in entries}) != len(entries):
         raise _bad("duplicate entry ID")
     if sum(entry.included for entry in entries) > MAX_INCLUDED:
         raise _bad(f"more than {MAX_INCLUDED} included entries")
-    return EditDocument(_output(data["output"]), entries, data)
+    return EditDocument(_output(data["output"]), tuple(entries), data)
 
 
 def parse_export_request(project: Any, name: Any, encoding: Any, codec: Any, crf: Any) -> ExportRequest:
@@ -767,7 +783,7 @@ def plan_export(document: EditDocument, sources: Mapping[str, Source], request: 
         correction = entry.correction if index else None
         if entry.correction is not None:
             previous = planned[-1] if planned else None
-            basis = (included[index - 1].revision, previous.last, entry.revision, first) if previous else None
+            basis = (included[index - 1].source_key, previous.last, entry.source_key, first) if previous else None
             if entry.correction.basis != basis:
                 needs.append({"kind": "refresh_correction", "entries": [entry.id], "suggested": {}})
         if planned and fade:
@@ -975,7 +991,6 @@ def sequence_record(
                 "segment": entries[item.id].segment,
                 "root": entries[item.id].root,
                 "path": entries[item.id].path,
-                "revision": entries[item.id].revision,
                 "range": [item.first, item.last],
                 "frames": list(item.frames),
                 "samples": list(item.samples) if plan.sample_rate else None,
@@ -1004,7 +1019,7 @@ def read_sequence_record(text: str) -> Dict[str, Any]:
     film = record.get("film") if isinstance(record, dict) else None
     if not isinstance(film, dict) or record.get("kind") != "arisu.sequence" or record.get("version") != 1:
         raise ValueError("invalid export record")
-    if not isinstance(record.get("job"), str) or film.get("root") != "output" or not isinstance(film.get("revision"), str):
+    if not isinstance(record.get("job"), str) or film.get("root") != "output":
         raise ValueError("invalid export record")
     relative_path(film.get("path"))
     return record

@@ -16,7 +16,7 @@ import folder_paths
 from aiohttp import web
 
 from ..common.core import PREVIEW_CONTENT_TYPE, browse_directory, contained_path, image_content_type, is_animated_image, relative_path
-from ..common.media import StaleResource, UnsupportedMedia, revision_for, source_path
+from ..common.media import StaleResource, UnsupportedMedia, source_path
 from ..common.paths import image_roots, select_root
 from .core import Resource, media_kind
 from .director_media import director_video_path
@@ -122,14 +122,14 @@ def listing(root: str, path: str, tree: bool) -> Dict[str, Any]:
     }
 
 
-def director_take(output_root: str, take: str, video: str, project: str = "") -> Dict[str, str]:
+def director_take(output_root: str, take: str, video: str, project: str = "") -> Dict[str, bool]:
     """Identify the finished artifacts of one Director render inside the output root.
 
     A project selects ``<project>/director/<take>``; without one the original ``arisu_director/<take>`` is read.
     The video alone keeps a take available for assembly, so a removed latent still reports the video.
     """
     directory = os.path.dirname(director_video_path(take, video, project))
-    revisions: Dict[str, str] = {}
+    available: Dict[str, bool] = {}
     for kind, filename in (("video", video), ("latent", "clip_00001.safetensors")):
         path = contained_path(output_root, f"{directory}/{filename}")
         try:
@@ -138,8 +138,8 @@ def director_take(output_root: str, take: str, video: str, project: str = "") ->
             break
         if not stat.S_ISREG(info.st_mode) or not info.st_size:
             break
-        revisions[kind] = revision_for(info)
-    return revisions
+        available[kind] = True
+    return available
 
 
 class ProxyResponse(web.FileResponse):

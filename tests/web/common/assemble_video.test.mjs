@@ -113,7 +113,7 @@ test('Assemble Video builds an edit from takes, Director and files, keeps joins 
     return undefined;
   });
   // A Director panel publishes its film: one take that needs a rerender, one whose file is gone, one segment not rendered.
-  registerTakeSource('TestDirector', () => ({
+  const film = {
     label: 'Director #2',
     segments: [
       {
@@ -121,7 +121,7 @@ test('Assemble Video builds an edit from takes, Director and files, keeps joins 
         label: '01',
         transition: 'cut',
         status: 'Needs rerender',
-        take: { take: ID(4), root: 'output', path: D1.path, revision: D1.revision, predecessor: null },
+        take: { take: ID(4), root: 'output', path: D1.path, revision: 'old Director fingerprint', predecessor: null },
       },
       {
         segment: 's2',
@@ -132,7 +132,8 @@ test('Assemble Video builds an edit from takes, Director and files, keeps joins 
       },
       { segment: 's3', label: '03', transition: 'cut', status: 'Pending', take: null },
     ],
-  }));
+  };
+  registerTakeSource('TestDirector', () => film);
   makeNode({ id: 2, type: 'TestDirector', graph });
   const node = makeAssembly(Assembly);
   const select = (id, checked = true) => checkboxes(row(node, id))[0].onchange({ target: { checked } });
@@ -167,7 +168,6 @@ test('Assemble Video builds an edit from takes, Director and files, keeps joins 
       segment: '',
       root: 'output',
       path: A.path,
-      revision: A.revision,
       included: true,
       range: null,
       audio: 'auto',
@@ -184,7 +184,7 @@ test('Assemble Video builds an edit from takes, Director and files, keeps joins 
   await settle();
   const match = () => checkboxes(dialog())[0];
   const player = () => descendants(dialog()).find((element) => element.tagName === 'VIDEO');
-  const place = (item) => ({ root: 'output', path: item.path, revision: item.revision, range: null });
+  const place = (item) => ({ root: 'output', path: item.path, range: null });
   assert.equal(match().disabled, false, 'a verified predecessor with matching signalling and a stable step may be matched');
   assert.equal(player().src, '/api/arisu/video/join-preview/j1/view?variant=a');
   match().checked = true;
@@ -205,7 +205,7 @@ test('Assemble Video builds an edit from takes, Director and files, keeps joins 
   ]);
   assert.deepEqual(server.released, ['j1', 'j2', 'j3'], 'every preview job is released, the last one when the dialog closes');
   const applied = {
-    correction: { ...SUGGESTED, basis: { prev_revision: A.revision, prev_end: 243, revision: B.revision, start: 0 } },
+    correction: { ...SUGGESTED, basis: { prev_source: `output:${A.path}`, prev_end: 243, source: `output:${B.path}`, start: 0 } },
     fade: 10,
   };
   assert.deepEqual(edit(node).entries[1].join, applied);
@@ -218,11 +218,14 @@ test('Assemble Video builds an edit from takes, Director and files, keeps joins 
       { root: 'output', path: D2_PATH },
     ],
   });
-  const [, , stale, gone] = edit(node).entries;
-  assert.deepEqual([stale.source, stale.take, stale.segment, gone.take, gone.revision], ['director', ID(4), 's1', ID(5), 'rev:d2']);
+  const [, , imported, gone] = edit(node).entries;
+  assert.deepEqual(
+    [imported.source, imported.take, imported.segment, gone.take, gone.predecessor],
+    ['director', ID(4), 's1', ID(5), ID(4)],
+  );
   assert.deepEqual(
     rows(node).map((item) => item.dataset.state),
-    ['ok', 'ok', 'stale', 'missing'],
+    ['ok', 'ok', 'ok', 'missing'],
   );
   assert.deepEqual(edit(node).entries[1].join, applied, 'adding footage elsewhere leaves an existing join alone');
 
@@ -240,15 +243,15 @@ test('Assemble Video builds an edit from takes, Director and files, keeps joins 
   assert.deepEqual(server.describe.at(-1), { entries: [{ root: OLD.root, path: OLD.path }] });
   assert.deepEqual([edit(node).entries[4].source, edit(node).entries[4].take], ['file', '']);
 
-  // A stale Director row, a missing file, and an external video can be reviewed together. Cancel preserves all three.
+  // A Director row, a missing file, and an external video can be reviewed together. Cancel preserves all three.
   const file = edit(node).entries[4];
-  for (const entry of [stale, gone, file]) select(entry.id);
+  for (const entry of [imported, gone, file]) select(entry.id);
   const deleteButton = () => button(panel(node), 'Delete Files…');
   assert.equal(deleteButton().disabled, false);
   pending = deleteButton().onclick();
   await settle();
   assert.deepEqual(server.deletes[0], {
-    entries: [stale, gone, file].map(({ root, path, revision }) => ({ root, path, revision })),
+    entries: [imported, gone, file].map(({ root, path }) => ({ root, path, revision: '' })),
     confirm: false,
   });
   const listed = descendants(dialog())
@@ -261,7 +264,7 @@ test('Assemble Video builds an edit from takes, Director and files, keeps joins 
   await pending;
   assert.equal(server.deletes.length, 1);
   assert.equal(edit(node).entries.length, 5);
-  for (const entry of [stale, gone, file]) select(entry.id, false);
+  for (const entry of [imported, gone, file]) select(entry.id, false);
 
   // replacing the missing Director take keeps the row's place and identity
   pending = button(row(node, gone.id), `Reselect s2 · clip_00002_.mp4`).onclick();
@@ -269,10 +272,7 @@ test('Assemble Video builds an edit from takes, Director and files, keeps joins 
   button(dialog(), `Use h3_clip_00009_.mp4`).onclick();
   await pending;
   const replaced = edit(node).entries[3];
-  assert.deepEqual(
-    [replaced.id, replaced.source, replaced.take, replaced.path, replaced.revision],
-    [gone.id, 'take', ID(3), C.path, C.revision],
-  );
+  assert.deepEqual([replaced.id, replaced.source, replaced.take, replaced.path], [gone.id, 'take', ID(3), C.path]);
   assert.equal(row(node, gone.id).dataset.state, 'ok');
 
   // reordering by keyboard, by the hidden move buttons and by drag; a join does not survive losing its neighbour
@@ -287,19 +287,19 @@ test('Assemble Video builds an edit from takes, Director and files, keeps joins 
   descendants(row(node, replaced.id))
     .find((element) => element.className === 'handle')
     .ondragstart(event());
-  row(node, stale.id).ondragover(event({ clientY: -1 }));
-  row(node, stale.id).ondrop(event());
+  row(node, imported.id).ondragover(event({ clientY: -1 }));
+  row(node, imported.id).ondrop(event());
   assert.deepEqual(paths(node), ['h3_clip_00008_.mp4', 'h3_clip_00007_.mp4', 'h3_clip_00009_.mp4', 'clip_00002_.mp4', 'old.mp4']);
 
   // excluding keeps the row and takes it out of the film's running length
-  button(row(node, stale.id), 'Exclude s1 · clip_00002_.mp4').onclick();
+  button(row(node, imported.id), 'Exclude s1 · clip_00002_.mp4').onclick();
   assert.equal(edit(node).entries[3].included, false);
   const sum = () => descendants(panel(node)).find((element) => element.className === 'sum').textContent;
   assert.equal(sum(), `4 of 5 · ${221 + 243 + 204 + 48} frames · 29.83 s`);
 
   // removing rows is an edit: no request, no file touched
   const requests = api.calls.length;
-  select(stale.id);
+  select(imported.id);
   select(file.id);
   button(panel(node), 'Remove Selected').onclick();
   assert.deepEqual(paths(node), ['h3_clip_00008_.mp4', 'h3_clip_00007_.mp4', 'h3_clip_00009_.mp4']);
@@ -335,7 +335,7 @@ test('Assemble Video builds an edit from takes, Director and files, keeps joins 
   const before = edit(node);
   pending = deleteButton().onclick();
   await settle();
-  const sent = [B, A, C].map((item) => ({ root: 'output', path: item.path, revision: item.revision }));
+  const sent = [B, A, C].map((item) => ({ root: 'output', path: item.path, revision: '' }));
   assert.deepEqual(server.deletes[1], { entries: sent, confirm: false }, 'duplicate file references share one dry run entry');
   assert.deepEqual(edit(node), before, 'the dry run changes nothing');
   button(dialog(), 'Delete 4 Files').onclick();
@@ -350,4 +350,18 @@ test('Assemble Video builds an edit from takes, Director and files, keeps joins 
     'both deleted references leave; deferred and unavailable files stay',
   );
   assert(toastSeverities().includes('warn'));
+
+  // A new Director render affects an imported row only on explicit Director refresh.
+  await button(panel(node), 'Import from Director').onclick();
+  const shot = edit(node).entries.at(-2);
+  const nextTake = ID(6);
+  const nextPath = `arisu_director/${nextTake}/clip_00001_.mp4`;
+  FILES.set(nextPath, described(nextPath, { take: nextTake, origin: 'director' }));
+  film.segments[0].take = { take: nextTake, root: 'output', path: nextPath, predecessor: null };
+  await button(panel(node), 'Refresh file states').onclick();
+  assert.equal(row(node, shot.id).dataset.state, 'ok');
+  assert.equal(edit(node).entries.at(-2).take, ID(4));
+  await button(panel(node), 'Refresh from Director').onclick();
+  const refreshed = edit(node).entries.at(-2);
+  assert.deepEqual([refreshed.id, refreshed.take, refreshed.path], [shot.id, nextTake, nextPath]);
 });

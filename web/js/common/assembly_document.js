@@ -1,6 +1,6 @@
 // The edit list of Assemble Video: document rules only, no DOM and no network.
 //
-// An entry names a video by root, relative path and revision; the server validates every one of them
+// An entry names a video by root and relative path; the server validates its location
 // again before it reads a file. `join` is the join before its entry, and it lives only while the two
 // neighbouring takes and the cut between them stay the same.
 import { moveItem, resourceId } from './shared.js';
@@ -22,9 +22,24 @@ function readRange(value) {
   return Number.isInteger(start) && Number.isInteger(end) && start >= 0 && end > start ? [start, end] : null;
 }
 
-function readJoin(value) {
+export const sourceKey = (entry) => `${entry.root}:${entry.path}`;
+
+function readJoin(value, previous, entry) {
   const fade = Number.isInteger(value?.fade) && value.fade >= 0 && value.fade <= 50 ? value.fade : 0;
-  const correction = value?.correction && typeof value.correction === 'object' ? value.correction : null;
+  let correction = value?.correction && typeof value.correction === 'object' ? value.correction : null;
+  const basis = correction?.basis;
+  if (basis && Object.hasOwn(basis, 'prev_revision') && Object.hasOwn(basis, 'revision')) {
+    // Resolve old corrections against the saved edit as it was approved.
+    correction = {
+      ...correction,
+      basis: {
+        prev_source: previous && previous.revision === basis.prev_revision ? sourceKey(previous) : '',
+        prev_end: basis.prev_end,
+        source: entry.revision === basis.revision ? sourceKey(entry) : '',
+        start: basis.start,
+      },
+    };
+  }
   return { correction, fade };
 }
 
@@ -32,24 +47,29 @@ function readJoin(value) {
 export function readEdit(source) {
   const data = JSON.parse(source || EMPTY);
   if (data?.version !== 1 || !Array.isArray(data.entries)) throw new Error('Unsupported edit list');
+  let previous;
   return {
     version: 1,
     output: data.output && typeof data.output === 'object' ? data.output : null,
     entries: data.entries
       .filter((entry) => entry && typeof entry === 'object' && text(entry.id))
-      .map((entry) => ({
-        id: entry.id,
-        source: SOURCES.includes(entry.source) ? entry.source : 'file',
-        take: text(entry.take),
-        segment: text(entry.segment),
-        root: text(entry.root) || 'output',
-        path: text(entry.path),
-        revision: text(entry.revision),
-        included: entry.included !== false,
-        range: readRange(entry.range),
-        audio: AUDIO.includes(entry.audio) ? entry.audio : 'auto',
-        join: readJoin(entry.join),
-      })),
+      .map((entry) => {
+        const join = readJoin(entry.join, previous, entry);
+        if (entry.included !== false) previous = entry;
+        return {
+          id: entry.id,
+          source: SOURCES.includes(entry.source) ? entry.source : 'file',
+          take: text(entry.take),
+          predecessor: text(entry.predecessor) || undefined,
+          segment: text(entry.segment),
+          root: text(entry.root) || 'output',
+          path: text(entry.path),
+          included: entry.included !== false,
+          range: readRange(entry.range),
+          audio: AUDIO.includes(entry.audio) ? entry.audio : 'auto',
+          join,
+        };
+      }),
   };
 }
 
@@ -61,7 +81,7 @@ export function bound(entry) {
 /**
  * The replacement for an edit that arrives without restoration permission (import, paste, duplication).
  *
- * Order, identity and creative choices stay, so each row can be rebound; every location, revision and
+ * Order, identity and creative choices stay, so each row can be rebound; every location and
  * join is dropped, and a head trim survives only where a take ID can identify the same footage again.
  */
 export function unbindLocations(previous) {
@@ -78,7 +98,6 @@ export function unbindLocations(previous) {
       ...entry,
       root: 'output',
       path: '',
-      revision: '',
       range: entry.source === 'file' ? null : entry.range,
       join: freshJoin(),
     })),
@@ -95,7 +114,6 @@ export function entryFrom(description, source = 'file', segment = '') {
     segment: segment || description.take?.segment || '',
     root: description.root,
     path: description.path,
-    revision: description.revision ?? '',
     included: true,
     range: null,
     audio: 'auto',
@@ -128,11 +146,11 @@ export function rebindEntry(doc, id, description, source) {
   Object.assign(entry, {
     source: source ?? (description.take ? (entry.source === 'director' ? 'director' : 'take') : 'file'),
     take: description.take?.take ?? '',
+    predecessor: description.take?.predecessor ?? undefined,
     segment: description.take?.segment || (same ? entry.segment : ''),
     root: description.root,
     path: description.path,
-    revision: description.revision ?? '',
-    range: same && entry.revision === (description.revision ?? '') ? entry.range : null,
+    range: same ? entry.range : null,
   });
 }
 
@@ -168,7 +186,7 @@ function joinKeys(doc) {
     keys.set(
       entry.id,
       before && bound(before)
-        ? JSON.stringify([before.id, before.revision, before.range?.[1] ?? null, entry.revision, entry.range?.[0] ?? 0])
+        ? JSON.stringify([before.id, sourceKey(before), before.range?.[1] ?? null, sourceKey(entry), entry.range?.[0] ?? 0])
         : null,
     );
   });
@@ -207,9 +225,9 @@ export function verifiedJoin(doc, index, info, predecessors = new Map()) {
   const outgoing = incoming?.included ? previousIncluded(doc, index) : null;
   if (!outgoing || !incoming.take || !outgoing.take) return false;
   const [from, to] = [info(outgoing), info(incoming)];
-  if (from?.state !== 'ok' || to?.state !== 'ok' || from.revision !== outgoing.revision || to.revision !== incoming.revision) return false;
+  if (from?.state !== 'ok' || to?.state !== 'ok' || from.take?.take !== outgoing.take || to.take?.take !== incoming.take) return false;
   if ((incoming.range?.[0] ?? 0) !== 0 || (outgoing.range && outgoing.range[1] !== from.frames)) return false;
-  return (to.take?.predecessor ?? predecessors.get(incoming.take) ?? null) === outgoing.take;
+  return (to.take?.predecessor ?? incoming.predecessor ?? predecessors.get(incoming.take) ?? null) === outgoing.take;
 }
 
 /** Running totals of the included rows; `pending` counts rows whose length is not known yet. */

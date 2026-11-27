@@ -72,7 +72,7 @@ def sound(frames: int, rate: int = 32000, **changes: Any) -> AudioInfo:
 def source(frames: int, pcm: bool = True, silent: bool = False, **changes: Any) -> Source:
     companion = PcmSource("/o/a.wav", 32000, 2, round(frames * 32000 / 24)) if pcm and not silent else None
     probe = Probe("mov,mp4,m4a,3gp,3g2,mj2", video(frames), None if silent else sound(frames), True)
-    return replace(Source("ok", "/o/a.mp4", "r", probe, None, companion), **changes)
+    return replace(Source("ok", "/o/a.mp4", probe, None, companion), **changes)
 
 
 def test_edit_lists_prefixes_and_requests_refuse_hostile_or_ambiguous_input():
@@ -115,6 +115,14 @@ def test_edit_lists_prefixes_and_requests_refuse_hostile_or_ambiguous_input():
     # An entry that lost its location on import stays in the list, and exclusion lifts the included limit.
     kept = parse_edit(edit([row(path="", revision=""), *(row(included=False) for _ in range(150))], spec))
     assert kept.entries[0].path == "" and len(kept.entries) == 151 and kept.output.fps == 24
+
+    # Upgrade a saved colour match using the two selected sources and the approved cut frames.
+    old = edit(
+        [row(path="a.mp4", revision="a"), row(path="b.mp4", revision="b", join={"correction": {**correction, "basis": basis}, "fade": 10})]
+    )
+    restored = parse_edit(old)
+    assert restored.entries[1].correction.basis == ("output:a.mp4", 1, "output:b.mp4", 0)
+    assert restored.entries[1].fade == 10 and parse_edit(restored.raw) == restored
 
     now = datetime(2026, 11, 24, 9, 5, 7)
     prefixes = {
@@ -285,7 +293,7 @@ def test_export_plan_keeps_cumulative_boundaries_and_follows_the_decision_table(
         and plan([three[0], replace(delayed, pcm=three[1].pcm)]).entries[1].audio_offset == 0
     )
     # States and capabilities that block a plan outright.
-    assert plan([three[0], replace(three[1], state="changed")]).states[1][1] == "changed"
+    assert plan([three[0], replace(three[1], state="unusable")]).states[1][1] == "unusable"
     assert plan([three[0]], rows=[row(range=[0, 999])]).states[0][1:] == ("unusable", "the frame interval is outside the video")
     assert plan(three, rows=[row(included=False) for _ in three]).errors == ("select at least one video",)
     bare = plan(three, encoding="encode", codec="h265", caps=Capabilities("ffmpeg", frozenset({"libx264"}), frozenset({"hevc"})))

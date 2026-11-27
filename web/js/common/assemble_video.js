@@ -22,6 +22,7 @@ import {
   rebindEntry,
   removeEntries,
   setIncluded,
+  sourceKey,
   totals,
   unbindLocations,
   verifiedJoin,
@@ -45,7 +46,7 @@ const REQUEST = 'export_request';
 const DEFAULT_PROJECT = 'arisu_video';
 // Bound of a row's still: a 58 × 40 CSS pixel thumb at a 2× device pixel ratio.
 const POSTER_MAX = 116;
-const FLAGS = { unbound: 'Needs rebinding', missing: 'Missing', unusable: 'Unusable', changed: 'Changed', stale: 'Stale', pending: '…' };
+const FLAGS = { unbound: 'Needs rebinding', missing: 'Missing', unusable: 'Unusable', pending: '…' };
 const nodes = new WeakMap();
 // Locations whose description is being fetched or could not be fetched; Refresh asks again.
 const asked = new Set();
@@ -112,17 +113,13 @@ function toast(detail, severity = 'warn') {
 function read(node) {
   return readEdit(widget(node, EDIT)?.value);
 }
-const locationKey = (entry) => `${entry.root}|${entry.path}`;
-const location = (entry) => ({ root: entry.root, path: entry.path, revision: entry.revision, range: entry.range });
+const location = (entry) => ({ root: entry.root, path: entry.path, range: entry.range });
 
-/** The file's description as it applies to this entry: a different revision on disk is a changed source. */
 function info(entry) {
-  const description = bound(entry) ? known(entry.root, entry.path) : undefined;
-  if (!description || description.state === 'missing' || description.state === 'unusable') return description;
-  return { ...description, state: entry.revision && description.revision !== entry.revision ? 'changed' : 'ok' };
+  return bound(entry) ? known(entry.root, entry.path) : undefined;
 }
 
-/** What Director reports now, by segment and by take: the stale flag and the predecessor a receipt records. */
+/** Current segment takes for explicit refresh and recorded predecessors for join previews. */
 function directorView() {
   const segments = new Map();
   const predecessors = new Map();
@@ -134,14 +131,8 @@ function directorView() {
   return { segments, predecessors };
 }
 
-function rowState(entry, director) {
-  if (!bound(entry)) return 'unbound';
-  const description = info(entry);
-  if (!description) return 'pending';
-  if (description.state !== 'ok') return description.state;
-  const segment = entry.source === 'director' ? director.segments.get(entry.segment) : null;
-  if (segment && (segment.status === 'Needs rerender' || (segment.take && segment.take.take !== entry.take))) return 'stale';
-  return 'ok';
+function rowState(entry) {
+  return bound(entry) ? (info(entry)?.state ?? 'pending') : 'unbound';
 }
 
 function invalidate(node) {
@@ -255,13 +246,13 @@ function shownProject(node) {
 /** Fetch descriptions for rows that have none yet, once per location, then draw again. */
 function ensureDescribed(node, doc) {
   const state = nodes.get(node);
-  const missing = doc.entries.filter((entry) => bound(entry) && !known(entry.root, entry.path) && !asked.has(locationKey(entry)));
+  const missing = doc.entries.filter((entry) => bound(entry) && !known(entry.root, entry.path) && !asked.has(sourceKey(entry)));
   if (!missing.length) return;
-  for (const entry of missing) asked.add(locationKey(entry));
+  for (const entry of missing) asked.add(sourceKey(entry));
   void (async () => {
     try {
       await describe(missing);
-      for (const entry of missing) asked.delete(locationKey(entry));
+      for (const entry of missing) asked.delete(sourceKey(entry));
     } catch {
       // The rows stay pending; Refresh asks again.
     }
@@ -269,7 +260,7 @@ function ensureDescribed(node, doc) {
   })();
 }
 
-/** Describe every bound row again; a file that changed on disk is flagged, never accepted. */
+/** Describe every bound row again, including previously unavailable files. */
 async function revalidate(node) {
   const state = nodes.get(node);
   let doc;
@@ -279,10 +270,10 @@ async function revalidate(node) {
     return;
   }
   const rows = doc.entries.filter(bound);
-  for (const entry of rows) asked.add(locationKey(entry));
+  for (const entry of rows) asked.add(sourceKey(entry));
   try {
     await describe(rows);
-    for (const entry of rows) asked.delete(locationKey(entry));
+    for (const entry of rows) asked.delete(sourceKey(entry));
   } catch (error) {
     if (nodes.get(node) === state) toast(error.message, 'error');
   }
@@ -340,11 +331,11 @@ async function importDirector(node, source) {
     reportInsert(
       insertEntries(
         next,
-        // The receipt's own take ID and revision are kept, so a file replaced since the render is flagged.
+        // An imported row keeps this take until the user explicitly refreshes or replaces it.
         ready.map((segment, index) => ({
           ...entryFrom(descriptions[index], 'director', segment.segment),
           take: segment.take.take,
-          revision: segment.take.revision || descriptions[index].revision || '',
+          predecessor: segment.take.predecessor ?? undefined,
         })),
       ),
     );
@@ -361,7 +352,7 @@ async function refreshDirector(node) {
   const doc = read(node);
   const moved = doc.entries.filter((entry) => {
     const take = entry.source === 'director' ? segments.get(entry.segment)?.take : null;
-    return take && (take.path !== entry.path || take.take !== entry.take || (take.revision && take.revision !== entry.revision));
+    return take && (take.path !== entry.path || take.take !== entry.take);
   });
   const state = nodes.get(node);
   if (!moved.length) {
@@ -381,7 +372,7 @@ async function refreshDirector(node) {
       rebindEntry(next, entry.id, descriptions[index], 'director');
       Object.assign(
         next.entries.find((item) => item.id === entry.id),
-        { take: take.take, segment: entry.segment, revision: take.revision || descriptions[index].revision || '' },
+        { take: take.take, segment: entry.segment, predecessor: take.predecessor ?? undefined },
       );
     });
     state.message = `Updated ${moved.length} rows from Director.`;
@@ -443,7 +434,6 @@ async function replace(node, entry) {
     if (!task.current()) return;
     const picked = await pickTakes({ project, mode: 'replace', current: bound(entry) ? entry : null, signal: task.signal });
     if (!picked?.length || !task.current()) return;
-    // The picker listed the file as it is now; accepting it records that revision.
     apply(picked[0]);
   } catch (error) {
     if (task.current()) toast(error.message, 'error');
@@ -470,7 +460,7 @@ async function rebind(node) {
     for (const entry of next.entries) {
       const take = !bound(entry) && entry.take ? found.get(entry.take) : null;
       if (!take) continue;
-      Object.assign(entry, { root: take.root, path: take.path, revision: take.revision ?? '' });
+      Object.assign(entry, { root: take.root, path: take.path });
       count++;
     }
     state.message = `Rebound ${count} of ${waiting.length} rows from ${project}.`;
@@ -512,9 +502,9 @@ async function auditionJoin(node, id) {
     if (!target) return;
     // The basis names the two frames the correction was judged on; the server refuses it once they differ.
     const basis = {
-      prev_revision: outgoing.revision,
+      prev_source: sourceKey(outgoing),
       prev_end: outgoing.range?.[1] ?? info(outgoing)?.frames ?? null,
-      revision: incoming.revision,
+      source: sourceKey(incoming),
       start: incoming.range?.[0] ?? 0,
     };
     target.join = { correction: result.correction ? { ...result.correction, basis } : null, fade: result.fade };
@@ -597,7 +587,7 @@ async function deleteFiles(node) {
   const state = nodes.get(node);
   const selected = read(node).entries.filter((entry) => state.selection.has(entry.id));
   const rows = selected.filter(bound);
-  const locations = new Map(rows.map((entry) => [locationKey(entry), entry]));
+  const locations = new Map(rows.map((entry) => [sourceKey(entry), entry]));
   if (!locations.size) return;
   const task = begin(node);
   try {
@@ -611,7 +601,7 @@ async function deleteFiles(node) {
       if (entry.state !== 'deleted' && entry.state !== 'partial') continue;
       const removed = entry.state === 'partial' ? entry.removed : entry.files?.map((file) => file.path);
       for (const path of removed ?? [entry.path]) {
-        deleted.add(locationKey({ root: entry.root, path }));
+        deleted.add(sourceKey({ root: entry.root, path }));
         forget(entry.root, path);
       }
     }
@@ -624,7 +614,7 @@ async function deleteFiles(node) {
     // Rows of deleted files leave the edit in one step; Undo brings the rows back, not the files.
     if (deleted.size)
       mutate(node, (next) =>
-        removeEntries(next, new Set(next.entries.filter((entry) => deleted.has(locationKey(entry))).map((entry) => entry.id))),
+        removeEntries(next, new Set(next.entries.filter((entry) => deleted.has(sourceKey(entry))).map((entry) => entry.id))),
       );
   } catch (error) {
     if (task.current()) toast(error.message, 'error');
@@ -666,7 +656,7 @@ function needText(need) {
       `Use ${String(need.suggested?.codec).toUpperCase()} CRF ${need.suggested?.crf}`,
     ];
   if (need.kind === 'confirm_output') return ['The sources differ in size, frame rate or sound.', `Confirm ${specLabel(need.suggested)}`];
-  if (need.kind === 'switch_audio') return [`Saved PCM is missing or changed for ${rows} rows.`, 'Use Embedded Audio'];
+  if (need.kind === 'switch_audio') return [`Saved PCM is unavailable for ${rows} rows.`, 'Use Embedded Audio'];
   return [`A colour match no longer fits its join on ${rows} rows.`, 'Clear Stale Corrections'];
 }
 
@@ -693,7 +683,6 @@ function render(node) {
     state.body.replaceChildren(el('span', { textContent: error.message }));
     return;
   }
-  const director = directorView();
   const flow = exportState(node);
   const working = state.busy || flow.running;
   const button = (text, action, title = text, className = 'icon', extra = {}) =>
@@ -729,7 +718,7 @@ function render(node) {
   state.rows = new Map();
   const rows = doc.entries.flatMap((entry, index) => {
     const description = info(entry);
-    const status = rowState(entry, director);
+    const status = rowState(entry);
     const usable = description && description.state !== 'missing' && description.state !== 'unusable';
     const frames = usable ? entryFrames(entry, description) : null;
     const name = `${entry.segment ? `${entry.segment} · ` : ''}${bound(entry) ? fileName(entry.path) : entry.take || 'Unbound video'}`;
@@ -745,7 +734,7 @@ function render(node) {
       return span;
     };
     const poster = () => {
-      const key = `${locationKey(entry)}|${entry.range?.[0] ?? 0}`;
+      const key = `${sourceKey(entry)}|${entry.range?.[0] ?? 0}`;
       let image = state.posters.get(key);
       if (!image) {
         const at = usable && entry.range ? (entry.range[0] * description.fps[1]) / description.fps[0] : 0;
@@ -880,7 +869,7 @@ function render(node) {
     ...(state.choices ?? []).map((source) => button(`Import ${source.label}`, () => importDirector(node, source), undefined, 'tool')),
   ];
   const plan = state.plan;
-  const usableRows = doc.entries.some((entry) => entry.included && rowState(entry, director) === 'ok');
+  const usableRows = doc.entries.some((entry) => entry.included && rowState(entry) === 'ok');
   const planView = plan
     ? [
         el('section', { className: 'plan', ariaLabel: 'Export check' }, [

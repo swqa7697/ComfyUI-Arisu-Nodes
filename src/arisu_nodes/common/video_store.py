@@ -175,11 +175,11 @@ def _regular(path: str) -> Optional[os.stat_result]:
     return info if stat.S_ISREG(info.st_mode) else None
 
 
-def take_companion(output_root: str, path: str, revision: str) -> Tuple[Optional[Dict[str, Any]], Optional[PcmSource], bool]:
+def take_companion(output_root: str, path: str) -> Tuple[Optional[Dict[str, Any]], Optional[PcmSource], bool]:
     """Find the record published beside a video and its verified PCM companion.
 
-    Returns ``(record, pcm, pcm_lost)``. A record is used only when it names this file at this revision;
-    ``pcm_lost`` reports registered PCM that is missing or was replaced.
+    Returns ``(record, pcm, pcm_lost)``. A record must name this video and its own soundtrack.
+    ``pcm_lost`` reports registered PCM that is unavailable or too short.
     """
     stem, _ = posixpath.splitext(path)
     try:
@@ -191,20 +191,26 @@ def take_companion(output_root: str, path: str, revision: str) -> Tuple[Optional
             record = read_take_record(handle.read())
     except (OSError, TypeError, ValueError):
         return None, None, False
-    if record["video"]["path"] != path or record["video"]["revision"] != revision:
+    if record["video"]["path"] != path:
         return None, None, False
+    directed = director_take_id(posixpath.dirname(path))
+    record["origin"] = "director" if directed else "ordinary"
+    if directed:
+        record["take"] = directed
     audio = record["audio"]
     registered = audio.get("pcm") if audio else None
     if registered is None:
         return record, None, False
+    if registered["path"] != posixpath.join(stem + COMPANION, TAKE_AUDIO):
+        return record, None, True
     try:
         companion = contained_path(output_root, registered["path"])
     except ValueError:
         return record, None, True
     found = _regular(companion)
-    if found is None or revision_for(found) != registered["revision"] or found.st_size < audio["samples"] * audio["channels"] * 4:
+    if found is None or found.st_size < audio["samples"] * audio["channels"] * 4:
         return record, None, True
-    return record, PcmSource(companion, audio["rate"], audio["channels"], audio["samples"], registered["revision"]), False
+    return record, PcmSource(companion, audio["rate"], audio["channels"], audio["samples"]), False
 
 
 def list_takes(output_root: str, project: str, legacy: bool) -> List[str]:
@@ -346,7 +352,7 @@ def _ordinary_directory(base: str, video: DeletionFile) -> Optional[str]:
                 record = read_take_record(handle.read(RECORD_LIMIT + 1).decode("utf-8"))
     except (OSError, TypeError, ValueError):
         return None
-    if record.get("origin") == "ordinary" and record["video"]["path"] == video.path and record["video"]["revision"] == video.revision:
+    if record.get("origin") == "ordinary" and record["video"]["path"] == video.path:
         return directory
     return None
 
@@ -492,7 +498,7 @@ def predicted_export(output_root: str, project: str, name: str) -> str:
 
 
 def find_export(output_root: str, project: str, name: str, job: str) -> Optional[Dict[str, Any]]:
-    """The published export of this job, when its film is still the recorded file."""
+    """The published export of this job, when the recorded film exists in that version."""
     exports = contained_path(output_root, posixpath.join(project, "exports"))
     for counter in reversed(_export_counters(exports, name)):
         location = os.path.join(exports, f"{name}_{counter:05}", SEQUENCE_RECORD)
@@ -503,10 +509,14 @@ def find_export(output_root: str, project: str, name: str, job: str) -> Optional
         try:
             with open(location, encoding="utf-8") as handle:
                 record = read_sequence_record(handle.read())
-            film = _regular(contained_path(output_root, record["film"]["path"]))
+            label = f"{name}_{counter:05}"
+            path = posixpath.join(project, "exports", label, label + ".mp4")
+            if record["job"] != job or record["film"]["path"] != path:
+                continue
+            film = _regular(contained_path(output_root, path))
         except (OSError, ValueError):
             continue
-        if record["job"] == job and film is not None and revision_for(film) == record["film"]["revision"]:
+        if film is not None and film.st_size:
             return record
     return None
 

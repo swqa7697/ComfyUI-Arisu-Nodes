@@ -45,15 +45,13 @@ def director_video_path(take: str, video: str, project: str) -> str:
     return f"{directory}/{video}"
 
 
-def director_video_ref(take: str, video: str, project: str, revision: str) -> MediaRef:
+def director_video_ref(take: str, video: str, project: str) -> MediaRef:
     """Freeze a fixed output-video reference from a Director receipt."""
-    if not isinstance(revision, str) or not re.fullmatch(r"[0-9a-f]{64}", revision):
-        raise ValueError("invalid Director video revision")
-    return MediaRef("output", director_video_path(take, video, project), revision)
+    return MediaRef("output", director_video_path(take, video, project))
 
 
 def verify_director_video(roots: Mapping[str, str], item: MediaRef):
-    """Verify that the actual file belongs to the named take and still has the saved revision."""
+    """Verify that the actual file belongs to the named take directory."""
     directory, name = posixpath.split(item.path)
     take = director_take_id(directory)
     try:
@@ -62,10 +60,8 @@ def verify_director_video(roots: Mapping[str, str], item: MediaRef):
         actual = os.path.relpath(path, os.path.realpath(output)).replace(os.sep, "/")
         if item.root != "output" or not take or not _TAKE_VIDEO.fullmatch(name) or actual != item.path:
             raise ValueError("invalid Director video location")
-        if revision_for(os.stat(path)) != item.revision:
-            raise ValueError("Director video revision changed")
     except (OSError, ValueError, KeyError) as error:
-        raise MotionFootageError("the previous Director video is unavailable or has changed") from error
+        raise MotionFootageError("the previous Director video is unavailable") from error
 
 
 def read_director_tail(roots: Mapping[str, str], item: MediaRef) -> Iterator[Tuple[Image.Image, float]]:

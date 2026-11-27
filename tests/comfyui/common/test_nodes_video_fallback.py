@@ -79,7 +79,6 @@ def test_missing_ffmpeg_uses_pyav_with_a_warning_and_the_same_contracts(
             "segment": "",
             "root": "output",
             "path": record["video"]["path"],
-            "revision": record["video"]["revision"],
             "included": True,
             "range": None,
             "audio": "auto",

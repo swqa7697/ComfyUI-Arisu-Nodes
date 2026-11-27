@@ -127,13 +127,15 @@ def test_takes_and_exports_are_claimed_published_and_deleted_without_touching_ot
     )
 
     path, revision = first["video"]["path"], first["video"]["revision"]
-    record, pcm, lost = take_companion(str(output), path, revision)
+    record, pcm, lost = take_companion(str(output), path)
     assert record["take"] == TAKE and pcm.samples == 8 and not lost
-    # A record that names another revision is not this file's record; replaced PCM is reported as lost.
-    assert take_companion(str(output), path, "older") == (None, None, False)
+    # Fresh filesystem timestamps preserve the published metadata and soundtrack.
+    (output / path).touch()
     companion = output / first["audio"]["pcm"]["path"]
     companion.write_bytes(b"\x00" * 64)
-    assert take_companion(str(output), path, revision)[1:] == (None, True)
+    assert take_companion(str(output), path)[1:] == (pcm, False)
+    companion.write_bytes(b"short")
+    assert take_companion(str(output), path)[1:] == (None, True)
     record_file = companion.with_name("take.json")
     saved = record_file.read_text()
     record_file.write_text(
@@ -307,9 +309,11 @@ def test_takes_and_exports_are_claimed_published_and_deleted_without_touching_ot
         "sequence.json",
     ]
     assert predicted_export(str(output), "P", "main").endswith("main_00004/main_00004.mp4")
-    # The same job finds its export again, until its film is no longer the recorded file.
+    # The same job finds its export again, while its film exists at the recorded location.
     assert find_export(str(output), "P", "main", JOB)["counter"] == 1 and find_export(str(output), "P", "main", "another") is None
-    (exports / "main_00001" / "main_00001.mp4").write_bytes(b"replaced")
+    (exports / "main_00001" / "main_00001.mp4").touch()
+    assert find_export(str(output), "P", "main", JOB)["counter"] == 1
+    (exports / "main_00001" / "main_00001.mp4").unlink()
     assert find_export(str(output), "P", "main", JOB) is None
     # An abandoned workspace is swept by a later job; a current one and published versions are kept.
     stale, current = exports / ".arisu-tmp-old", exports / ".arisu-tmp-new"

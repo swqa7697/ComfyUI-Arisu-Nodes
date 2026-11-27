@@ -50,7 +50,7 @@ export async function listTakes(project, legacy = false, signal) {
   return data;
 }
 
-/** Describe files as they are now, in request order. Revisions are compared by the caller, entry by entry. */
+/** Describe files as they are now, in request order. */
 export async function describe(locations, signal) {
   const results = [];
   for (let start = 0; start < locations.length; start += DESCRIBE_BATCH) {
@@ -72,7 +72,11 @@ export function preflight(body, signal) {
 
 /** Request a file list for review, or confirm with the revisions returned by that review. */
 export function deletePlan(entries, confirm, signal) {
-  return post('/delete', { entries: entries.map(({ root, path, revision }) => ({ root, path, revision })), confirm }, signal);
+  return post(
+    '/delete',
+    { entries: entries.map(({ root, path, revision }) => ({ root, path, revision: confirm ? revision : '' })), confirm },
+    signal,
+  );
 }
 
 export const joinPreview = {

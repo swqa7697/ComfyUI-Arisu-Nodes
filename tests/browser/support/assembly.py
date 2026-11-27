@@ -76,9 +76,9 @@ def inspect_assembly(page: Page, server: FixtureServer, name: str):
     expect(panel.locator(".status")).to_contain_text("Imported 2 takes in film order")
     expect(panel.locator(".entry[data-state=ok]")).to_have_count(4)
     imported = edit(page, node_id)["entries"][2:]
-    assert [(row["source"], row["segment"], row["revision"]) for row in imported] == [
-        ("director", "launch", "video-revision"),
-        ("director", "follow", "video-revision"),
+    assert [(row["source"], row["segment"]) for row in imported] == [
+        ("director", "launch"),
+        ("director", "follow"),
     ]
     assert all(row["path"].startswith(PROJECT + "/director/" + row["take"] + "/") for row in imported)
 
@@ -240,7 +240,12 @@ def inspect_assembly(page: Page, server: FixtureServer, name: str):
     expect(panel.locator(".join").nth(1)).to_contain_text("Colour match · Fade 10 ms")
     stored = edit(page, node_id)["entries"][3]["join"]
     assert stored["fade"] == 10 and stored["correction"]["luma_offset"] == -0.02
-    assert stored["correction"]["basis"] == {"prev_revision": "video-revision", "prev_end": 48, "revision": "video-revision", "start": 0}
+    assert stored["correction"]["basis"] == {
+        "prev_source": "output:" + imported[0]["path"],
+        "prev_end": 48,
+        "source": "output:" + imported[1]["path"],
+        "start": 0,
+    }
     previews = [body for kind, body in server.video_requests if kind == "join-preview"]
     assert [bool(body["join"]["correction"]) for body in previews] == [False, True, True] and previews[-1]["join"]["fade"] == 10
     assert "basis" not in previews[-1]["join"]["correction"] and not server.previews
@@ -276,7 +281,7 @@ def inspect_assembly(page: Page, server: FixtureServer, name: str):
     assert server.video_requests[-1] == (
         "delete",
         {
-            "entries": [{"root": "output", "path": PROJECT + "/videos/shot_00002_.mp4", "revision": "revision-shot_00002_.mp4"}],
+            "entries": [{"root": "output", "path": PROJECT + "/videos/shot_00002_.mp4", "revision": ""}],
             "confirm": False,
         },
     )
@@ -292,7 +297,7 @@ def inspect_assembly(page: Page, server: FixtureServer, name: str):
     page.evaluate("async () => { const app = window.comfyAPI.app.app; await app.loadGraphData(app.graph.serialize()); }")
     expect(panel.locator(".entry[data-state=unbound]")).to_have_count(3)
     unbound = edit(page, node_id)
-    assert all(row["path"] == "" and row["revision"] == "" and row["take"] for row in unbound["entries"])
+    assert all(row["path"] == "" and "revision" not in row and row["take"] for row in unbound["entries"])
     assert all(row["join"] == {"correction": None, "fade": 0} for row in unbound["entries"])
     assert page.evaluate("id => window.comfyAPI.app.app.graph.getNodeById(id).properties.arisuAssembly ?? null", node_id) is None
     expect(panel.locator(".status")).to_contain_text("3 rows lost their files when this edit was imported or copied.")

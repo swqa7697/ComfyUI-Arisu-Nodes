@@ -1015,7 +1015,7 @@ function invalidate(node) {
   stopRender(node, true);
 }
 registerSelectionOwner(TYPE, { fields: [['film_json', 0, clearLocations]], properties: ['directorRenders'], invalidate });
-// Film-order takes for other panels: locations come from saved receipts, statuses from the same checks the cards show.
+// Film-order takes for other panels: each saved receipt identifies its own output location.
 registerTakeSource(TYPE, (node) => {
   const doc = read(node);
   return {
@@ -1026,13 +1026,11 @@ registerTakeSource(TYPE, (node) => {
         segment: segment.id,
         label: `${String(index + 1).padStart(2, '0')} · ${segment.intent || 'Untitled Segment'}`,
         transition: segment.transition === 'continuation' ? 'continuation' : 'cut',
-        status: renderStatus(node, segment.id, doc),
         take: takeLocation(take)
           ? {
               take: take.id,
               root: 'output',
               path: `${take.video.subfolder}/${take.video.filename}`,
-              revision: take.files?.video ?? '',
               predecessor: take.predecessor ?? null,
             }
           : null,

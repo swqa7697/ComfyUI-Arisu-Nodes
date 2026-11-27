@@ -37,14 +37,14 @@ An ordinary Run writes no film and passes nothing downstream. Only **Export** pr
 
 - **Add Project Takes** lists the published takes of the project. The takes you add stay selected in the edit.
 - **Import from Director** adds the rendered takes of a Director Workbench in film order. Segments without a render are
-  skipped. The import is an independent copy of that order: later Director changes do not move your rows.
-  **Refresh from Director** follows Director's current takes for the rows that were imported.
+  skipped. Each row keeps the imported take UUID. A later Director render creates a new take.
+  Choose **Refresh from Director** to switch imported rows to the current takes.
 - **Add Existing Video** browses for any video under the output directory or a configured root, including videos
   saved before this node existed.
 
 Each row shows a still, the segment and file name, the delivered frame count and duration, the picture size and the
-sound. A row is flagged when its file is **Missing**, **Changed** on disk since it was chosen, **Unusable**, or, for
-Director footage, **Stale** because Director now has a newer take or wants a rerender. **Reselect** fixes a flagged row.
+sound. Files that are **Missing** or **Unusable** can be replaced with **Reselect**. Restoring a take to its
+recorded location preserves its segment, predecessor and PCM soundtrack. Plain videos use their selected path.
 
 ## Editing
 

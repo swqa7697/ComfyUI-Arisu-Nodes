@@ -140,8 +140,8 @@ async function inspect(take, location = takeLocation(take)) {
 /** The video alone makes a take usable for assembly; a continuation also needs its latent. */
 async function availability(take) {
   const result = await inspect(take);
-  const video = Boolean(result.video && result.video === take.files?.video);
-  return { video, latent: video && Boolean(take.latent && result.latent && result.latent === take.files?.latent) };
+  const video = Boolean(result.video);
+  return { video, latent: video && Boolean(take.latent && result.latent) };
 }
 
 async function available(take) {
@@ -169,7 +169,7 @@ async function verifiedPredecessor(node, doc, segmentId) {
   const previous = currentTake(node, doc, index - 1);
   if (!previous || !(await available(previous)))
     throw new Error(
-      `Render predecessor “${doc.segments[index - 1].id}” before “${segmentId}”. Its current take is missing or has changed.`,
+      `Render predecessor “${doc.segments[index - 1].id}” before “${segmentId}”. Its current take or saved latent is unavailable.`,
     );
   return `${previous.latent.subfolder}/${previous.latent.filename}`;
 }
@@ -179,16 +179,15 @@ export async function revisionFootage(node, doc, index) {
   if (index <= 0 || doc.segments[index]?.transition !== 'continuation') return null;
   const previous = currentTake(node, doc, index - 1);
   const location = takeLocation(previous);
-  if (!location || !previous.files?.video) return null;
+  if (!location) return null;
   const receipt = {
     project: location.project,
     take: previous.id,
     video: previous.video.filename,
-    revision: previous.files.video,
     segment: previous.segment,
   };
   try {
-    return (await inspect(previous, location)).video === receipt.revision ? receipt : null;
+    return (await inspect(previous, location)).video ? receipt : null;
   } catch {
     // Revision can still use the film plan when the saved video is unavailable.
     return null;
@@ -345,8 +344,8 @@ async function finish(pending, owner) {
     if (video?.type !== 'output' || latent?.type !== 'output')
       throw Object.assign(new Error('The render finished without both saved outputs.'), { terminal: true });
     const take = { ...pending, video, latent };
-    take.files = await inspect(take);
-    if (!take.files.latent || !take.files.video)
+    const files = await inspect(take);
+    if (!files.latent || !files.video)
       throw Object.assign(new Error('The completed take is missing files. Retry this segment.'), { terminal: true });
     return take;
   }

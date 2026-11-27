@@ -86,7 +86,7 @@ function serve(server) {
       server.inspected.push(Object.fromEntries(query));
       const take = query.get('take');
       if (server.removed.video.has(take)) return jsonResponse(200, {});
-      return jsonResponse(200, { video: `video-${take}`, ...(server.removed.latent.has(take) ? {} : { latent: `latent-${take}` }) });
+      return jsonResponse(200, { video: true, ...(server.removed.latent.has(take) ? {} : { latent: true }) });
     }
     throw new Error(`unexpected request ${route}`);
   };
@@ -119,7 +119,7 @@ test('Director renders through either saver into the legacy or project layout an
   assert.deepEqual(last().prompt[6].inputs, { latent: ['5', 0], filename_prefix: `arisu_director/${legacy.id}/clip`, clip_index: 1 });
   assert.deepEqual([last().prompt[3].inputs.latent_path, last().prompt[3].inputs.clip_index], ['arisu_director', 0]);
   assert.deepEqual([legacy.saver, legacy.project], ['SaveVideo', '']);
-  assert.deepEqual(legacy.files, { video: `video-${legacy.id}`, latent: `latent-${legacy.id}` });
+  legacy.files = { video: 'legacy fingerprint', latent: 'legacy fingerprint' };
   // the receipt is located by its saved directory, whatever counter the video received
   assert.deepEqual(takeLocation(legacy), { project: '', dir: `arisu_director/${legacy.id}` });
   assert.deepEqual(server.inspected.at(-1), { take: legacy.id, video: 'clip_00002_.mp4' });
@@ -175,7 +175,6 @@ test('Director renders through either saver into the legacy or project layout an
     project: 'motion_context/fixed',
     take: first.id,
     video: first.video.filename,
-    revision: first.files.video,
     segment: 'a',
   });
   const edited = structuredClone(FILM);

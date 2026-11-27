@@ -16,7 +16,7 @@ const shape = (correction) =>
     : null;
 
 /**
- * Audition one join. `outgoing` and `incoming` are `{ root, path, revision, range }`, `join` the stored
+ * Audition one join. `outgoing` and `incoming` are `{ root, path, range }`, `join` the stored
  * `{ correction, fade }` and `verified` whether the incoming take continues the outgoing one.
  *
  * Resolves the approved `{ correction, fade }` (a direct cut is `{ null, 0 }`) or null when dismissed.

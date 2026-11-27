@@ -144,7 +144,7 @@ def inspect_render_recovery(page: Page, director_id: str, server: FixtureServer)
             },
         }
         if success:
-            files[key] = {"video": "video-revision", "latent": "latent-revision"}
+            files[key] = {"video": True, "latent": True}
         route.fulfill(json={"prompt_id": key})
 
     def check_history(route: Route):
@@ -259,7 +259,6 @@ def inspect_render_recovery(page: Page, director_id: str, server: FixtureServer)
             "project": "",
             "take": saved,
             "video": "clip_00001_.mp4",
-            "revision": "video-revision",
             "segment": "launch",
         }
         assert set(refinement["prompt"]) == {refinement["node_id"]}
@@ -267,8 +266,8 @@ def inspect_render_recovery(page: Page, director_id: str, server: FixtureServer)
         edit_segment(page, "Revise Prompt")
         expect(instructions).to_have_value("")
         expect(revision.get_by_text("Tail frames from segment 1 are available for this revision.", exact=True)).to_be_visible()
-        # The take can change while the editor is open. Submission must recheck it and fall back to the film.
-        files[saved]["video"] = "replaced"
+        # The footage can disappear while the editor is open. Submission must recheck it and fall back to the film.
+        del files[saved]["video"]
         instructions.fill("Continue from the planned closing pose.")
         with page.expect_response("**/arisu/workbench/generate"):
             submit_revision.click()
@@ -281,7 +280,7 @@ def inspect_render_recovery(page: Page, director_id: str, server: FixtureServer)
         page.keyboard.press("Escape")
         second.click()
         current.click()
-        expect(status).to_contain_text("missing or has changed")
+        expect(status).to_contain_text("current take or saved latent is unavailable")
         assert len(jobs) == 3
         first.click()
         page.evaluate("window.dropDirectorResponse=true")
@@ -358,7 +357,7 @@ def inspect_project_render(page: Page, server: FixtureServer, director_id: str):
                 latent: {"latents": [{"type": "output", "subfolder": subfolder, "filename": "clip_00001.safetensors"}]},
             },
         }
-        files[key] = {"video": "video-revision", "latent": "latent-revision"}
+        files[key] = {"video": True, "latent": True}
         route.fulfill(json={"prompt_id": key})
 
     def check_history(route: Route):
@@ -410,7 +409,7 @@ def inspect_project_render(page: Page, server: FixtureServer, director_id: str):
             (project, "ArisuSaveVideoSegment", f"{project}/director/{follow['id']}"),
         ]
         # A removed latent ends the take's use as a predecessor, not its footage: a trusted reopen reports it.
-        files[launch["id"]] = {"video": "video-revision"}
+        files[launch["id"]] = {"video": True}
         page.evaluate(
             """async () => {
             const app = window.comfyAPI.app.app;
