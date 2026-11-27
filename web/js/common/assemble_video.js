@@ -159,8 +159,9 @@ function begin(node) {
   state.controller?.abort();
   const controller = new AbortController();
   state.controller = controller;
-  const generation = ++state.generation;
-  return { signal: controller.signal, current: () => !controller.signal.aborted && nodes.get(node)?.generation === generation };
+  const generation = state.generation;
+  const sameGraph = () => nodes.get(node) === state && state.generation === generation;
+  return { signal: controller.signal, current: () => !controller.signal.aborted && sameGraph(), sameGraph };
 }
 
 /**
@@ -304,13 +305,11 @@ async function addTakes(node) {
     const state = nodes.get(node);
     const next = read(node);
     const after = next.entries.findLastIndex((entry) => state.selection.has(entry.id));
-    reportInsert(
-      insertEntries(
-        next,
-        picked.map((take) => entryFrom(take, 'take')),
-        after,
-      ),
-    );
+    const entries = picked.map((take) => entryFrom(take, 'take'));
+    const result = insertEntries(next, entries, after);
+    reportInsert(result);
+    const count = entries.length - result.dropped;
+    if (count) state.selection = new Set(entries.slice(0, count).map((entry) => entry.id));
     commit(node, next);
   } catch (error) {
     if (task.current()) toast(error.message, 'error');
@@ -596,26 +595,37 @@ async function stop(node) {
 
 async function deleteFiles(node) {
   const state = nodes.get(node);
-  const rows = read(node).entries.filter((entry) => state.selection.has(entry.id) && bound(entry));
-  if (!rows.length) return;
+  const selected = read(node).entries.filter((entry) => state.selection.has(entry.id));
+  const rows = selected.filter(bound);
+  const locations = new Map(rows.map((entry) => [locationKey(entry), entry]));
+  if (!locations.size) return;
   const task = begin(node);
   try {
-    const plan = await deletePlan(rows, false);
+    const plan = await deletePlan([...locations.values()], false, task.signal);
     if (!task.current()) return;
-    if (!(await confirmDeletion(plan, { signal: task.signal })) || !task.current()) return;
-    const doomed = rows.filter((_, index) => plan.entries[index]?.state === 'deletable');
-    const done = await deletePlan(doomed, true);
-    const outcome = (wanted) => new Set(done.entries.filter((entry) => entry.state === wanted).map(locationKey));
-    const deleted = outcome('deleted');
-    const deferred = outcome('deferred');
-    for (const entry of doomed) if (deleted.has(locationKey(entry))) forget(entry.root, entry.path);
-    if (deferred.size) toast(`${deferred.size} videos are in use by an export and will be deleted when it finishes.`);
-    if (done.entries.some((entry) => entry.state === 'refused'))
-      toast('Some files were not deleted; they are not ordinary takes of this pack.');
+    if (!(await confirmDeletion(plan, { signal: task.signal, unbound: selected.length - rows.length })) || !task.current()) return;
+    const reviewed = plan.entries.filter((entry) => entry.state === 'deletable');
+    const done = await deletePlan(reviewed, true);
+    const deleted = new Set();
+    for (const entry of done.entries) {
+      if (entry.state !== 'deleted' && entry.state !== 'partial') continue;
+      const removed = entry.state === 'partial' ? entry.removed : entry.files?.map((file) => file.path);
+      for (const path of removed ?? [entry.path]) {
+        deleted.add(locationKey({ root: entry.root, path }));
+        forget(entry.root, path);
+      }
+    }
+    // Another dialog can open while the confirmed delete runs. Update only the edit that accepted it.
+    if (!task.sameGraph()) return;
+    if (done.entries.some((entry) => entry.state === 'deferred')) toast('Files in use by an export will be deleted when it finishes.');
+    if (done.entries.some((entry) => entry.state === 'partial'))
+      toast('Deletion stopped before it finished. Some of the reviewed files or folders remain on disk.');
+    if (done.entries.some((entry) => entry.state === 'refused')) toast('Some files changed or could not be removed. Review them again.');
     // Rows of deleted files leave the edit in one step; Undo brings the rows back, not the files.
-    mutate(node, (next) =>
-      removeEntries(next, new Set(next.entries.filter((entry) => deleted.has(locationKey(entry))).map((entry) => entry.id))),
-    );
+    if (deleted.size)
+      mutate(node, (next) =>
+        removeEntries(next, new Set(next.entries.filter((entry) => deleted.has(locationKey(entry))).map((entry) => entry.id))),
+      );
   } catch (error) {
     if (task.current()) toast(error.message, 'error');
   }
@@ -854,7 +864,6 @@ function render(node) {
 
   const sum = totals(doc, info);
   const selected = doc.entries.filter((entry) => state.selection.has(entry.id));
-  const deletable = selected.length > 0 && selected.every((entry) => rowState(entry, director) === 'ok' && info(entry)?.deletable);
   const waiting = doc.entries.filter((entry) => !bound(entry) && entry.take).length;
   const unbound = doc.entries.filter((entry) => !bound(entry)).length;
   const project = shownProject(node);
@@ -958,7 +967,9 @@ function render(node) {
         'tool',
         { disabled: !selected.length },
       ),
-      button('Delete Files…', () => deleteFiles(node), 'Delete the selected takes from disk', 'danger', { disabled: !deletable }),
+      button('Delete Files…', () => deleteFiles(node), 'Delete the selected video files from disk', 'danger', {
+        disabled: !selected.some(bound),
+      }),
     ]),
     ...planView,
     el('div', { className: 'export' }, [

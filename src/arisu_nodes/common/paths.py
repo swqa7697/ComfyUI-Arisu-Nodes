@@ -22,7 +22,7 @@ CONFIG_NAME = "config.arisu.jsonc"
 CONFIG_TEMPLATE = """{
   // Add existing media directories using absolute paths, then restart ComfyUI.
   // Example entry inside roots: "photos": "/data/photos"
-  // Only include directories you intend to share with clients of this server.
+  // Clients can browse these directories and confirm video deletion in Assemble Video.
   // Do not add a trailing comma after the last entry.
   "roots": {},
 

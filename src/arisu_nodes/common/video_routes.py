@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 import logging
-import os
 import posixpath
-from typing import Any, Dict, List, Mapping, Optional
+from typing import Any, Dict, List, Optional
 
 import folder_paths
 from aiohttp import web
@@ -13,9 +12,9 @@ from aiohttp import web
 from .core import relative_path
 from .http import HEADERS, Admission, body, guarded
 from .paths import image_roots
-from .video import DEFAULT_PROJECT, Source, director_take_id, parse_edit, parse_export_request, plan_export, plan_json
+from .video import DEFAULT_PROJECT, MAX_ENTRIES, Source, director_take_id, parse_edit, parse_export_request, plan_export, plan_json
 from .video_jobs import PreviewManager, describe_entries, describe_source, detect_tools
-from .video_store import delete_take, deletion_plan, list_takes, predicted_export
+from .video_store import delete_video, deletion_plan, list_takes, predicted_export
 
 logger = logging.getLogger(__name__)
 PREFIX = "/arisu/video"
@@ -29,17 +28,7 @@ def roots() -> Dict[str, str]:
     return image_roots(folder_paths.get_input_directory(), folder_paths.get_output_directory())
 
 
-def _deletable(allowed: Mapping[str, str], root: str, path: str, revision: str) -> bool:
-    if root != "output":
-        return False
-    try:
-        deletion_plan(allowed["output"], path, revision)
-    except (OSError, ValueError):
-        return False
-    return True
-
-
-def description(allowed: Mapping[str, str], root: str, path: str, source: Source) -> Dict[str, Any]:
+def description(root: str, path: str, source: Source) -> Dict[str, Any]:
     """What a panel may know about one video: root ID, relative path and measured facts, never a physical path."""
     result: Dict[str, Any] = {"root": root, "path": path, "state": source.state}
     if source.probe is None or source.probe.video is None:
@@ -67,7 +56,6 @@ def description(allowed: Mapping[str, str], root: str, path: str, source: Source
         vfr=not video.constant,
         audio=sound,
         take=take,
-        deletable=_deletable(allowed, root, path, source.revision),
     )
     return result
 
@@ -77,7 +65,7 @@ def _takes(project: str, legacy: bool) -> Dict[str, Any]:
     found = list_takes(allowed["output"], project, legacy)
     return {
         "project": project,
-        "takes": [description(allowed, "output", path, describe_source(allowed, "output", path, None, tools)) for path in found],
+        "takes": [description("output", path, describe_source(allowed, "output", path, None, tools)) for path in found],
     }
 
 
@@ -93,7 +81,7 @@ def _describe(entries: Any) -> Dict[str, Any]:
         if expected is not None and not isinstance(expected, str):
             raise ValueError("invalid describe request")
         path = relative_path(entry.get("path"))
-        described.append(description(allowed, entry["root"], path, describe_source(allowed, entry["root"], path, expected, tools)))
+        described.append(description(entry["root"], path, describe_source(allowed, entry["root"], path, expected, tools)))
     return {"entries": described}
 
 
@@ -113,12 +101,11 @@ def _delete(data: Dict[str, Any]) -> Dict[str, Any]:
         set(data) != {"entries", "confirm"}
         or type(data["confirm"]) is not bool
         or not isinstance(entries, list)
-        or len(entries) > MAX_DESCRIBED
+        or len(entries) > MAX_ENTRIES
     ):
         raise ValueError("invalid delete request")
-    output = roots()["output"]
-    base = os.path.realpath(output)
-    results = []
+    # Check the whole request before deleting anything and confirm each unique location only once.
+    candidates = {}
     for entry in entries:
         if (
             not isinstance(entry, dict)
@@ -126,20 +113,40 @@ def _delete(data: Dict[str, Any]) -> Dict[str, Any]:
             or not all(isinstance(value, str) for value in entry.values())
         ):
             raise ValueError("invalid delete request")
-        path = relative_path(entry["path"])
-        item: Dict[str, Any] = {"root": entry["root"], "path": path, "state": "refused", "files": [], "bytes": 0}
+        key = (entry["root"], relative_path(entry["path"]))
+        if data["confirm"] and key in candidates and candidates[key] != entry["revision"]:
+            raise ValueError("conflicting delete confirmations")
+        candidates[key] = entry["revision"]
+
+    allowed = roots()
+    results = {}
+    covered = set()
+    # Review parent takes first. Their manifests can cover other selected clips or videos inside a companion folder.
+    for root, path in sorted(candidates, key=lambda where: where[1].count("/")):
+        key = (root, path)
+        if key in covered:
+            continue
+        revision = candidates[key]
+        item: Dict[str, Any] = {"root": root, "path": path, "revision": "", "state": "refused", "files": [], "bytes": 0}
+        results[key] = item
         try:
-            if entry["root"] != "output":
-                raise PermissionError("only output takes can be deleted")
-            # The request only names a candidate; ownership and the current revision are established here.
-            files = deletion_plan(output, path, entry["revision"])
-            item["files"] = [{"path": os.path.relpath(name, base).replace(os.sep, "/"), "bytes": size} for name, size in files]
-            item["bytes"] = sum(size for _, size in files)
-            item["state"] = delete_take(output, path, entry["revision"]) if data["confirm"] else "deletable"
+            plan = deletion_plan(allowed, root, path)
+            if not data["confirm"] or revision == plan.revision:
+                removed: List[str] = []
+                item["state"] = delete_video(allowed, root, path, revision, removed) if data["confirm"] else "deletable"
+                if item["state"] != "refused":
+                    item["revision"] = plan.revision
+                    item["files"] = [{"path": file.path, "bytes": file.size} for file in plan.files]
+                    item["bytes"] = sum(file.size for file in plan.files)
+                    if plan.directory:
+                        item["directory"] = plan.directory
+                        covered.update((root, file.path) for file in plan.files if (root, file.path) in candidates)
+                    if item["state"] == "partial":
+                        item["removed"] = removed
         except (OSError, ValueError):
-            logger.info("take deletion refused", exc_info=True)
-        results.append(item)
-    return {"entries": results, "bytes": sum(item["bytes"] for item in results if item["state"] != "refused")}
+            logger.info("video deletion refused", exc_info=True)
+    entries = [results[key] for key in candidates if key in results]
+    return {"entries": entries, "bytes": sum(item["bytes"] for item in entries)}
 
 
 def register_routes(routes: web.RouteTableDef, app: Optional[web.Application] = None):

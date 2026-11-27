@@ -56,7 +56,7 @@ edit `roots` with existing absolute paths (`"D:/Photos"` on Windows), then resta
 ```
 
 ComfyUI's `input` and `output` directories are available by default.
-Choose only media directories you intend to share with clients of this server.
+Clients can browse these roots and use **Assemble Video → Delete Files…** to delete selected videos wherever the ComfyUI process has filesystem permission.
 JSONC supports comments; omit trailing commas.
 
 #### Optional setup
@@ -108,7 +108,7 @@ Render the current segment to inspect its footage, or render the remaining segme
 
 Replace the final **Save Video** of a graph with **Save Video Segment** and give it a project, typed or linked from **Path Builder**. Each run saves a new take under `<project>/videos/`: a playable MP4 in H.264, H.265 or AV1, a take record, and the sound as float PCM. An earlier take is never replaced, so you can render a segment several times and compare. Use `clip_name` for the file name. Director Workbench accepts either saver and, with a project, keeps its renders under `<project>/director/`.
 
-Add **Assemble Video** to the same workflow or to a workflow of its own. Add the project's takes, import a Director film in its order, or add any existing video. Replace takes, reorder, exclude, and loop each join with sound. **Check Export** shows the frame count, the duration and what happens to each track before anything is written: compatible video is copied without loss, and sound is rebuilt on one continuous sample timeline and encoded once, so picture and sound stay aligned across every join. **Export** writes a new version under `<project>/exports/` with the film and a record of the sources and decisions that made it. Removing a row never deletes a file; deleting takes from disk is a separate, confirmed action. See the [Assemble Video guide](web/docs/ArisuAssembleVideo/en.md).
+Add **Assemble Video** to the same workflow or to a workflow of its own. Add the project's takes, import a Director film in its order, or add any existing video. Replace takes, reorder, exclude, and loop each join with sound. **Check Export** shows the frame count, the duration and what happens to each track before anything is written: compatible video is copied without loss, and sound is rebuilt on one continuous sample timeline and encoded once, so picture and sound stay aligned across every join. **Export** writes a new version under `<project>/exports/` with the film and a record of the sources and decisions that made it. Use **Remove Selected** to keep the files on disk or **Delete Files…** to review and confirm deletion. Deleting a Director take removes its entire UUID folder, including the latent. Deleting an ordinary take removes its video and dedicated `.arisu/` folder. See the [Assemble Video guide](web/docs/ArisuAssembleVideo/en.md).
 
 Both nodes use the system `ffmpeg` and `ffprobe` when ComfyUI can find them, which is recommended. Without an `ffmpeg` executable they fall back to the PyAV libraries, log a warning for each job, and always encode.
 

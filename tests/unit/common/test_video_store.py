@@ -13,7 +13,7 @@ import pytest
 
 from src.arisu_nodes.common.media import revision_for
 from src.arisu_nodes.common.video_store import (
-    delete_take,
+    delete_video,
     deletion_plan,
     discard_take,
     discard_workspace,
@@ -150,59 +150,130 @@ def test_takes_and_exports_are_claimed_published_and_deleted_without_touching_ot
         )
     )
 
-    # Deletion is authorized by the server's own findings, never by the request.
-    for case, (target, wanted) in {
-        "director take": (directed["video"]["path"], directed["video"]["revision"]),
-        "stock render": (f"P/director/{TAKE}/clip_00002_.mp4", "any"),
-        "old revision": (path, "older"),
-        "no record": ("P/videos/clip_00003_.mp4", revision_for((videos / "clip_00003_.mp4").stat())),
-    }.items():
-        with pytest.raises(PermissionError):
-            deletion_plan(str(output), target, wanted)
-            pytest.fail(f"case={case!r}")
-    with pytest.raises(FileNotFoundError):
-        deletion_plan(str(output), "P/videos/gone_00001_.mp4", "any")
-    # A link that leaves output is refused by containment before anything is inspected.
-    for target in ("P/videos/linked_00001_.mp4", "escape/clip_00001_.mp4"):
-        with pytest.raises(ValueError):
-            deletion_plan(str(output), target, "any")
-    assert [os.path.basename(name) for name, _ in deletion_plan(str(output), path, revision)] == [
+    # The directory a selection will remove is always derived from its location and published record.
+    roots = {"output": str(output), "external": str(outside)}
+    plan = deletion_plan(roots, "output", path)
+    assert plan.directory == record_file.parent.relative_to(output).as_posix()
+    assert [os.path.basename(item.path) for item in plan.files] == ["audio.wav", "take.json", "shot_00001_.mp4"]
+    bare = "P/videos/clip_00003_.mp4"
+    plain = deletion_plan(roots, "output", bare)
+    assert plain.directory is None and [item.path for item in plain.files] == [bare]
+    directed_path = directed["video"]["path"]
+    sibling = f"P/director/{TAKE}/clip_00002_.mp4"
+    director_dir = (output / directed_path).parent
+    latent = director_dir / "clip_00001.safetensors"
+    latent.write_bytes(b"latent")
+    extras = director_dir / "extra"
+    (extras / "empty").mkdir(parents=True)
+    (extras / "notes.txt").write_text("the whole take")
+    os.link(extras / "notes.txt", extras / "notes-link.txt")
+    (outside / "protected.txt").write_text("outside")
+    (extras / "link.txt").symlink_to(outside / "protected.txt")
+    (extras / "dir-link").symlink_to(outside, target_is_directory=True)
+    group = deletion_plan(roots, "output", sibling)
+    assert group.directory == f"P/director/{TAKE}" and group.revision == deletion_plan(roots, "output", directed_path).revision
+    assert {os.path.basename(item.path) for item in group.files} == {
+        "clip_00001.safetensors",
+        "clip_00001_.mp4",
+        "clip_00002_.mp4",
         "take.json",
         "audio.wav",
-        "shot_00001_.mp4",
-    ]
-    # A record replaced by a symlink no longer proves ownership.
+        "notes.txt",
+        "notes-link.txt",
+        "link.txt",
+        "dir-link",
+    }
+    (extras / "late").mkdir()
+    assert delete_video(roots, "output", sibling, group.revision) == "refused" and latent.exists()
+    group = deletion_plan(roots, "output", sibling)
+    # All readers in the take matter, including an unselected video and the separately recorded PCM.
+    audio = str(output / directed["audio"]["pcm"]["path"])
+    with reading([str(output / directed_path)]):
+        with reading([audio]):
+            assert delete_video(roots, "output", sibling, group.revision) == "deferred"
+        assert director_dir.exists() and (output / sibling).exists()
+    assert not director_dir.exists() and (outside / "protected.txt").read_text() == "outside"
+    assert (output / "P/director/notes").is_dir()
+    legacy_path = f"arisu_director/{TAKE}/clip_00001_.mp4"
+    legacy_plan = deletion_plan(roots, "output", legacy_path)
+    assert legacy_plan.directory == f"arisu_director/{TAKE}"
+    assert delete_video(roots, "output", legacy_path, legacy_plan.revision) == "deleted"
+    assert not (output / legacy_plan.directory).exists()
+    for root, target in (
+        ("output", "P/videos/linked_00001_.mp4"),
+        ("output", "escape/clip_00001_.mp4"),
+        ("output", "P/videos/clip_00007.safetensors"),
+        ("output", "../outside/stock.mp4"),
+        ("unknown", "stock.mp4"),
+    ):
+        with pytest.raises(ValueError):
+            deletion_plan(roots, root, target)
+    with pytest.raises(FileNotFoundError):
+        deletion_plan(roots, "output", "P/videos/gone_00001_.mp4")
+    (videos / "alias.mp4").symlink_to(output / path)
+    (output / "alias").symlink_to(videos)
+    for alias in ("P/videos/alias.mp4", "alias/shot_00001_.mp4"):
+        with pytest.raises(ValueError):
+            deletion_plan(roots, "output", alias)
+    assert delete_video(roots, "output", path, revision) == "refused"
+
+    # Dropped or changed companions invalidate the preview. A symlink never authorizes reading or deleting its target.
+    (outside / "take.json").write_text(saved)
     record_file.unlink()
     record_file.symlink_to(outside / "take.json")
-    (outside / "take.json").write_text(saved)
-    with pytest.raises(PermissionError):
-        deletion_plan(str(output), path, revision)
+    assert [os.path.basename(item.path) for item in deletion_plan(roots, "output", path).files] == [
+        "audio.wav",
+        "take.json",
+        "shot_00001_.mp4",
+    ]
+    assert delete_video(roots, "output", path, plan.revision) == "refused" and (output / path).is_file()
     record_file.unlink()
-    record_file.write_text(json.dumps({**json.loads(saved), "audio": None}))
-    # While an export reads the video the deletion waits; afterwards only registered files go, and the user's stay.
-    (companion.parent / "notes.txt").write_text("mine")
+    # The standard layout keeps the whole companion folder with the video even if its record is gone.
+    (output / path).write_bytes(b"updated video")
+    (companion.parent / "notes.txt").write_text("included in the take")
+    (companion.parent / "empty").mkdir()
+    plan = deletion_plan(roots, "output", path)
+    assert [os.path.basename(item.path) for item in plan.files] == ["audio.wav", "notes.txt", "shot_00001_.mp4"]
     video = str((output / path).resolve())
     with reading([video]), reading([video]):
-        assert delete_take(str(output), path, revision) == "deferred" and os.path.exists(video)
-    assert (
-        not os.path.exists(video)
-        and not record_file.exists()
-        and companion.exists()
-        and (companion.parent / "notes.txt").read_text() == "mine"
-    )
+        assert delete_video(roots, "output", path, plan.revision) == "deferred" and os.path.exists(video)
+    assert not os.path.exists(video) and not companion.parent.exists()
+    assert (outside / "take.json").read_text() == saved and (videos / "clip_00003_.mp4").exists()
 
-    # A deletion that cannot complete is refused, never reported as done, and the take stays whole and listed.
+    # Replacing a plain external video after confirmation but before an export exits preserves the new file.
+    stock = outside / "stock.AVI"
+    stock.write_bytes(b"video")
+    token = deletion_plan(roots, "external", stock.name).revision
+    with reading([str(stock)]):
+        assert delete_video(roots, "external", stock.name, token) == "deferred"
+        stock.write_bytes(b"new video")
+    assert stock.read_bytes() == b"new video"
+    assert delete_video(roots, "external", stock.name, deletion_plan(roots, "external", stock.name).revision) == "deleted"
+
+    # A deletion that cannot start is refused and the take stays whole and listed.
     locked = publish(output, "P/videos", "locked", sound=False)
+    locked_path = locked["video"]["path"]
+    token = deletion_plan(roots, "output", locked_path).revision
     videos.chmod(0o555)
     try:
-        assert delete_take(str(output), locked["video"]["path"], locked["video"]["revision"]) == "refused"
+        assert delete_video(roots, "output", locked_path, token) == "refused"
     finally:
         videos.chmod(0o755)
-    assert (output / locked["video"]["path"]).is_file() and (videos / "locked_00001_.arisu" / "take.json").is_file()
-    assert (
-        delete_take(str(output), locked["video"]["path"], locked["video"]["revision"]) == "deleted"
-        and not (videos / "locked_00001_.arisu").exists()
-    )
+    assert (output / locked_path).is_file() and (videos / "locked_00001_.arisu" / "take.json").is_file()
+    assert delete_video(roots, "output", locked_path, token) == "deleted" and not (videos / "locked_00001_.arisu").exists()
+
+    # If only the video can be removed, the edit must still learn that the video is gone.
+    partial = publish(output, "P/videos", "partial", sound=False)
+    partial_path = partial["video"]["path"]
+    companion_dir = videos / "partial_00001_.arisu"
+    companion_dir.chmod(0o555)
+    token = deletion_plan(roots, "output", partial_path).revision
+    removed = []
+    try:
+        assert delete_video(roots, "output", partial_path, token, removed) == "partial" and removed == [partial_path]
+    finally:
+        companion_dir.chmod(0o755)
+    assert not (output / partial_path).exists() and (companion_dir / "take.json").exists()
 
     # Exports: the directory appears complete in one rename, concurrent jobs take different versions.
     assert predicted_export(str(output), "P", "main") == "P/exports/main_00001/main_00001.mp4"

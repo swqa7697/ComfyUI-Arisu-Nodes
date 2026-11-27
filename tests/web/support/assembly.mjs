@@ -32,10 +32,7 @@ export function makeAssembly(definition, { id = 7, graph = app.graph, values = {
 }
 
 /** What the server reports for one video: 24 fps, 1280 × 720, stereo PCM, and a take record unless `take` is null. */
-export function described(
-  path,
-  { take = null, frames = 240, predecessor = null, deletable = false, revision = `rev:${path}`, origin = 'ordinary' } = {},
-) {
+export function described(path, { take = null, frames = 240, predecessor = null, revision = `rev:${path}`, origin = 'ordinary' } = {}) {
   return {
     root: 'output',
     path,
@@ -50,7 +47,6 @@ export function described(
     vfr: false,
     audio: { rate: 32000, channels: 2, samples: Math.round((frames * 32000) / 24), source: take ? 'pcm' : 'embedded' },
     take: take ? { take, origin, segment: null, predecessor, transition: predecessor ? 'continuation' : null } : null,
-    deletable,
   };
 }
 

@@ -16,12 +16,16 @@ extensionNamed('Arisu.Common.AssembleVideo').beforeRegisterNodeDef(Assembly, { n
 
 const VIDEOS = 'motion_context/fixed/videos';
 const ID = (n) => `00000000-0000-4000-8000-00000000000${n}`;
-const A = described(`${VIDEOS}/h3_clip_00007_.mp4`, { take: ID(1), frames: 243, deletable: true });
-const B = described(`${VIDEOS}/h3_clip_00008_.mp4`, { take: ID(2), frames: 221, predecessor: ID(1), deletable: true });
+const A = described(`${VIDEOS}/h3_clip_00007_.mp4`, { take: ID(1), frames: 243 });
+const B = described(`${VIDEOS}/h3_clip_00008_.mp4`, { take: ID(2), frames: 221, predecessor: ID(1) });
 const C = described(`${VIDEOS}/h3_clip_00009_.mp4`, { take: ID(3), frames: 204 });
 const D1 = described(`arisu_director/${ID(4)}/clip_00002_.mp4`, { frames: 120 });
 const D2_PATH = `arisu_director/${ID(5)}/clip_00002_.mp4`;
-const OLD = described('legacy/old.mp4', { frames: 48 });
+const OLD = { ...described('old.mp4', { frames: 48 }), root: 'library' };
+const ROOTS = [
+  { id: 'output', label: 'Output' },
+  { id: 'library', label: 'Library' },
+];
 const SUGGESTED = { luma_gain: 1.02, luma_offset: 0.01, cb_offset: 0, cr_offset: -0.005, taper: 12 };
 const FILES = new Map([A, B, C, D1, OLD].map((item) => [item.path, item]));
 const checkboxes = (root) => descendants(root).filter((element) => element.tagName === 'INPUT' && element.type === 'checkbox');
@@ -72,36 +76,39 @@ test('Assemble Video builds an edit from takes, Director and files, keeps joins 
         suggestion: { stable: true, correction: SUGGESTED },
       });
     }
-    if (path === '/arisu/roots') return jsonResponse(200, { roots: [{ id: 'output', label: 'Output' }] });
+    if (path === '/arisu/roots') return jsonResponse(200, { roots: ROOTS });
     if (path === '/arisu/resources/browse') {
       server.browsed++;
+      const root = new URLSearchParams(query).get('root');
       return jsonResponse(200, {
-        root: 'output',
-        path: 'legacy',
-        parent: '',
+        root,
+        path: '',
+        parent: null,
         dirs: [],
-        files: ['old.mp4', 'still.png', 'voice.wav'],
+        files: root === 'library' ? ['old.mp4', 'still.png', 'voice.wav'] : [],
         kinds: { 'old.mp4': 'video', 'still.png': 'image', 'voice.wav': 'audio' },
         ancestors: [],
-        roots: [{ id: 'output', label: 'Output' }],
+        roots: ROOTS,
       });
     }
     if (path === '/arisu/video/delete') {
       server.deletes.push(sent);
-      const files = (item) => [
-        { path: item.path, bytes: 4000 },
-        { path: item.path.replace('.mp4', '.arisu/take.json'), bytes: 96 },
-      ];
-      return jsonResponse(200, {
-        entries: sent.entries.map((item) => ({
-          root: item.root,
-          path: item.path,
-          state: sent.confirm ? (item.path === A.path ? 'deferred' : 'deleted') : 'deletable',
-          files: files(item),
-          bytes: 4096,
-        })),
-        bytes: 4096 * sent.entries.length,
+      const entries = sent.entries.map((item) => {
+        if (item.path === D2_PATH || item.path === C.path) return { ...item, state: 'refused', files: [], bytes: 0 };
+        const files = [{ path: item.path, bytes: 4000 }];
+        if (FILES.get(item.path)?.take) files.push({ path: item.path.replace('.mp4', '.arisu/take.json'), bytes: 96 });
+        const state = sent.confirm ? (item.path === A.path ? 'deferred' : 'deleted') : 'deletable';
+        const directory = item.path === D1.path ? D1.path.slice(0, D1.path.lastIndexOf('/')) : undefined;
+        return {
+          ...item,
+          revision: `review:${item.path}`,
+          state,
+          directory,
+          files,
+          bytes: files.reduce((total, file) => total + file.bytes, 0),
+        };
       });
+      return jsonResponse(200, { entries, bytes: entries.reduce((total, item) => total + item.bytes, 0) });
     }
     return undefined;
   });
@@ -128,6 +135,8 @@ test('Assemble Video builds an edit from takes, Director and files, keeps joins 
   }));
   makeNode({ id: 2, type: 'TestDirector', graph });
   const node = makeAssembly(Assembly);
+  const select = (id, checked = true) => checkboxes(row(node, id))[0].onchange({ target: { checked } });
+  assert.equal(button(panel(node), 'Delete Files…').disabled, true);
   assert.deepEqual(
     node.inputs.map((input) => input.name),
     ['project_prefix', 'export_name', 'encoding', 'codec', 'crf'],
@@ -145,6 +154,10 @@ test('Assemble Video builds an edit from takes, Director and files, keeps joins 
   assert.deepEqual(server.takes, [{ project: 'motion_context/fixed' }]);
   assert.deepEqual(changes, { before: 1, after: 1 });
   const [first, second] = edit(node).entries;
+  assert(rows(node).every((item) => checkboxes(item)[0].checked));
+  assert.equal(button(panel(node), 'Delete Files…').disabled, false);
+  select(first.id, false);
+  select(second.id, false);
   assert.deepEqual(
     { ...first, id: '' },
     {
@@ -215,14 +228,40 @@ test('Assemble Video builds an edit from takes, Director and files, keeps joins 
 
   // an existing file: Browse lists videos only, and the server describes the pick before it enters the edit
   await button(panel(node), 'Add Existing Video').onclick();
+  await descendants(dialog())
+    .find((element) => element.title === 'library:/')
+    .onclick();
   const cards = descendants(dialog()).filter((element) => element.className === 'arisu-browser-file');
   assert.deepEqual(
     cards.map((card) => card.lastChild.textContent),
     ['old.mp4'],
   );
   await cards[0].onclick();
-  assert.deepEqual(server.describe.at(-1), { entries: [{ root: 'output', path: OLD.path }] });
+  assert.deepEqual(server.describe.at(-1), { entries: [{ root: OLD.root, path: OLD.path }] });
   assert.deepEqual([edit(node).entries[4].source, edit(node).entries[4].take], ['file', '']);
+
+  // A stale Director row, a missing file, and an external video can be reviewed together. Cancel preserves all three.
+  const file = edit(node).entries[4];
+  for (const entry of [stale, gone, file]) select(entry.id);
+  const deleteButton = () => button(panel(node), 'Delete Files…');
+  assert.equal(deleteButton().disabled, false);
+  pending = deleteButton().onclick();
+  await settle();
+  assert.deepEqual(server.deletes[0], {
+    entries: [stale, gone, file].map(({ root, path, revision }) => ({ root, path, revision })),
+    confirm: false,
+  });
+  const listed = descendants(dialog())
+    .filter((element) => element.tagName === 'TD')
+    .map((element) => element.textContent);
+  assert(listed.includes(`output:${D1.path}`) && listed.includes(`library:${OLD.path}`));
+  assert(button(dialog(), 'Delete 1 Folder and 2 Files'));
+  assert(button(dialog(), 'Cancel').autofocus);
+  button(dialog(), 'Cancel').onclick();
+  await pending;
+  assert.equal(server.deletes.length, 1);
+  assert.equal(edit(node).entries.length, 5);
+  for (const entry of [stale, gone, file]) select(entry.id, false);
 
   // replacing the missing Director take keeps the row's place and identity
   pending = button(row(node, gone.id), `Reselect s2 · clip_00002_.mp4`).onclick();
@@ -237,7 +276,6 @@ test('Assemble Video builds an edit from takes, Director and files, keeps joins 
   assert.equal(row(node, gone.id).dataset.state, 'ok');
 
   // reordering by keyboard, by the hidden move buttons and by drag; a join does not survive losing its neighbour
-  const file = edit(node).entries[4];
   descendants(row(node, file.id))
     .find((element) => element.className === 'handle')
     .onkeydown(event({ key: 'ArrowUp' }));
@@ -260,14 +298,13 @@ test('Assemble Video builds an edit from takes, Director and files, keeps joins 
   assert.equal(sum(), `4 of 5 · ${221 + 243 + 204 + 48} frames · 29.83 s`);
 
   // removing rows is an edit: no request, no file touched
-  const select = (id, checked = true) => checkboxes(row(node, id))[0].onchange({ target: { checked } });
   const requests = api.calls.length;
   select(stale.id);
   select(file.id);
   button(panel(node), 'Remove Selected').onclick();
   assert.deepEqual(paths(node), ['h3_clip_00008_.mp4', 'h3_clip_00007_.mp4', 'h3_clip_00009_.mp4']);
   assert.equal(api.calls.length, requests);
-  assert.deepEqual(server.deletes, []);
+  assert.equal(server.deletes.length, 1);
 
   // ComfyUI hears its history keys before the panel, except on an INPUT: only a row checkbox forwards them,
   // so a key on a row handle is not answered twice
@@ -280,22 +317,37 @@ test('Assemble Video builds an edit from takes, Director and files, keeps joins 
   }
   assert.deepEqual(commands, ['Comfy.Undo', 'Comfy.Undo', 'Comfy.Redo']);
 
-  // deleting from disk is offered only for takes the server calls deletable, lists the files first, and needs a second click
-  select(replaced.id);
+  // A second copy of a row refers to the same file. Only newly inserted rows are selected after the picker closes.
   select(first.id);
-  assert.equal(button(panel(node), 'Delete Files…').disabled, true, 'a row that is not a deletable take blocks the action');
-  select(replaced.id, false);
-  select(second.id);
-  assert.equal(button(panel(node), 'Delete Files…').disabled, false);
-  const before = edit(node);
-  pending = button(panel(node), 'Delete Files…').onclick();
+  pending = button(panel(node), 'Add Project Takes').onclick();
   await settle();
-  const sent = [B, A].map((item) => ({ root: 'output', path: item.path, revision: item.revision }));
-  assert.deepEqual(server.deletes, [{ entries: sent, confirm: false }]);
+  pick(B).onchange({ target: { checked: true } });
+  button(dialog(), 'Add 1 Take').onclick();
+  await pending;
+  assert.deepEqual(
+    rows(node).map((item) => checkboxes(item)[0].checked),
+    [false, false, true, false],
+  );
+  select(first.id);
+  select(second.id);
+  select(replaced.id);
+  assert.equal(deleteButton().disabled, false);
+  const before = edit(node);
+  pending = deleteButton().onclick();
+  await settle();
+  const sent = [B, A, C].map((item) => ({ root: 'output', path: item.path, revision: item.revision }));
+  assert.deepEqual(server.deletes[1], { entries: sent, confirm: false }, 'duplicate file references share one dry run entry');
   assert.deepEqual(edit(node), before, 'the dry run changes nothing');
   button(dialog(), 'Delete 4 Files').onclick();
   await pending;
-  assert.deepEqual(server.deletes[1], { entries: sent, confirm: true });
-  assert.deepEqual(paths(node), ['h3_clip_00007_.mp4', 'h3_clip_00009_.mp4'], 'the deleted take leaves the edit; the deferred one stays');
+  assert.deepEqual(server.deletes[2], {
+    entries: sent.slice(0, 2).map((item) => ({ ...item, revision: `review:${item.path}` })),
+    confirm: true,
+  });
+  assert.deepEqual(
+    paths(node),
+    ['h3_clip_00007_.mp4', 'h3_clip_00009_.mp4'],
+    'both deleted references leave; deferred and unavailable files stay',
+  );
   assert(toastSeverities().includes('warn'));
 });

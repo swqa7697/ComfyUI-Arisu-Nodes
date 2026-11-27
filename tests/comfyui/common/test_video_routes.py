@@ -10,7 +10,7 @@ import threading
 import uuid
 from fractions import Fraction
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 import folder_paths
 import pytest
@@ -70,7 +70,7 @@ def serve(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> web.Application:
     return app
 
 
-def test_video_routes_describe_plan_and_delete_only_verified_takes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+def test_video_routes_describe_plan_and_delete_confirmed_videos(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     assert shutil.which("ffmpeg") and shutil.which("ffprobe")
     app = serve(tmp_path, monkeypatch)
     output, external = tmp_path / "output", tmp_path / "external"
@@ -84,8 +84,8 @@ def test_video_routes_describe_plan_and_delete_only_verified_takes(tmp_path: Pat
     shutil.copy(output / first["video"]["path"], output / PROJECT / "videos" / "stock_00001_.mp4")
     shutil.copy(output / first["video"]["path"], external / "found.mp4")
     (external / "notes.mp4").write_text("not a video")
-    keep = output / PROJECT / "videos" / "shot_00002_.arisu" / "notes.txt"
-    keep.write_text("the user's own file")
+    notes = output / PROJECT / "videos" / "shot_00002_.arisu" / "notes.txt"
+    notes.write_text("notes for this take")
 
     async def run():
         async with TestClient(TestServer(app)) as client:
@@ -101,8 +101,6 @@ def test_video_routes_describe_plan_and_delete_only_verified_takes(tmp_path: Pat
                 ("ok", 30, "pcm", "ordinary"),
                 ("ok", 36, "pcm", "director"),
             ]
-            # Only ordinary takes with a verified record can be deleted from here.
-            assert [item["deletable"] for item in listed["takes"]] == [True, True, False]
             assert listed["takes"][2]["take"]["take"] == TAKE and listed["takes"][0]["fps"] == [24, 1]
             wider = await (await client.get("/arisu/video/takes", params={"project": PROJECT, "legacy": "1"})).json()
             assert (
@@ -121,8 +119,8 @@ def test_video_routes_describe_plan_and_delete_only_verified_takes(tmp_path: Pat
             text = await response.text()
             described = json.loads(text)["entries"]
             assert [item["state"] for item in described] == ["ok", "missing", "unusable", "missing", "changed"]
-            # An existing file without companions is a reference: embedded sound, no take, never deletable.
-            assert described[0]["audio"]["source"] == "embedded" and described[0]["take"] is None and not described[0]["deletable"]
+            # An existing file without companions is an edit reference with embedded sound.
+            assert described[0]["audio"]["source"] == "embedded" and described[0]["take"] is None
             assert str(tmp_path) not in text and response.headers["X-Content-Type-Options"] == "nosniff"
 
             document = {"version": 1, "output": None, "entries": [entry(first), entry(second)]}
@@ -170,30 +168,80 @@ def test_video_routes_describe_plan_and_delete_only_verified_takes(tmp_path: Pat
                 {"root": "output", "path": stock, "revision": "any"},
                 {**reference(second), "revision": "an older file"},
             ]
+            film = output / PROJECT / "exports" / "main_00001" / "main_00001.mp4"
+            film.parent.mkdir(parents=True)
+            film.write_bytes(b"video")
+            sequence = film.with_name("sequence.json")
+            sequence.write_text("the export record")
+            input_video = tmp_path / "input" / "camera.AVI"
+            input_video.parent.mkdir()
+            input_video.write_bytes(b"corrupt but still selected for deletion")
+            director_dir = output / PROJECT / "director" / TAKE
+            alternate = director_dir / "clip_00003_.mp4"
+            alternate.write_bytes(b"alternate clip")
+            (director_dir / "empty").mkdir()
+            nested = notes.with_name("reference.webm")
+            nested.write_bytes(b"reference")
+            candidates.extend(
+                [
+                    {"root": "output", "path": film.relative_to(output).as_posix(), "revision": ""},
+                    {"root": "input", "path": input_video.name, "revision": ""},
+                    {"root": "output", "path": sequence.relative_to(output).as_posix(), "revision": ""},
+                    {"root": "elsewhere", "path": "found.mp4", "revision": ""},
+                ]
+            )
             before = sorted(str(path) for path in tmp_path.rglob("*"))
-            dry = await (await client.post("/arisu/video/delete", json={"entries": candidates, "confirm": False})).json()
-            assert [item["state"] for item in dry["entries"]] == ["deletable", "refused", "refused", "refused", "refused"]
+            # The dedicated folder covers another selected clip even if a nested video was selected first.
+            overlaps = [{"root": "output", "path": p.relative_to(output).as_posix(), "revision": ""} for p in (nested, alternate)]
+            dry = await (
+                await client.post(
+                    "/arisu/video/delete", json={"entries": [overlaps[0], *candidates, overlaps[1], candidates[0]], "confirm": False}
+                )
+            ).json()
+            assert [item["state"] for item in dry["entries"]] == ["deletable"] * 7 + ["refused"] * 2
             stem = first["video"]["path"][: -len(".mp4")]
-            assert [item["path"] for item in dry["entries"][0]["files"]] == [
+            assert {item["path"] for item in dry["entries"][0]["files"]} == {
                 f"{stem}.arisu/take.json",
                 f"{stem}.arisu/audio.wav",
                 first["video"]["path"],
-            ]
-            assert dry["bytes"] == dry["entries"][0]["bytes"] == sum(item["bytes"] for item in dry["entries"][0]["files"]) > 0
+            }
+            assert dry["entries"][0]["directory"] == f"{stem}.arisu"
+            assert dry["entries"][1]["directory"] == director_dir.relative_to(output).as_posix()
+            assert [len(item["files"]) for item in dry["entries"]] == [3, 5, 1, 1, 5, 1, 1, 0, 0]
+            assert dry["bytes"] == sum(file["bytes"] for item in dry["entries"] for file in item["files"]) > 0
             assert sorted(str(path) for path in tmp_path.rglob("*")) == before
-            # A browser-supplied list authorizes nothing: every refused candidate survives a confirmed request.
-            done = await (await client.post("/arisu/video/delete", json={"entries": candidates, "confirm": True})).json()
-            assert [item["state"] for item in done["entries"]] == ["deleted", "refused", "refused", "refused", "refused"]
-            assert not (output / first["video"]["path"]).exists() and not (output / f"{stem}.arisu").exists()
-            for kept in (directed["video"]["path"], directed["audio"]["pcm"]["path"], stock, second["video"]["path"]):
-                assert (output / kept).is_file(), kept
-            assert (external / "found.mp4").is_file() and (legacy / "clip_00001_.mp4").is_file()
-            # While an export reads a take its deletion waits, then removes only the registered files.
+
+            async def confirm(rows: List[Dict[str, Any]]) -> List[str]:
+                body = {"entries": [{key: row[key] for key in ("root", "path", "revision")} for row in rows], "confirm": True}
+                result = await (await client.post("/arisu/video/delete", json=body)).json()
+                return [item["state"] for item in result["entries"]]
+
+            # A workflow revision, including one for the current file, cannot confirm deletion.
+            assert await confirm(candidates) == ["refused"] * len(candidates)
+            assert sorted(str(path) for path in tmp_path.rglob("*")) == before
+            # Validate a whole batch before side effects; duplicates fit up to the maximum edit size.
+            malformed = {"entries": [reference(first) | {"revision": dry["entries"][0]["revision"]}, {"id": "bad"}], "confirm": True}
+            assert (await client.post("/arisu/video/delete", json=malformed)).status == 400 and (output / first["video"]["path"]).is_file()
+            repeated = {"entries": [candidates[0]] * 512, "confirm": False}
+            assert (await client.post("/arisu/video/delete", json=repeated)).status == 200
+            repeated["entries"].append(candidates[0])
+            assert (await client.post("/arisu/video/delete", json=repeated)).status == 400
+
+            # A confirmed action removes both whole take folders; holding the alternate clip delays its UUID folder.
             busy = str((output / second["video"]["path"]).resolve())
-            with reading([busy]):
-                waiting = await (await client.post("/arisu/video/delete", json={"entries": [reference(second)], "confirm": True})).json()
-                assert waiting["entries"][0]["state"] == "deferred" and (output / second["video"]["path"]).is_file()
-            assert not (output / second["video"]["path"]).exists() and keep.read_text() == "the user's own file"
+            with reading([busy, str(alternate)]):
+                assert await confirm(dry["entries"][:7]) == ["deleted", "deferred", "deleted", "deleted", "deferred", "deleted", "deleted"]
+                assert (output / second["video"]["path"]).is_file() and (director_dir / "clip_00001.safetensors").is_file()
+            for gone in (first["video"]["path"], f"{stem}.arisu", directed["video"]["path"], stock, second["video"]["path"]):
+                assert not (output / gone).exists(), gone
+            assert not (external / "found.mp4").exists() and not input_video.exists() and not film.exists()
+            assert not director_dir.exists() and director_dir.parent.exists()
+            assert not notes.parent.exists() and notes.parent.parent.exists()
+            assert (legacy / "clip_00001_.mp4").is_file() and sequence.read_text() == "the export record"
+            legacy_video = {"root": "output", "path": f"arisu_director/{TAKE}/clip_00001_.mp4", "revision": ""}
+            legacy_plan = await (await client.post("/arisu/video/delete", json={"entries": [legacy_video], "confirm": False})).json()
+            assert legacy_plan["entries"][0]["directory"] == f"arisu_director/{TAKE}"
+            assert await confirm(legacy_plan["entries"]) == ["deleted"] and not legacy.exists() and legacy.parent.is_dir()
             assert (await client.post("/arisu/video/delete", json={"entries": [reference(second)]})).status == 400
 
     asyncio.run(run())

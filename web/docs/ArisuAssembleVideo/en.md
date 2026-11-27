@@ -35,7 +35,7 @@ An ordinary Run writes no film and passes nothing downstream. Only **Export** pr
 
 ## Building the Edit
 
-- **Add Project Takes** lists the published takes of the project. Select any number and add them together.
+- **Add Project Takes** lists the published takes of the project. The takes you add stay selected in the edit.
 - **Import from Director** adds the rendered takes of a Director Workbench in film order. Segments without a render are
   skipped. The import is an independent copy of that order: later Director changes do not move your rows.
   **Refresh from Director** follows Director's current takes for the rows that were imported.
@@ -94,10 +94,19 @@ Each export directory holds the film and its `sequence.json`. Earlier versions a
 
 ## Removing and Deleting
 
-Removing a row only changes the edit. **Delete Files…** is a separate action for takes saved by **Save Video
-Segment** in the ordinary `videos` folder. It lists every file and the space recovered, and deletes only after you
-confirm. Director footage, older videos and external files can be removed from the edit but are never deleted here.
-A take that an export is reading is deleted when that export finishes. Undo restores a row, not its files.
+Use **Remove Selected** to remove rows from the edit and keep their files on disk.
+
+To delete videos from disk, tick their rows and click **Delete Files…**. The confirmation shows the files currently
+at those locations, with their root and relative path. Review the list and confirm once.
+
+- Deleting a **Director take** removes its entire `<project>/director/<UUID>/` or `arisu_director/<UUID>/`
+  folder, including the latent, other clips and all subfolders. Selecting two clips from that take lists the folder once.
+- Deleting an **ordinary project take** removes the selected video and its dedicated `<video stem>.arisu/` folder,
+  including the take record, audio and anything else stored there. Other takes in the shared `videos/` folder stay in place.
+- Deleting a **standalone video or exported film** removes the selected video file. Its parent folder stays in place.
+
+Deletion applies to the selected files in ComfyUI's `input`, `output` and configured media directories.
+If an export is reading a file, deletion waits until the export finishes. Undo can restore the edit rows only.
 
 ## Imported and Copied Workflows
 
@@ -108,6 +117,7 @@ again by their IDs inside this node's project; a plain video file is reselected 
 ## Notes
 
 - An edit holds up to 512 rows; one export includes up to 100.
+- A take deletion can review up to 4,096 filesystem entries per take folder, including directories.
 - Videos are read from ComfyUI's input and output directories and the roots an administrator configured. Exports are
   written only under the output directory.
 - Without a system `ffmpeg`, exports use the bundled PyAV libraries and always encode.

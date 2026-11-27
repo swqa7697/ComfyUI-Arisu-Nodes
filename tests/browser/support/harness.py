@@ -61,7 +61,7 @@ class FixtureServer:
             "Comfy.Workflow.WorkflowTabsPosition": "Topbar",
         }
         self.userdata: Dict[str, bytes] = {}
-        # Assemble Video: request bodies in order, deleted takes, Director renders seen, and join preview jobs.
+        # Assemble Video: request bodies in order, deleted videos, Director renders seen, and join preview jobs.
         self.video_requests: List[Tuple[str, Any]] = []
         self.video_deleted: Set[str] = set()
         self.video_directed: Set[str] = set()
@@ -202,7 +202,6 @@ class FixtureServer:
             "vfr": False,
             "audio": {"rate": 32000, "channels": 2, "samples": 64000, "source": "pcm" if ordinary else "embedded"},
             "take": take,
-            "deletable": ordinary,
         }
 
     async def handle_video(self, request: web.Request, path: str) -> Optional[web.StreamResponse]:
@@ -238,17 +237,27 @@ class FixtureServer:
             results = []
             for entry in body["entries"]:
                 found = self.video_description(entry["root"], entry["path"])
-                allowed = found.get("deletable") and found["revision"] == entry["revision"]
-                stem = entry["path"][: -len(".mp4")]
-                files = (
-                    [(f"{stem}.arisu/take.json", 1200), (f"{stem}.arisu/audio.wav", 512044), (entry["path"], 2400000)] if allowed else []
-                )
+                revision = "review-" + found["revision"] if found["state"] == "ok" else ""
+                allowed = bool(revision) and (not body["confirm"] or entry["revision"] == revision)
+                files = []
+                directory = None
+                if allowed:
+                    origin = (found["take"] or {}).get("origin")
+                    if origin == "ordinary":
+                        directory = entry["path"].removesuffix(".mp4") + ".arisu"
+                        files.extend([(f"{directory}/take.json", 1200), (f"{directory}/audio.wav", 512044)])
+                    elif origin == "director":
+                        directory = entry["path"].rsplit("/", 1)[0]
+                        files.append((f"{directory}/clip_00001.safetensors", 128000))
+                    files.append((entry["path"], 2400000))
                 if allowed and body["confirm"]:
                     self.video_deleted.add(entry["path"])
                 results.append(
                     {
                         "root": entry["root"],
                         "path": entry["path"],
+                        "directory": directory,
+                        "revision": revision if allowed else "",
                         "state": ("deleted" if body["confirm"] else "deletable") if allowed else "refused",
                         "files": [{"path": name, "bytes": size} for name, size in files],
                         "bytes": sum(size for _, size in files),

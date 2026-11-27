@@ -70,9 +70,9 @@ export function preflight(body, signal) {
   return post('/preflight', body, signal);
 }
 
-/** `confirm: false` lists the files and bytes; only `confirm: true` deletes. */
-export function deletePlan(entries, confirm) {
-  return post('/delete', { entries: entries.map(({ root, path, revision }) => ({ root, path, revision })), confirm });
+/** Request a file list for review, or confirm with the revisions returned by that review. */
+export function deletePlan(entries, confirm, signal) {
+  return post('/delete', { entries: entries.map(({ root, path, revision }) => ({ root, path, revision })), confirm }, signal);
 }
 
 export const joinPreview = {

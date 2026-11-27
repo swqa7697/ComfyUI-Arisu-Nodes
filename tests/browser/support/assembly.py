@@ -64,6 +64,12 @@ def inspect_assembly(page: Page, server: FixtureServer, name: str):
     expect(panel.locator(".entry")).to_have_count(2)
     expect(panel.locator(".entry[data-state=ok]")).to_have_count(2)
     expect(panel.get_by_role("button", name="Add published takes of the project", exact=True)).to_be_focused()
+    delete = panel.get_by_role("button", name="Delete the selected video files from disk", exact=True)
+    for name_on_disk in ("shot_00001_.mp4", "shot_00002_.mp4"):
+        selected = panel.get_by_label("Select " + name_on_disk, exact=True)
+        expect(selected).to_be_checked()
+        selected.uncheck()
+    expect(delete).to_be_disabled()
 
     # Director footage arrives in film order with the take IDs of its receipts.
     panel.get_by_role("button", name="Import Director takes in film order", exact=True).click()
@@ -245,16 +251,25 @@ def inspect_assembly(page: Page, server: FixtureServer, name: str):
     join.get_by_role("button", name="Cancel", exact=True).click()
     expect(join).to_have_count(0)
 
-    # Deleting from disk is a separate, confirmed action; removing from the edit touches no file.
-    delete = panel.get_by_role("button", name="Delete the selected takes from disk", exact=True)
-    expect(delete).to_be_disabled()
+    # A plain video and Director footage can share a confirmation. Cancel keeps both files and rows.
     panel.get_by_label("Select found.webm", exact=True).check()
-    expect(delete).to_be_disabled()
+    panel.get_by_label("Select launch · clip_00002_.mp4", exact=True).check()
+    delete.click()
+    confirm = page.get_by_role("dialog", name="Delete Files from Disk", exact=True)
+    expect(confirm.get_by_role("button", name="Delete 1 Folder and 3 Files", exact=True)).to_be_enabled()
+    director_folder = "output:" + imported[0]["path"].rsplit("/", 1)[0] + "/"
+    expect(confirm.get_by_text(director_folder, exact=True)).to_be_visible()
+    expect(confirm).to_contain_text(director_folder + "clip_00001.safetensors")
+    expect(confirm).to_contain_text("output:" + imported[0]["path"])
+    expect(confirm).to_contain_text("output:" + edit(page, node_id)["entries"][-1]["path"])
+    confirm.get_by_role("button", name="Cancel", exact=True).click()
+    expect(panel.locator(".entry")).to_have_count(5)
+    assert not server.video_deleted
+    panel.get_by_label("Select launch · clip_00002_.mp4", exact=True).uncheck()
     panel.get_by_label("Select found.webm", exact=True).uncheck()
     panel.get_by_label("Select shot_00002_.mp4", exact=True).check()
     delete.click()
-    confirm = page.get_by_role("dialog", name="Delete Files from Disk", exact=True)
-    expect(confirm.get_by_role("row")).to_have_count(4)
+    expect(confirm.get_by_role("row")).to_have_count(5)
     expect(confirm).to_contain_text(PROJECT + "/videos/shot_00002_.arisu/audio.wav")
     contained(page, "dialog.arisu-assembly-dialog")
     screenshot(page, name, "assembly-delete")
@@ -265,13 +280,13 @@ def inspect_assembly(page: Page, server: FixtureServer, name: str):
             "confirm": False,
         },
     )
-    confirm.get_by_role("button", name="Delete 3 Files", exact=True).click()
+    confirm.get_by_role("button", name="Delete 1 Folder and 3 Files", exact=True).click()
     expect(panel.locator(".entry")).to_have_count(4)
     assert server.video_requests[-1][1]["confirm"] is True and server.video_deleted == {PROJECT + "/videos/shot_00002_.mp4"}
     panel.get_by_label("Select found.webm", exact=True).check()
     panel.get_by_role("button", name="Remove the selected rows from the edit; no file is touched", exact=True).click()
     expect(panel.locator(".entry")).to_have_count(3)
-    assert [kind for kind, _ in server.video_requests].count("delete") == 2
+    assert [kind for kind, _ in server.video_requests].count("delete") == 3
 
     # An imported workflow keeps the order and take IDs but no location; one explicit action finds the takes again.
     page.evaluate("async () => { const app = window.comfyAPI.app.app; await app.loadGraphData(app.graph.serialize()); }")

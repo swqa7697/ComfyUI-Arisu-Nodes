@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import hmac
 import json
 import logging
+import mimetypes
 import os
 import posixpath
 import re
@@ -13,10 +15,11 @@ import threading
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterator, List, Mapping, Optional, Set, Tuple
 
-from .core import contained_path
+from .core import contained_path, relative_path
 from .media import revision_for
+from .paths import select_root
 from .video import (
     COMPANION,
     RECORD_LIMIT,
@@ -36,8 +39,10 @@ MAX_TAKES = 512
 _TEMP_PREFIX = ".arisu-tmp-"
 _STALE_SECONDS = 24 * 3600
 _READING: Dict[str, int] = {}
-_DEFERRED: Dict[str, Callable[[], None]] = {}
+_DEFERRED: Dict[str, Tuple[Set[str], Callable[[], str]]] = {}
+_MAX_DELETE_ENTRIES = 4096
 _READING_LOCK = threading.Lock()
+_DELETE_KEY = os.urandom(32)
 
 _ATTEMPTS = 100000
 _PARTS = ("video.part", "audio.wav.part", "metadata.part", TAKE_RECORD + ".part")
@@ -245,78 +250,230 @@ def reading(paths: List[str]) -> Iterator[None]:
     try:
         yield
     finally:
-        pending: List[Callable[[], None]] = []
         with _READING_LOCK:
             for path in paths:
                 _READING[path] -= 1
                 if not _READING[path]:
                     del _READING[path]
-                    if path in _DEFERRED:
-                        pending.append(_DEFERRED.pop(path))
-        for action in pending:
-            action()
+            for revision, (files, action) in list(_DEFERRED.items()):
+                if files.isdisjoint(_READING):
+                    del _DEFERRED[revision]
+                    action()
 
 
-def deletion_plan(output_root: str, path: str, revision: str) -> List[Tuple[str, int]]:
-    """The files of one ordinary Arisu take that may be removed, as ``(absolute path, bytes)``.
-
-    Ownership is proven on the server: the video sits outside Director and export directories, and a published
-    record beside it names this file at the requested revision. Anything else raises ``PermissionError``.
-    """
-    directory = posixpath.dirname(path)
-    parts = directory.split("/")
-    video = contained_path(output_root, path)
-    info = _regular(video)
-    if info is None:
-        raise FileNotFoundError("take not found")
-    if director_take_id(directory) or "exports" in parts or "director" in parts or parts[0] == "arisu_director":
-        raise PermissionError("only ordinary takes can be deleted here")
-    if revision_for(info) != revision:
-        raise PermissionError("the take changed; describe it again")
-    record, _, _ = take_companion(output_root, path, revision)
-    if record is None or record.get("origin") != "ordinary":
-        raise PermissionError("only ordinary takes can be deleted here")
-    stem, _ = posixpath.splitext(path)
-    companion = contained_path(output_root, stem + COMPANION)
-    files = [(os.path.join(companion, TAKE_RECORD), _regular(os.path.join(companion, TAKE_RECORD)))]
-    registered = ((record.get("audio") or {}).get("pcm") or {}).get("path")
-    # Only the companion this record registers belongs to the take; anything else in the directory is the user's.
-    if registered == posixpath.join(stem + COMPANION, TAKE_AUDIO):
-        files.append((os.path.join(companion, TAKE_AUDIO), _regular(os.path.join(companion, TAKE_AUDIO))))
-    files.append((video, info))
-    return [(name, found.st_size) for name, found in files if found is not None]
+@contextmanager
+def _file_at(base: str, path: str) -> Iterator[Tuple[str, Optional[int]]]:
+    """Access a literal entry under the configured root. Pin its parent where directory descriptors are supported."""
+    parts = relative_path(path).split("/")
+    root = os.path.realpath(base)
+    directory = contained_path(root, "/".join(parts[:-1]), allow_empty=True)
+    if os.path.normcase(directory) != os.path.normcase(os.path.join(root, *parts[:-1])):
+        raise ValueError("symlinked deletion paths are not allowed")
+    if os.open not in os.supports_dir_fd:
+        yield os.path.join(directory, parts[-1]), None
+        return
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    parent = os.open(root, flags)
+    try:
+        for part in parts[:-1]:
+            child = os.open(part, flags, dir_fd=parent)
+            os.close(parent)
+            parent = child
+        yield parts[-1], parent
+    finally:
+        os.close(parent)
 
 
-def delete_take(output_root: str, path: str, revision: str) -> str:
-    """Delete a verified take now, or defer it while an export reads the video.
+@dataclass(frozen=True)
+class DeletionFile:
+    path: str
+    info: os.stat_result
 
-    Returns ``deleted``, ``deferred``, or ``refused`` when a file could not be removed; a failure is never
-    reported as success.
-    """
-    files = deletion_plan(output_root, path, revision)
-    video = files[-1][0]
+    @property
+    def size(self) -> int:
+        return self.info.st_size
 
-    def remove() -> bool:
+    @property
+    def revision(self) -> str:
+        return revision_for(self.info)
+
+    def matches(self, current: os.stat_result, unlinked: int) -> bool:
+        if self.revision == revision_for(current):
+            return True
+        # Unlinking a reviewed hard link earlier in this group changes its sibling's ctime and link count.
+        old = self.info
+        return (
+            unlinked > 0
+            and os.path.samestat(old, current)
+            and current.st_nlink + unlinked == old.st_nlink
+            and (current.st_mode, current.st_uid, current.st_gid, current.st_size, current.st_mtime_ns)
+            == (old.st_mode, old.st_uid, old.st_gid, old.st_size, old.st_mtime_ns)
+        )
+
+
+@dataclass(frozen=True)
+class DeletionPlan:
+    files: List[DeletionFile]
+    directories: Dict[str, os.stat_result]
+    revision: str
+
+    @property
+    def directory(self) -> Optional[str]:
+        """The top directory removed in full, if the selection is a take."""
+        return next(iter(self.directories), None)
+
+
+def _ordinary_directory(base: str, video: DeletionFile) -> Optional[str]:
+    """Recognize the saver's reserved directory, or a recorded take outside the standard layout."""
+    directory = posixpath.splitext(video.path)[0] + COMPANION
+    parent, name = posixpath.split(video.path)
+    if posixpath.basename(parent) == "videos" and re.fullmatch(r".+_[0-9]{5,}_\.mp4", name):
+        with _file_at(base, directory) as (entry, fd):
+            try:
+                info = os.stat(entry, dir_fd=fd, follow_symlinks=False)
+            except FileNotFoundError:
+                return None
+            return directory if stat.S_ISDIR(info.st_mode) else None
+    try:
+        with _file_at(base, posixpath.join(directory, TAKE_RECORD)) as (name, parent):
+            info = os.stat(name, dir_fd=parent, follow_symlinks=False)
+            if not stat.S_ISREG(info.st_mode) or info.st_size > RECORD_LIMIT:
+                return None
+            flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+            with os.fdopen(os.open(name, flags, dir_fd=parent), "rb") as handle:
+                if not os.path.samestat(os.fstat(handle.fileno()), info):
+                    return None
+                record = read_take_record(handle.read(RECORD_LIMIT + 1).decode("utf-8"))
+    except (OSError, TypeError, ValueError):
+        return None
+    if record.get("origin") == "ordinary" and record["video"]["path"] == video.path and record["video"]["revision"] == video.revision:
+        return directory
+    return None
+
+
+@contextmanager
+def _scan_directory(base: str, path: str) -> Iterator[Tuple[os.stat_result, Iterator[os.DirEntry]]]:
+    """Scan a pinned directory without following a directory link."""
+    with _file_at(base, path) as (name, parent):
+        info = os.stat(name, dir_fd=parent, follow_symlinks=False)
+        if not stat.S_ISDIR(info.st_mode) or getattr(info, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT:
+            raise ValueError("invalid take directory")
+        absolute = os.path.join(os.path.realpath(base), *path.split("/"))
+        if os.path.ismount(absolute):
+            raise ValueError("cannot delete a mounted take directory")
+        if os.scandir not in os.supports_fd:
+            with os.scandir(absolute) as entries:
+                yield info, entries
+            return
+        descriptor = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent)
         try:
-            # Re-verify at the moment of deletion. The video goes first: if it cannot be removed, the take stays
-            # published and whole instead of becoming an unlisted orphan.
-            for name, _ in reversed(deletion_plan(output_root, path, revision)):
-                os.unlink(name)
-        except OSError:
-            logger.warning("take deletion failed", exc_info=True)
-            return False
+            with os.scandir(descriptor) as entries:
+                yield os.fstat(descriptor), entries
+        finally:
+            os.close(descriptor)
+
+
+def _snapshot_directory(base: str, directory: str) -> Tuple[List[DeletionFile], Dict[str, os.stat_result]]:
+    files = []
+    directories = {}
+    pending = [directory]
+    while pending:
+        path = pending.pop()
+        with _scan_directory(base, path) as (info, entries):
+            directories[path] = info
+            for entry in entries:
+                if len(files) + len(directories) + len(pending) >= _MAX_DELETE_ENTRIES:
+                    raise ValueError("too many entries in the take directory")
+                child = posixpath.join(path, entry.name)
+                if relative_path(child) != child:
+                    raise ValueError("unexpected filename in the take directory")
+                child_info = entry.stat(follow_symlinks=False)
+                if child_info.st_dev != info.st_dev:
+                    raise ValueError("cannot cross a mounted filesystem during deletion")
+                if (
+                    stat.S_ISDIR(child_info.st_mode)
+                    and not getattr(child_info, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT
+                ):
+                    pending.append(child)
+                else:
+                    # Links are included as directory entries, without visiting or reading their targets.
+                    files.append(DeletionFile(child, child_info))
+    return sorted(files, key=lambda item: item.path), dict(sorted(directories.items()))
+
+
+def deletion_plan(roots: Mapping[str, str], root: str, path: str) -> DeletionPlan:
+    """Bind confirmation to the selected video or to the inventory of its take directory."""
+    base = select_root(roots, root)
+    path = relative_path(path)
+    mime, encoding = mimetypes.guess_type(path, strict=False)
+    if encoding or not (mime or "").startswith("video/"):
+        raise ValueError("select a video file")
+    with _file_at(base, path) as (name, parent):
+        info = os.stat(name, dir_fd=parent, follow_symlinks=False)
+        if not stat.S_ISREG(info.st_mode):
+            raise ValueError("select a regular video file")
+        video = DeletionFile(path, info)
+    directory = None
+    directed = root == "output" and director_take_id(posixpath.dirname(path))
+    if directed:
+        directory = posixpath.dirname(path)
+    elif root == "output":
+        directory = _ordinary_directory(base, video)
+    files, directories = _snapshot_directory(base, directory) if directory else ([], {})
+    if directed:
+        if not any(item.path == path and item.revision == video.revision for item in files):
+            raise ValueError("the selected video changed during listing")
+    else:
+        files.append(video)
+    identities = [(item.path, item.revision) for item in files]
+    folders = [(name, revision_for(info)) for name, info in directories.items()]
+    payload = json.dumps([root, os.path.realpath(base), identities, folders]).encode("utf-8")
+    return DeletionPlan(files, directories, hmac.digest(_DELETE_KEY, payload, "sha256").hex())
+
+
+def delete_video(roots: Mapping[str, str], root: str, path: str, revision: str, removed: Optional[List[str]] = None) -> str:
+    """Remove the confirmed inventory, revalidating it after every active reader has finished."""
+    base = select_root(roots, root)
+
+    def remove() -> str:
+        changed = False
         try:
-            os.rmdir(os.path.dirname(files[0][0]))
-        except OSError:
-            # The companion directory holds files this take does not own; they stay.
-            pass
-        return True
+            plan = deletion_plan(roots, root, path)
+            if plan.revision != revision:
+                return "refused"
+            files = {os.path.join(os.path.realpath(base), *item.path.split("/")) for item in plan.files}
+            if not files.isdisjoint(_READING):
+                _DEFERRED[revision] = (files, remove)
+                return "deferred"
+            unlinked: Dict[Tuple[int, int], int] = {}
+            # Start with the requested video. A write-protected video thus keeps its complete take.
+            for item in sorted(plan.files, key=lambda item: item.path != path):
+                with _file_at(base, item.path) as (name, parent):
+                    inode = (item.info.st_dev, item.info.st_ino)
+                    if not item.matches(os.stat(name, dir_fd=parent, follow_symlinks=False), unlinked.get(inode, 0)):
+                        raise PermissionError("a confirmed file changed before removal")
+                    os.unlink(name, dir_fd=parent)
+                    changed = True
+                    if item.info.st_nlink > 1:
+                        unlinked[inode] = unlinked.get(inode, 0) + 1
+                    if removed is not None:
+                        removed.append(item.path)
+            # A new unlisted entry prevents rmdir. An empty directory is removed only if it is the reviewed inode.
+            for folder, info in reversed(plan.directories.items()):
+                with _file_at(base, folder) as (name, parent):
+                    if not os.path.samestat(info, os.stat(name, dir_fd=parent, follow_symlinks=False)):
+                        raise PermissionError("a confirmed directory changed before removal")
+                    os.rmdir(name, dir_fd=parent)
+        except (OSError, ValueError):
+            if changed:
+                logger.warning("video deletion was incomplete", exc_info=True)
+                return "partial"
+            logger.info("video deletion refused", exc_info=True)
+            return "refused"
+        return "deleted"
 
     with _READING_LOCK:
-        if video in _READING:
-            _DEFERRED[video] = remove
-            return "deferred"
-    return "deleted" if remove() else "refused"
+        return remove()
 
 
 def _export_counters(exports: str, name: str) -> List[int]:

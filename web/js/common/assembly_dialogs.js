@@ -29,6 +29,7 @@ export const DIALOG_STYLE = `
 .arisu-assembly-dialog .take summary{cursor:pointer;color:var(--descrip-text,#999);font-size:12px;}
 .arisu-assembly-dialog table{border-collapse:collapse;font-size:12px;}
 .arisu-assembly-dialog :is(td,th){padding:3px 10px 3px 0;text-align:left;font-variant-numeric:tabular-nums;}
+.arisu-assembly-dialog .path{overflow-wrap:anywhere;}
 .arisu-assembly-dialog .size{text-align:right;color:var(--descrip-text,#999);}
 `;
 
@@ -126,37 +127,64 @@ export function editEntry(entry, info, options) {
   );
 }
 
+/** A take's MP4 can sit beside its companion folder. Group only the folder's contents under its heading. */
+function deletionGroup({ root, directory, files }) {
+  const standalone = [];
+  const contents = [];
+  for (const file of files) {
+    const rows = directory && file.path.startsWith(`${directory}/`) ? contents : standalone;
+    rows.push(
+      el('tr', {}, [
+        el('td', { className: 'path', textContent: `${root}:${file.path}` }),
+        el('td', { className: 'size', textContent: bytes(file.bytes) }),
+      ]),
+    );
+  }
+  if (directory)
+    standalone.push(el('tr', {}, [el('th', { className: 'path', colSpan: 2, scope: 'rowgroup', textContent: `${root}:${directory}/` })]));
+  return el('tbody', {}, [...standalone, ...contents]);
+}
+
 /** Show what a confirmed deletion removes. Resolves true only on the explicit destructive action. */
-export function confirmDeletion(plan, options) {
-  const doomed = plan.entries.filter((entry) => entry.state === 'deletable');
-  const kept = plan.entries.length - doomed.length;
-  const files = doomed.flatMap((entry) => entry.files);
+export function confirmDeletion(plan, { signal, unbound = 0 } = {}) {
+  const reviewed = plan.entries.filter((entry) => entry.state === 'deletable');
+  const unavailable = plan.entries.filter((entry) => entry.state !== 'deletable');
+  const folders = reviewed.filter((entry) => entry.directory).length;
+  const files = reviewed.reduce((sum, entry) => sum + entry.files.length, 0);
+  const folderCount = folders ? `${folders} ${folders === 1 ? 'Folder' : 'Folders'} and ` : '';
+  const count = `${folderCount}${files} ${files === 1 ? 'File' : 'Files'}`;
   return openDialog(
     'Delete Files from Disk',
     (finish) => [
       el('div', { className: 'content' }, [
-        el('div', { textContent: 'These files are removed from disk. Undo restores a row in the edit, never its files.' }),
+        el('div', {
+          textContent: files ? 'Permanently delete this selection? Undo only restores rows in the edit.' : 'There are no files to delete.',
+        }),
+        ...(folders ? [el('strong', { textContent: 'Each folder will be permanently deleted with all its contents.' })] : []),
         el('table', {}, [
-          ...files.map((file) =>
-            el('tr', {}, [el('td', { textContent: file.path }), el('td', { className: 'size', textContent: bytes(file.bytes) })]),
-          ),
-          el('tr', {}, [
-            el('th', { textContent: `${files.length} files` }),
-            el('th', { className: 'size', textContent: bytes(plan.bytes) }),
+          ...reviewed.map(deletionGroup),
+          el('tfoot', {}, [
+            el('tr', {}, [el('th', { textContent: count.toLowerCase() }), el('th', { className: 'size', textContent: bytes(plan.bytes) })]),
           ]),
         ]),
-        ...(kept ? [el('div', { className: 'hint', textContent: `${kept} selected rows are not deletable here and stay on disk.` })] : []),
+        ...(unavailable.length
+          ? [
+              el('div', { className: 'hint', textContent: 'Unavailable files will be skipped.' }),
+              ...unavailable.map((entry) => el('div', { className: 'hint path', textContent: `${entry.root}:${entry.path}` })),
+            ]
+          : []),
+        ...(unbound ? [el('div', { className: 'hint', textContent: 'Selected rows without a file location will be skipped.' })] : []),
       ]),
       el('div', { className: 'actions' }, [
-        el('button', { textContent: 'Cancel', onclick: () => finish(false) }),
+        el('button', { textContent: 'Cancel', autofocus: true, onclick: () => finish(false) }),
         el('button', {
           className: 'danger',
-          textContent: `Delete ${files.length} Files`,
-          disabled: !files.length,
+          textContent: `Delete ${count}`,
+          disabled: !files,
           onclick: () => finish(true),
         }),
       ]),
     ],
-    options,
+    { signal },
   ).then((confirmed) => confirmed === true);
 }

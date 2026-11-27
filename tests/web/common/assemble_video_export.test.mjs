@@ -7,7 +7,7 @@ import { test } from 'node:test';
 
 import { api, jsonResponse } from '../support/api.mjs';
 import { app, extensionNamed, resetApp, toastSeverities } from '../support/app.mjs';
-import { button, described, edit, makeAssembly, panel, rows, serve, settle, TYPE, widget } from '../support/assembly.mjs';
+import { button, described, dialog, edit, makeAssembly, panel, rows, serve, settle, TYPE, widget } from '../support/assembly.mjs';
 import { descendants, resetDom } from '../support/dom.mjs';
 import { makeGraph } from '../support/litegraph.mjs';
 import '../../../web/js/common/assemble_video.js';
@@ -324,4 +324,104 @@ test('Assemble Video exports one checked job through the queue, recovers it afte
   await settle();
   assert.deepEqual(edit(node), kept);
   assert.deepEqual(states(node), ['changed', 'ok', 'unbound']);
+
+  // A changed location can be reviewed with an unbound row selected. Only the file actually reviewed can be confirmed.
+  const selectRow = (index) =>
+    descendants(rows(node)[index])
+      .find((item) => item.type === 'checkbox')
+      .onchange({ target: { checked: true } });
+  selectRow(2);
+  assert.equal(button(panel(node), 'Delete Files…').disabled, true);
+  selectRow(0);
+  assert.equal(button(panel(node), 'Delete Files…').disabled, false);
+  const reviewed = { root: A.root, path: A.path, revision: 'review:other' };
+  api.responses.unshift(
+    jsonResponse(200, { entries: [{ ...reviewed, state: 'deletable', files: [{ path: A.path, bytes: 64 }], bytes: 64 }], bytes: 64 }),
+  );
+  const deleting = button(panel(node), 'Delete Files…').onclick();
+  await settle();
+  assert.deepEqual(JSON.parse(api.calls.at(-1).init.body), {
+    entries: [{ root: A.root, path: A.path, revision: 'rev:replaced' }],
+    confirm: false,
+  });
+  let finishDeletion;
+  api.responses.unshift(
+    () =>
+      new Promise((resolve) => {
+        finishDeletion = () => resolve(jsonResponse(200, { entries: [{ ...reviewed, state: 'deleted' }] }));
+      }),
+  );
+  button(dialog(), 'Delete 1 File').onclick();
+  await settle();
+  assert.deepEqual(JSON.parse(api.calls.at(-1).init.body), { entries: [reviewed], confirm: true });
+
+  // Loading another workflow invalidates the in-flight panel before the deletion response arrives.
+  const previous = node;
+  [node] = await app.loadGraphData({ nodes: [serialized(node)] }, true, true, persisted);
+  finishDeletion();
+  await deleting;
+  assert.deepEqual(edit(previous), kept);
+  assert.deepEqual(edit(node), kept);
+
+  // A single confirmed folder can remove several rows. A partial result names exactly what was removed.
+  const directorFolder = `${PROJECT}/director/${ID(1)}`;
+  const companion = A.path.replace('.mp4', '.arisu');
+  const clip = `${directorFolder}/clip.mp4`;
+  const alternate = `${directorFolder}/prior/clip.mp4`;
+  const missing = `${directorFolder}/old.mp4`;
+  const preview = `${companion}/preview.mp4`;
+  const locations = [clip, alternate, missing, A.path, preview];
+  const original = { ...kept, entries: locations.map((path, index) => entry(ID(index + 1), { path, revision: 'rev:old' })) };
+  const values = { edit_json: JSON.stringify(original) };
+  node = makeAssembly(Assembly, { id: 15, values });
+  await settle();
+  selectRow(0);
+  selectRow(3);
+  const scope = (directory, path, others) => ({
+    root: 'output',
+    path,
+    directory,
+    state: 'deletable',
+    revision: `review:${directory}`,
+    files: [path, ...others].map((name) => ({ path: name, bytes: 40 })),
+  });
+  const groups = [scope(directorFolder, clip, [alternate]), scope(companion, A.path, [preview])];
+  api.responses.unshift(jsonResponse(200, { entries: groups, bytes: 160 }));
+  const deletingFolders = button(panel(node), 'Delete Files…').onclick();
+  await settle();
+  const groupsShown = descendants(dialog()).filter((item) => item.tagName === 'TBODY');
+  assert.deepEqual(
+    groupsShown.map((group) =>
+      descendants(group)
+        .filter((item) => item.className === 'path')
+        .map((item) => item.textContent),
+    ),
+    [
+      [`output:${directorFolder}/`, `output:${clip}`, `output:${alternate}`],
+      [`output:${A.path}`, `output:${companion}/`, `output:${preview}`],
+    ],
+  );
+  api.responses.unshift(
+    jsonResponse(200, {
+      entries: [
+        { ...groups[0], state: 'deleted' },
+        { ...groups[1], state: 'partial', removed: [preview] },
+      ],
+    }),
+  );
+  button(dialog(), 'Delete 2 Folders and 4 Files').onclick();
+  await deletingFolders;
+  assert.deepEqual(
+    edit(node).entries.map((item) => item.path),
+    [missing, A.path],
+  );
+  assert.equal(toastSeverities().at(-1), 'warn');
+
+  // Bringing the edit back rechecks every removed clip, including unselected siblings.
+  makeAssembly(Assembly, { id: 16, values });
+  await settle();
+  assert.deepEqual(
+    JSON.parse(api.calls.at(-1).init.body).entries.map((item) => item.path),
+    [clip, alternate, preview],
+  );
 });
