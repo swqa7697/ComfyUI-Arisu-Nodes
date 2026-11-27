@@ -115,22 +115,47 @@ def inspect_assembly(page: Page, server: FixtureServer, name: str):
     replacements.get_by_role("button", name="Cancel").click()
     assert names(page) == ["shot_00001_.mp4", "shot_00002_.mp4"]
     delete = panel.get_by_role("button", name="Delete the selected video files from disk", exact=True)
-    for name_on_disk in ("shot_00001_.mp4", "shot_00002_.mp4"):
-        selected = panel.get_by_label("Select " + name_on_disk, exact=True)
-        expect(selected).to_be_checked()
-        selected.uncheck()
-    expect(delete).to_be_disabled()
+    expect(delete).to_be_enabled()
 
-    # Director footage arrives in film order with the take IDs of its receipts.
-    panel.get_by_role("button", name="Import Director takes in film order", exact=True).click()
+    # Escape keeps the selected project takes. Confirming imports the Director's current footage in film order.
+    import_director = panel.get_by_role("button", name="Replace the edit with current Director takes in film order", exact=True)
+    replacement = page.get_by_role("dialog", name="Replace Current Edit?", exact=True)
+    previous_edit = edit(page, node_id)
+    import_director.click()
+    expect(replacement.get_by_role("button", name="Cancel", exact=True)).to_be_focused()
+    screenshot(page, name, "assembly-confirm-import")
+    page.keyboard.press("Escape")
+    expect(replacement).to_have_count(0)
+    expect(import_director).to_be_focused()
+    assert edit(page, node_id) == previous_edit
+    for name_on_disk in ("shot_00001_.mp4", "shot_00002_.mp4"):
+        expect(panel.get_by_label("Select " + name_on_disk, exact=True)).to_be_checked()
+    import_director.click()
+    replacement.get_by_role("button", name="Replace Edit", exact=True).click()
     expect(panel.locator(".status")).to_contain_text("Imported 2 takes in film order")
-    expect(panel.locator(".entry[data-state=ok]")).to_have_count(4)
-    imported = edit(page, node_id)["entries"][2:]
+    expect(panel.locator(".entry[data-state=ok]")).to_have_count(2)
+    expect(delete).to_be_disabled()
+    imported = edit(page, node_id)["entries"]
     assert [(row["source"], row["segment"]) for row in imported] == [
         ("director", "launch"),
         ("director", "follow"),
     ]
     assert all(row["path"].startswith(PROJECT + "/director/" + row["take"] + "/") for row in imported)
+    panel.get_by_role("button", name="Undo", exact=True).click()
+    expect(panel.locator(".entry .name")).to_have_text(["shot_00001_.mp4", "shot_00002_.mp4"])
+    panel.get_by_role("button", name="Redo", exact=True).click()
+    expect(panel.locator(".entry .name")).to_have_text(["Segment 01", "Segment 02"])
+
+    # Extend the imported edit with the two ordinary project takes.
+    panel.get_by_role("button", name="Add published takes of the project", exact=True).click()
+    for name_on_disk in ("shot_00001_.mp4", "shot_00002_.mp4"):
+        picker.get_by_label("Select " + name_on_disk, exact=True).check()
+    picker.get_by_role("button", name="Add 2 Takes", exact=True).click()
+    for name_on_disk in ("shot_00001_.mp4", "shot_00002_.mp4"):
+        selected = panel.get_by_label("Select " + name_on_disk, exact=True)
+        expect(selected).to_be_checked()
+        selected.uncheck()
+    expect(delete).to_be_disabled()
 
     # An existing video is added by browsing; only videos are offered.
     panel.get_by_role("button", name="Add a video file by browsing", exact=True).click()
@@ -142,25 +167,25 @@ def inspect_assembly(page: Page, server: FixtureServer, name: str):
     expect(panel.locator(".entry")).to_have_count(5)
     expect(panel.locator(".entry[data-state=ok]")).to_have_count(5)
     assert names(page) == [
-        "shot_00001_.mp4",
-        "shot_00002_.mp4",
         "Segment 01",
         "Segment 02",
+        "shot_00001_.mp4",
+        "shot_00002_.mp4",
         "found.webm",
     ]
-    assert [row["source"] for row in edit(page, node_id)["entries"]] == ["take", "take", "director", "director", "file"]
+    assert [row["source"] for row in edit(page, node_id)["entries"]] == ["director", "director", "take", "take", "file"]
     expect(panel.locator(".sum")).to_contain_text("5 of 5 · 240 frames · 10.00 s")
 
     # Reorder by dragging onto the upper half of the first row, then by keyboard with focus kept on the handle.
     order = names(page)
     rows = panel.locator(".entry")
     rows.nth(1).locator(".handle").drag_to(rows.nth(0), target_position={"x": 60, "y": 4})
-    expect(panel.locator(".entry .name").first).to_have_text("shot_00002_.mp4")
+    expect(panel.locator(".entry .name").first).to_have_text("Segment 02")
     assert names(page) == [order[1], order[0], *order[2:]]
-    handle = panel.get_by_role("button", name="Reorder shot_00001_.mp4 with the arrow keys", exact=True)
+    handle = panel.get_by_role("button", name="Reorder Segment 01 with the arrow keys", exact=True)
     handle.focus()
     handle.press("ArrowUp")
-    expect(panel.get_by_role("button", name="Reorder shot_00001_.mp4 with the arrow keys", exact=True)).to_be_focused()
+    expect(handle).to_be_focused()
     assert names(page) == order
     screenshot(page, name, "assembly-row-focus")
 
@@ -186,7 +211,7 @@ def inspect_assembly(page: Page, server: FixtureServer, name: str):
     assert names(page) == order
     page.keyboard.press("Control+y")
     expect(panel.locator(".entry.muted")).to_have_count(1)
-    assert [row["included"] for row in edit(page, node_id)["entries"]] == [False, True, True, True, True]
+    assert [row["included"] for row in edit(page, node_id)["entries"]] == [True, True, False, True, True]
     contained(page, ".arisu-assembly")
     screenshot(page, name, "assembly-list")
 
@@ -293,8 +318,8 @@ def inspect_assembly(page: Page, server: FixtureServer, name: str):
     contained(page, "dialog.arisu-assembly-dialog")
     screenshot(page, name, "assembly-join")
     join.get_by_role("button", name="Apply to This Join", exact=True).click()
-    expect(panel.locator(".join").nth(1)).to_contain_text("Colour match · Fade 10 ms")
-    stored = edit(page, node_id)["entries"][3]["join"]
+    expect(panel.locator(".join").first).to_contain_text("Colour match · Fade 10 ms")
+    stored = edit(page, node_id)["entries"][1]["join"]
     assert stored["fade"] == 10 and stored["correction"]["luma_offset"] == -0.02
     assert stored["correction"]["basis"] == {
         "prev_source": "output:" + imported[0]["path"],

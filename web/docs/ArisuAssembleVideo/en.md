@@ -40,9 +40,10 @@ An ordinary Run writes no film and passes nothing downstream. Only **Export** pr
   Each rerender has its own short take ID and, when recorded, a creation time. Multiple selected takes enter the edit in the displayed order.
   A standalone assembly uses the most recently rendered sequence for each film. Removed segments keep their footage and follow the active sequence.
   Older takes use available Director receipts or their saved render metadata to identify the segment. When neither identifies a segment, the still and short take ID identify the clip.
-- **Import from Director** adds the rendered takes of a Director Workbench in film order. Segments without a render are
-  skipped. Each row keeps the imported take UUID. A later Director render creates a new take.
-  Choose **Refresh from Director** to switch imported rows to the current takes.
+- **Import from Director** replaces the entire edit, including manually added videos, with the selected Director’s current rendered takes in film order.
+  An empty list imports immediately. If the list contains any clips, choose **Replace Edit** to confirm or **Cancel** to keep your edit.
+  Segments without a render are skipped. If the Director has no rendered takes, the existing edit stays in place.
+  Import again after rendering or reordering segments to rebuild the list. **Undo** restores the previous edit in one step.
 - **Add Existing Video** browses for any video under the output directory or a configured root, including videos
   saved before this node existed.
 

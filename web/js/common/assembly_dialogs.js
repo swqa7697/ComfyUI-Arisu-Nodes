@@ -1,4 +1,4 @@
-// Small modal dialogs of Assemble Video: one entry's footage and trim, and the confirmation before files are deleted.
+// Assemble Video dialogs for editing footage, replacing the edit and deleting files.
 import { mediaUrl } from './assembly_api.js';
 import { bytes, fileName } from './assembly_format.js';
 import { closeOnBackdropClick, el } from './dom.js';
@@ -7,6 +7,7 @@ export const DIALOG_STYLE = `
 .arisu-assembly-dialog{width:min(720px,92vw);max-height:88vh;padding:0;border:1px solid var(--border-color,#444);
  background:var(--comfy-menu-bg,#202020);color:var(--fg-color,#ddd);font:13px/1.4 Arial,system-ui,sans-serif;overflow:hidden;}
 .arisu-assembly-dialog[open]{display:flex;flex-direction:column;}
+.arisu-assembly-dialog.confirm-import{width:min(440px,92vw);}
 .arisu-assembly-dialog *{box-sizing:border-box;}
 .arisu-assembly-dialog h3{margin:0;padding:12px 16px;font-size:14px;border-bottom:1px solid var(--border-color,#444);}
 .arisu-assembly-dialog .content{flex:1;min-height:0;overflow:auto;display:flex;flex-direction:column;gap:10px;padding:12px 16px;}
@@ -75,6 +76,29 @@ export function openDialog(title, build, { signal, invoker = document.activeElem
     if (signal?.aborted) dialog.close();
     else signal?.addEventListener('abort', abort, { once: true });
   });
+}
+
+/** Confirm replacing every row with the chosen Director's takes. */
+export function confirmDirectorImport(director, count, options) {
+  return openDialog(
+    'Replace Current Edit?',
+    (finish, dialog) => {
+      dialog.className += ' confirm-import';
+      const message = el('div', {
+        className: 'content',
+        textContent: `Importing from ${director} replaces your entire edit (${count} ${count === 1 ? 'clip' : 'clips'}). You can undo this change.`,
+      });
+      dialog.ariaDescribedByElements = [message];
+      return [
+        message,
+        el('div', { className: 'actions' }, [
+          el('button', { textContent: 'Cancel', autofocus: true, onclick: () => finish() }),
+          el('button', { className: 'apply', textContent: 'Replace Edit', onclick: () => finish(true) }),
+        ]),
+      ];
+    },
+    options,
+  );
 }
 
 /**

@@ -7,7 +7,7 @@
 
 import { app } from '../../../../scripts/app.js';
 import { deletePlan, describe, forget, known, listTakes, preflight } from './assembly_api.js';
-import { confirmDeletion, editEntry } from './assembly_dialogs.js';
+import { confirmDeletion, confirmDirectorImport, editEntry } from './assembly_dialogs.js';
 import {
   bound,
   EMPTY,
@@ -119,19 +119,14 @@ function info(entry) {
   return bound(entry) ? known(entry.root, entry.path) : undefined;
 }
 
-/** Current segment takes for explicit refresh and recorded predecessors for join previews. */
-function directorView() {
-  const segments = new Map();
-  const legacy = new Map();
+/** Predecessors recorded by Director for join previews. */
+function directorPredecessors() {
   const predecessors = new Map();
   for (const source of takeSources())
     for (const segment of source.segments) {
-      // Old edits carry only a film-local ID. Ambiguous IDs must never refresh from another film.
-      legacy.set(segment.segment, legacy.has(segment.segment) ? null : segment);
-      if (segment.uid) segments.set(segment.uid, segment);
       if (segment.take) predecessors.set(segment.take.take, segment.take.predecessor ?? null);
     }
-  return { find: (entry) => (entry.segment_uid ? segments.get(entry.segment_uid) : legacy.get(entry.segment)), predecessors };
+  return predecessors;
 }
 
 function rowState(entry) {
@@ -310,82 +305,46 @@ async function addTakes(node) {
   }
 }
 
-async function importDirector(node, source) {
+async function importDirector(node, director) {
+  const task = begin(node);
   const state = nodes.get(node);
   const sources = takeSources();
   state.choices = null;
   if (!sources.length) return toast('This workflow has no Director Workbench with a film.');
-  if (!source && sources.length > 1) {
+  if (!director && sources.length > 1) {
     state.choices = sources;
     return render(node);
   }
-  const chosen = source ?? sources[0];
+  const chosen = director ? sources.find((source) => source.node === director) : sources[0];
+  if (!chosen) return toast('The selected Director is no longer in the workflow.');
   const ready = chosen.segments.filter((segment) => segment.take);
   const skipped = chosen.segments.length - ready.length;
   if (!ready.length) return toast('Director has no rendered takes yet.');
-  const task = begin(node);
   try {
+    const control = widget(node, EDIT);
+    const original = control.value;
+    const next = readEdit(original);
+    if (next.entries.length) {
+      const replace = await confirmDirectorImport(chosen.label, next.entries.length, { signal: task.signal });
+      if (!replace || !task.current()) return;
+    }
     const descriptions = await describe(
       ready.map((segment) => segment.take),
       task.signal,
     );
     if (!task.current()) return;
-    const next = read(node);
-    reportInsert(
-      insertEntries(
-        next,
-        // An imported row keeps this take until the user explicitly refreshes or replaces it.
-        ready.map((segment, index) => ({
-          ...entryFrom(descriptions[index], 'director', segment.segment),
-          take: segment.take.take,
-          segment_uid: segment.uid,
-          predecessor: segment.take.predecessor ?? undefined,
-        })),
-      ),
-    );
-    state.message = `Imported ${ready.length} takes in film order${skipped ? `; ${skipped} segments have no render` : ''}.`;
-    commit(node, next);
-  } catch (error) {
-    if (task.current()) toast(error.message, 'error');
-  }
-}
-
-/** Follow Director's current takes for rows that were imported from it; every other row is left alone. */
-async function refreshDirector(node) {
-  const { find } = directorView();
-  const doc = read(node);
-  const moved = doc.entries.filter((entry) => {
-    const take = entry.source === 'director' ? find(entry)?.take : null;
-    return take && (take.path !== entry.path || take.take !== entry.take);
-  });
-  const state = nodes.get(node);
-  if (!moved.length) {
-    state.message = 'Director takes are already current.';
-    return render(node);
-  }
-  const task = begin(node);
-  try {
-    const descriptions = await describe(
-      moved.map((entry) => find(entry).take),
-      task.signal,
-    );
-    if (!task.current()) return;
-    const next = read(node);
-    moved.forEach((entry, index) => {
-      const segment = find(entry);
-      const take = segment.take;
-      rebindEntry(next, entry.id, descriptions[index], 'director');
-      Object.assign(
-        next.entries.find((item) => item.id === entry.id),
-        {
-          take: take.take,
-          segment: entry.segment,
-          segment_uid: segment.uid,
-          predecessor: take.predecessor ?? undefined,
-        },
-      );
-    });
-    state.message = `Updated ${moved.length} rows from Director.`;
+    if (control.value !== original) return toast('The edit changed during import. Import again to replace it.');
+    const entries = ready.map((segment, index) => ({
+      ...entryFrom(descriptions[index], 'director', segment.segment),
+      take: segment.take.take,
+      segment_uid: segment.uid,
+      predecessor: segment.take.predecessor ?? undefined,
+    }));
+    next.entries = [];
+    reportInsert(insertEntries(next, entries));
+    const count = next.entries.length;
+    state.message = `Imported ${count} ${count === 1 ? 'take' : 'takes'} in film order.`;
+    if (skipped) state.message += ` Skipped ${skipped} unrendered ${skipped === 1 ? 'segment' : 'segments'}.`;
     commit(node, next);
   } catch (error) {
     if (task.current()) toast(error.message, 'error');
@@ -503,7 +462,7 @@ async function auditionJoin(node, id) {
     outgoing: location(outgoing),
     incoming: location(incoming),
     join: incoming.join,
-    verified: verifiedJoin(doc, index, info, directorView().predecessors),
+    verified: verifiedJoin(doc, index, info, directorPredecessors()),
     signal: task.signal,
   });
   if (!result || !task.current()) return;
@@ -883,7 +842,7 @@ function render(node) {
             : []),
         ]
       : []),
-    ...(state.choices ?? []).map((source) => button(`Import ${source.label}`, () => importDirector(node, source), undefined, 'tool')),
+    ...(state.choices ?? []).map((source) => button(`Import ${source.label}`, () => importDirector(node, source.node), undefined, 'tool')),
   ];
   const plan = state.plan;
   const usableRows = doc.entries.some((entry) => entry.included && rowState(entry) === 'ok');
@@ -944,11 +903,8 @@ function render(node) {
     ]),
     el('div', { className: 'tools' }, [
       button('Add Project Takes', () => addTakes(node), 'Add published takes of the project', 'tool'),
-      button('Import from Director', () => importDirector(node), 'Import Director takes in film order', 'tool'),
+      button('Import from Director', () => importDirector(node), 'Replace the edit with current Director takes in film order', 'tool'),
       button('Add Existing Video', () => addExisting(node), 'Add a video file by browsing', 'tool'),
-      ...(doc.entries.some((entry) => entry.source === 'director')
-        ? [button('Refresh from Director', () => refreshDirector(node), 'Follow the current Director takes', 'tool')]
-        : []),
     ]),
     el('output', { className: 'status', ariaLive: 'polite', hidden: !status.length }, status),
     doc.entries.length
