@@ -24,7 +24,7 @@ Agent configuration and skills are excluded from the Registry archive.
 
 ## Hard boundary: the ComfyUI install at `$COMFYUI_PATH`
 
-`$COMFYUI_PATH` names a live ComfyUI install on the developer's machine, the one tree this repo must never write to. `make comfyui-path` prints the resolved path; this file never spells it out, and an unset `COMFYUI_PATH` means the live install, never "somewhere safe". Machine facts live in the untracked `.agents/comfyui-env.md` (template `.agents/comfyui-env.example.md`); read it if present, otherwise ask rather than guess. The install is an always-on user systemd unit on the only GPU (restarting it is the owner's test loop) and a uv project alive only because `uv run` syncs inexactly: one `uv sync` there removes every package, and with no `pip` in the `.venv` and a CUDA torch wheel from an index `requirements.txt` omits, a rebuild costs tens of minutes.
+`$COMFYUI_PATH` names the developer's live ComfyUI install, which runs as a user systemd unit on the only GPU. Agents have read-only access to this tree. This includes every `uv` command that targets the install or its virtual environment, regardless of the working directory. An unset `COMFYUI_PATH` resolves to the live install. Use `make comfyui-path` to see the resolved path. Read the machine settings in the untracked `.agents/comfyui-env.md` (template `.agents/comfyui-env.example.md`). If the file is missing, ask the developer for the settings.
 
 Forbidden for the agent, without exception:
 - Any uv project command with the working directory under `$COMFYUI_PATH` (`uv sync`, `uv add`, `uv remove`, `uv lock`, `uv run` without `--no-project`); `--active` on any uv command; `UV_PROJECT_ENVIRONMENT` or `VIRTUAL_ENV` pointing at `$COMFYUI_PATH/.venv` (shell, `.env`, script).
@@ -33,9 +33,9 @@ Forbidden for the agent, without exception:
 
 The one carve-out is CI: `.github/workflows/comfyui-lane.yml` clones ComfyUI into the runner's temp dir and points `COMFYUI_PATH` there, where `git clone`, `uv venv`, `uv pip install`, and editing `requirements.txt` are fine. Never point that workflow, or `COMFYUI_PATH`, at a developer's install; a local disposable clone unlocks nothing either.
 
-Allowed reads, all leaving `$COMFYUI_PATH` byte-identical: `uv run --no-project --python "$COMFYUI_PATH/.venv/bin/python" --with <pkg> ...` with `PYTHONDONTWRITEBYTECODE=1`, as `scripts/test-comfyui.sh` does; `uv pip freeze -p "$COMFYUI_PATH/.venv/bin/python"`; reading and grepping the source tree; `systemctl --user status`, `journalctl --user -u`, and `curl -s <api_endpoint>/object_info` for the unit and endpoint in `.agents/comfyui-env.md`.
+For read-only tests, follow `scripts/test-comfyui.sh`, which uses `uv run --no-project --python "$COMFYUI_PATH/.venv/bin/python" --with <pkg> ...` with `PYTHONDONTWRITEBYTECODE=1`. Agents may read and search the source tree, inspect the service with `systemctl --user status` and `journalctl --user -u`, and query `curl -s <api_endpoint>/object_info` using the unit and endpoint in `.agents/comfyui-env.md`.
 
-Human-only steps, which the agent may print but never runs: manual E2E (clone a pushed commit into `$COMFYUI_PATH/custom_nodes/`, restart, test in the browser, remove the clone, restart; never symlink the working copy); additive `uv pip install --python "$COMFYUI_PATH/.venv/bin/python" <pkg>`, preceded by a snapshot `uv pip freeze -p <that python> > "$COMFYUI_PATH/venv-snapshot-$(date +%F).txt"` (none exists yet); recovery via `uv pip install --python <that python> -r <snapshot>` with the torch family from `https://download.pytorch.org/whl/<cuXXX>` for the recorded build; and the optional `chmod -R a-w "$COMFYUI_PATH/.venv"` lock, which ComfyUI upgrades and ComfyUI-Manager need lifted.
+Only the developer performs manual E2E tests on the live install. Clone a pushed commit into `$COMFYUI_PATH/custom_nodes/`, restart the service, test in the browser, remove the clone, and restart the service again. Never symlink the working copy.
 
 ## Layout
 
